@@ -21,6 +21,11 @@ Thumbs.db
 
 # Videos
 *.avi
+*.mp4
 
 # Data
 *.npy
+
+# dlib files
+*.dat
+*.bz2
