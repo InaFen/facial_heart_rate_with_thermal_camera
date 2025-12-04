@@ -6,6 +6,7 @@ import scipy.signal
 import scipy.io.wavfile
 
 
+
 def get_raw_signal(video_path: str) -> np.ndarray:
     """
     Extracts raw thermal signal from a thermal video.
@@ -117,3 +118,15 @@ def min_max_normalization(signal: np.ndarray) -> np.ndarray:
     max_val = np.max(signal)
     normalized_signal = (signal - min_val) / (max_val - min_val)
     return normalized_signal
+
+def calculate_first_second_derivative(signal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Calculates the first and second order derivatives of a 1D signal.
+
+    :param signal: 1D numpy array of the signal.
+    :return: Tuple containing first and second order derivatives as 1D numpy arrays.
+    """
+    first_derivative = np.gradient(signal)
+    second_derivative = np.gradient(first_derivative)
+    return first_derivative, second_derivative
+
