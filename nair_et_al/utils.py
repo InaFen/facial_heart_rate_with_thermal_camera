@@ -66,6 +66,28 @@ def plot_pixel_signal(signal: np.ndarray, x: int, y: int):
     plt.show()
 
 
+def plot_multiple_1d_signals(signals: list[np.ndarray], labels: list[str] | None = None):
+    """
+    Plots multiple 1D signals in one figure.
+
+    :param signals: List of 1D numpy arrays (each one is a signal).
+    :param labels: Optional list of labels for the legend.
+    """
+
+    plt.figure(figsize=(10, 4))
+
+    for i, sig in enumerate(signals):
+        label = labels[i] if labels is not None else f"Signal {i+1}"
+        plt.plot(sig, label=label)
+
+    plt.title("Thermal Signals of a Pixel")
+    plt.xlabel("Frame")
+    plt.ylabel("Value")
+    plt.grid()
+    plt.legend()
+    plt.show()
+
+
 def bandpass_filter(data: np.ndarray, edges: list[float], sample_rate: float, poles: int = 5):
     """Based on example from scipy documentation.
     Applies a Butterworth bandpass filter to the data.
@@ -82,3 +104,16 @@ def bandpass_filter(data: np.ndarray, edges: list[float], sample_rate: float, po
     sos = scipy.signal.butter(poles, edges, 'bandpass', fs=sample_rate, output='sos')
     filtered_data = scipy.signal.sosfiltfilt(sos, data)
     return filtered_data
+
+
+def min_max_normalization(signal: np.ndarray) -> np.ndarray:
+    """
+    Applies min-max normalization to the signal.
+
+    :param signal: 1D numpy array of the signal to be normalized.
+    :return: Normalized signal as a 1D numpy array.
+    """
+    min_val = np.min(signal)
+    max_val = np.max(signal)
+    normalized_signal = (signal - min_val) / (max_val - min_val)
+    return normalized_signal
