@@ -1,4 +1,4 @@
-from utils import get_raw_signal, plot_pixel_signal, bandpass_filter, plot_multiple_1d_signals, min_max_normalization, calculate_first_second_derivative, show_thermal_video_with_landmarks
+from utils import get_raw_signal, plot_pixel_signal, bandpass_filter, plot_multiple_1d_signals, min_max_normalization, calculate_first_second_derivative, get_facial_dlib_landmarks
 import numpy as np
 import os
 
@@ -8,7 +8,9 @@ filtered_signal_matrix_path = f'filtered_signal_matrix_{edges_bandpass_filter[0]
 normalized_signal_matrix_path = 'normalized_signal_matrix.npy'
 first_derivative_matrix_path = 'first_derivative_matrix.npy'
 second_derivative_matrix_path = 'second_derivative_matrix.npy'
-landmark_model_path = 'nair_et_al/dlib_landmark_predictor.dat'  # Path to Dlib landmark model
+
+
+path_save_video_with_landmarks = 'recorded_videos/video_with_landmarks.mp4'  # Path to Dlib landmark model
 
 PREPROCESSING = False
 #############
@@ -87,7 +89,7 @@ if PREPROCESSING:
 # Landmark detection & denoising 
 ############
 
-show_thermal_video_with_landmarks(video_path, landmark_model_path)
+get_facial_dlib_landmarks(video_path="thermal-facial-landmarks-detection/test_video/thermal_video_12_03.avi", path_save_video_with_landmarks=path_save_video_with_landmarks, upsample=0)
 
 # Data Extraction
 
