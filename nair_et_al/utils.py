@@ -184,6 +184,8 @@ def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: s
 
     input_fps = vs.get(cv2.CAP_PROP_FPS)
     print("[INFO] Input FPS:", input_fps)
+    delay = int(1000 / input_fps)  # ms per frame
+
 
     # initialize the video writer
     writer = None
@@ -247,7 +249,7 @@ def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: s
 
         # show the image
         cv2.imshow("Frame", frame_thermal)
-        key = cv2.waitKey(1) & 0xFF
+        key = cv2.waitKey(delay) & 0xFF
 
         # if the `q` key was pressed, break from the loop
         if key == ord("q"):
