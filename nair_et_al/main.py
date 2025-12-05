@@ -1,4 +1,5 @@
 from utils import *
+from helpers_landmark_detection import *
 import numpy as np
 import os
 
@@ -12,7 +13,7 @@ fps = 9.0
 
 path_save_video_with_landmarks = 'recorded_videos/video_with_landmarks.avi'  # Path to Dlib landmark model
 
-PREPROCESSING = True
+PREPROCESSING = False
 #############
 # Preprocessing
 #############
@@ -90,7 +91,9 @@ if PREPROCESSING:
 ############
 # Landmark detection & denoising 
 ############
-get_facial_dlib_landmarks(video_path="external_library/thermal-facial-landmarks-detection/test_video/thermal_video_12_03.avi", path_save_video_with_landmarks=path_save_video_with_landmarks, upsample=2, resize = False)
+mean_values_subregions = get_facial_dlib_landmarks_regions_and_save_their_mean(video_path="external_library/thermal-facial-landmarks-detection/test_video/thermal_video_12_03.avi", path_save_video_with_landmarks=path_save_video_with_landmarks, upsample=2, resize_frame = True)
+
+#annotate_video_with_landmarks(input_video_path=video_path, output_video_path=path_save_video_with_landmarks, upsample=1, resize_frame = True)
 
 # Data Extraction
 
