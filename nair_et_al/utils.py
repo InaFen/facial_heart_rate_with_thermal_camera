@@ -14,6 +14,33 @@ import dlib
 import cv2
 import os
 
+def play_recorded_video(video_path: str):
+    """
+    Plays a recorded video from the specified path.
+
+    :param video_path: Path to the video file.
+    """
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video file not found at: {video_path}")
+
+    cap = cv2.VideoCapture(video_path)
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    delay = int(1000 / fps)  # ms per frame
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        cv2.imshow('Video Playback', frame)
+
+        if cv2.waitKey(delay) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
 
 def get_raw_signal(video_path: str) -> np.ndarray:
     """
@@ -138,90 +165,96 @@ def calculate_first_second_derivative(signal: np.ndarray) -> tuple[np.ndarray, n
     second_derivative = np.gradient(first_derivative)
     return first_derivative, second_derivative
 
-def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: str, upsample: int, fps = 9):
+def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: str, upsample: int):
     """
     Code taken from https://github.com/IS2AI/thermal-facial-landmarks-detection/tree/main
     """
 
-    print("Current working directory:", os.getcwd())
-    print("Files in this directory:", os.listdir())
 
-        # load the face detector (HOG-SVM)
+    # load the face detector (HOG-SVM)
     print("[INFO] loading dlib thermal face detector...")
-    detector = dlib.simple_object_detector("thermal-facial-landmarks-detection/models/dlib_face_detector.svm")
+    detector = dlib.simple_object_detector("external_library/thermal-facial-landmarks-detection/models/dlib_face_detector.svm")
 
     # load the facial landmarks predictor
     print("[INFO] loading facial landmark predictor...")
-    predictor = dlib.shape_predictor("thermal-facial-landmarks-detection/models/dlib_landmark_predictor.dat")
+    predictor = dlib.shape_predictor("external_library/thermal-facial-landmarks-detection/models/dlib_landmark_predictor.dat")
 
     # initialize the video stream
     vs = cv2.VideoCapture(video_path)
+
+    input_fps = vs.get(cv2.CAP_PROP_FPS)
+    print("[INFO] Input FPS:", input_fps)
 
     # initialize the video writer
     writer = None
     (W, H) = (None, None)
 
+    frame_counter = 0
     while True:
         # read the next frame from the file
         (grabbed, frame) = vs.read()
+        frame_counter += 1
 
         # break the loop if the frame 
         # was not grabbed
         if not grabbed:
+            frame_counter -= 1
+            print("Frame not grabbed")
             break
         
         # resize the frame
         frame = imutils.resize(frame, width=300)
 
         # copy the frame
-        frame_copy = frame.copy()
+        frame_thermal = frame.copy()
 
         # convert the frame to grayscale
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
+        frame_greyscale = cv2.cvtColor(frame_thermal, cv2.COLOR_BGRA2GRAY)
 
         # detect faces in the frame
-        rects = detector(frame, upsample_num_times=upsample)
+        rects = detector(frame_greyscale, upsample_num_times=upsample)
 
         # loop over the bounding boxes
         for rect in rects:
             # convert the dlib rectangle into an OpenCV bounding box and
             # draw a bounding box surrounding the face
             (x, y, w, h) = face_utils.rect_to_bb(rect)
-            cv2.rectangle(frame_copy, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.rectangle(frame_thermal, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
             # predict the location of facial landmark coordinates then 
             # convert the prediction to an easily parsable NumPy array
-            shape = predictor(frame, rect)
+            shape = predictor(frame_greyscale, rect)
             shape = face_utils.shape_to_np(shape)
 
             # loop over the (x, y)-coordinates from our dlib shape
             # predictor model draw them on the image
             for (sx, sy) in shape:
-                cv2.circle(frame_copy, (sx, sy), 2, (255, 0, 0), -1)
+                cv2.circle(frame_thermal, (sx, sy), 2, (255, 0, 0), -1)
 
         # if the frame dimensions are empty, grab them
         if W is None or H is None:
-            (H, W) = frame.shape[:2]
+            (H, W) = frame_greyscale.shape[:2]
 
         # check if the video writer is None
         if writer is None:
             # initialize our video writer
             fourcc = cv2.VideoWriter_fourcc(*"XVID")
-            writer = cv2.VideoWriter(path_save_video_with_landmarks, fourcc, fps,
-                (frame.shape[1], frame.shape[0]), True)
+            writer = cv2.VideoWriter(path_save_video_with_landmarks, fourcc, input_fps,
+                (frame_greyscale.shape[1], frame_greyscale.shape[0]), True)
 
         # push the frame to the writer 
-        writer.write(frame_copy)
+        writer.write(frame_thermal)
 
         # show the image
-        cv2.imshow("Frame", frame_copy)
+        cv2.imshow("Frame", frame_thermal)
         key = cv2.waitKey(1) & 0xFF
 
         # if the `q` key was pressed, break from the loop
         if key == ord("q"):
             break
 
-    # do a bit cleanup 
+    # do a bit cleanup
+    print("[INFO] Total frames processed:", frame_counter) 
     cv2.destroyAllWindows()
     vs.release()
     writer.release()
