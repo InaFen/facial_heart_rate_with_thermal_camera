@@ -165,7 +165,7 @@ def calculate_first_second_derivative(signal: np.ndarray) -> tuple[np.ndarray, n
     second_derivative = np.gradient(first_derivative)
     return first_derivative, second_derivative
 
-def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: str, upsample: int):
+def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: str, upsample: int, resize: bool):
     """
     Code taken from https://github.com/IS2AI/thermal-facial-landmarks-detection/tree/main
     """
@@ -204,8 +204,9 @@ def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: s
             print("Frame not grabbed")
             break
         
-        # resize the frame
-        frame = imutils.resize(frame, width=300)
+        if resize:
+            # resize the frame (might hurt performance if original is smaller, maybe only upsize better then)
+            frame = imutils.resize(frame, width=300)
 
         # copy the frame
         frame_thermal = frame.copy()

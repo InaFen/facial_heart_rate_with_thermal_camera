@@ -10,7 +10,7 @@ first_derivative_matrix_path = 'first_derivative_matrix.npy'
 second_derivative_matrix_path = 'second_derivative_matrix.npy'
 fps = 9.0
 
-path_save_video_with_landmarks = 'recorded_videos/video_with_landmarks.mp4'  # Path to Dlib landmark model #TODO doesnt save
+path_save_video_with_landmarks = 'recorded_videos/video_with_landmarks.avi'  # Path to Dlib landmark model
 
 PREPROCESSING = False
 #############
@@ -88,8 +88,7 @@ if PREPROCESSING:
 ############
 # Landmark detection & denoising 
 ############
-play_recorded_video(video_path)
-get_facial_dlib_landmarks(video_path="external_library/thermal-facial-landmarks-detection/test_video/thermal_video_12_03.avi", path_save_video_with_landmarks=path_save_video_with_landmarks, upsample=0)
+get_facial_dlib_landmarks(video_path="external_library/thermal-facial-landmarks-detection/test_video/thermal_video_12_03.avi", path_save_video_with_landmarks=path_save_video_with_landmarks, upsample=2, resize = False)
 
 # Data Extraction
 
