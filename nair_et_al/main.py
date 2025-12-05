@@ -1,4 +1,4 @@
-from utils import get_raw_signal, plot_pixel_signal, bandpass_filter, plot_multiple_1d_signals, min_max_normalization, calculate_first_second_derivative, get_facial_dlib_landmarks, play_recorded_video
+from utils import *
 import numpy as np
 import os
 
@@ -12,7 +12,7 @@ fps = 9.0
 
 path_save_video_with_landmarks = 'recorded_videos/video_with_landmarks.avi'  # Path to Dlib landmark model
 
-PREPROCESSING = False
+PREPROCESSING = True
 #############
 # Preprocessing
 #############
@@ -77,6 +77,8 @@ if PREPROCESSING:
     else:
         first_derivative_matrix = np.load(first_derivative_matrix_path)
         second_derivative_matrix = np.load(second_derivative_matrix_path)
+
+    show_preprocessed_signal_as_video(signal_matrix=normalized_signal_matrix, fps=fps)
 
     #plot_multiple_1d_signals([normalized_signal_matrix[:, x_visualization, y_visualization], first_derivative_matrix[:, x_visualization, y_visualization], second_derivative_matrix[:, x_visualization, y_visualization]], labels=['Normalized Signal', 'First Derivative', 'Second Derivative'])
 

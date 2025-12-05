@@ -261,3 +261,33 @@ def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: s
     cv2.destroyAllWindows()
     vs.release()
     writer.release()
+
+
+def show_preprocessed_signal_as_video(signal_matrix: np.ndarray, fps: float, apply_colormap: bool = False):
+    """
+    Displays the preprocessed signal matrix as a video.
+
+    :param signal_matrix: 3D numpy array of shape (num_frames, height, width).
+    :param fps: Frames per second for video playback.
+    """
+    num_frames, _, _ = signal_matrix.shape
+    delay = int(1000 / fps)
+
+    for i in range(num_frames):
+        frame = signal_matrix[i]
+
+        # Convert to 8-bit
+        frame_uint8 = frame#(frame * 255).astype(np.uint8)
+
+        # Apply color map if requested
+        if apply_colormap:
+            frame_display = cv2.applyColorMap(frame_uint8, cv2.COLORMAP_JET)
+        else:
+            frame_display = frame_uint8
+
+        cv2.imshow("Thermal Video", frame_display)
+        key = cv2.waitKey(delay) & 0xFF
+        if key == ord('q'):
+            break
+
+    cv2.destroyAllWindows()
