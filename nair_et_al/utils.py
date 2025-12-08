@@ -291,3 +291,25 @@ def show_preprocessed_signal_as_video(signal_matrix: np.ndarray, fps: float, app
             break
 
     cv2.destroyAllWindows()
+
+
+def plot_Vh_components(Vh: np.ndarray, num_components: int):
+    """
+    Plots the first 'num_components' temporal components from Vh matrix.
+
+    :param Vh: 2D numpy array from SVD (shape: num_components, num_frames).
+    :param num_components: Number of components to plot.
+    """
+    plt.figure(figsize=(12, 6))
+    for i in range(num_components):
+        plt.subplot(num_components, 1, i + 1)
+        plt.plot(Vh[i, :])
+        plt.title(f'Temporal Component {i + 1}')
+        plt.xlabel('Frame')
+        plt.ylabel('Amplitude')
+        plt.grid()
+    plt.tight_layout()
+    plt.show()
+
+
+
