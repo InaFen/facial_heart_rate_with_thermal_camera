@@ -115,10 +115,23 @@ else:
     filtered_mean_values_subregions_matrix = np.load(filtered_mean_values_subregions_matrix_path)
 
 
-# Data Extraction
-
 # Dimensionality Reduction
+# Apply SVD
+# Should be:
+# Rows = regions -> weight of the signals in the spatial location in U
+# Columns = time frames -> siginificant temporal signals in V
+U, S, Vh = np.linalg.svd(filtered_mean_values_subregions_matrix, full_matrices=False)
 
+# Plot the first temporal component
+plt.figure()
+plt.plot(Vh[0, :])
+plt.title("Vh[0, :] — Temporal Component 1")
+plt.xlabel("Time (frame)")
+plt.ylabel("Amplitude")
+plt.show()
+
+
+print("done")
 # PPG Signal Reconstruction
 
 # STFT
