@@ -312,4 +312,45 @@ def plot_Vh_components(Vh: np.ndarray, num_components: int):
     plt.show()
 
 
+def compute_quality_index(signal, fs, normal_hr_freq):
+    """
+    Compute the quality index Q(z) for a given PPG signal.
+
+    Parameters:
+    - signal: Input PPG signal segment.
+    - fs: Sampling frequency.
+    - normal_hr_freq: Normal heart rate frequency (scalar) in Hz.
+
+    Returns:
+    - Q: Quality index for the signal.
+    """
+    # Compute the Fourier Transform
+    n = len(signal)
+    fft_signal = np.fft.fft(signal)
+    freqs = np.fft.fftfreq(n, 1/fs)
+
+    # Compute the magnitude of the Fourier Transform
+    magnitude = np.abs(fft_signal)
+
+    # Only consider positive frequencies
+    pos_mask = freqs >= 0
+    freqs_pos = freqs[pos_mask]
+    magnitude_pos = magnitude[pos_mask]
+
+    # Find the indices corresponding to the normal heart rate range
+    # Numerator: 3/4 to 5/4 of normal_hr_freq
+    # Denominator: 1/2 to 2 times normal_hr_freq
+    idx_numerator = np.where((freqs_pos >= (0.75 * normal_hr_freq)) & (freqs_pos <= (1.25 * normal_hr_freq)))
+    idx_denominator = np.where((freqs_pos >= (0.5 * normal_hr_freq)) & (freqs_pos <= (2 * normal_hr_freq)))
+
+    # Compute the numerator: integral over the heart rate band
+    numerator = np.trapz(magnitude_pos[idx_numerator], freqs_pos[idx_numerator])
+
+    # Compute the denominator: integral over the entire positive frequency range
+    denominator = np.trapz(magnitude_pos[idx_denominator], freqs_pos[idx_denominator])
+
+    # Compute the quality index
+    quality_index = numerator / denominator
+
+    return quality_index
 

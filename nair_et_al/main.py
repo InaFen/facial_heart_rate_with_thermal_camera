@@ -122,14 +122,17 @@ else:
 # Columns = time frames -> siginificant temporal signals in V
 U, S, Vh = np.linalg.svd(filtered_mean_values_subregions_matrix, full_matrices=False)
 
-# Plot the first temporal component
-plt.figure()
-plt.plot(Vh[0, :])
-plt.title("Vh[0, :] — Temporal Component 1")
-plt.xlabel("Time (frame)")
-plt.ylabel("Amplitude")
-plt.show()
+#plot_Vh_components(Vh, num_components=5)
 
+# Apply signal quality indices to select the best component
+quality_indexs = []
+for component_idx in range(Vh.shape[0]):
+    signal = Vh[component_idx, :]
+    quality_index = compute_quality_index(signal= signal, fs=fps, normal_hr_freq=1.683) # 1.683 Hz = 101 bpm - was during testing
+    quality_indexs.append(quality_index)
+    print(f"Component {component_idx}; Quality Index = {quality_index}")
+
+best_component_idx = np.argmax(quality_indexs)
 
 print("done")
 # PPG Signal Reconstruction
