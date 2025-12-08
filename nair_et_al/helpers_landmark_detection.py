@@ -1,6 +1,7 @@
 import cv2
 import dlib
 import numpy as np
+import mediapipe as mp
 from imutils import face_utils, resize as imutils_resize
 
 def draw_landmarks_with_numbers(frame, landmarks, circle_color=(255, 0, 0),
@@ -77,12 +78,6 @@ def annotate_video_with_landmarks(input_video_path: str, output_video_path: str,
     cv2.destroyAllWindows()
     print(f"Annotated video saved to: {output_video_path}")
 
-
-
-import cv2
-import dlib
-import numpy as np
-from imutils import face_utils, resize as imutils_resize
 
 def get_facial_dlib_landmarks_regions_and_save_their_mean(video_path: str, path_save_video_with_landmarks: str, upsample: int , resize_frame: bool) -> np.ndarray:
     """
@@ -193,3 +188,86 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(video_path: str, path_
     all_means = np.array(all_means).T  # 5 x num_frames
     print("Shape of mean values matrix:", all_means.shape)
     return all_means
+
+
+
+def apply_facemesh_to_thermal_video(input_path: str, output_path: str=None):
+    """
+    Apply MediaPipe FaceMesh to a thermal video, display the result in real-time,
+    and optionally save the annotated output video.
+
+    Args:
+        input_path: Path to the thermal input video.
+        output_path: Path to save the annotated output video (optional).
+                     If None, video is not saved.
+    """
+
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        print("Error: Cannot open input video.")
+        return
+
+    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps    = cap.get(cv2.CAP_PROP_FPS)
+
+    # Optional video writer
+    if output_path is not None:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    else:
+        out = None
+
+    mp_face_mesh = mp.solutions.face_mesh
+    face_mesh = mp_face_mesh.FaceMesh(
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5
+    )
+
+    print("Processing video... Press 'Q' to quit.")
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Normalize IF 16-bit thermal
+        if frame.dtype != np.uint8:
+            frame_norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX)
+            frame_norm = frame_norm.astype(np.uint8)
+        else:
+            frame_norm = frame
+
+        # Pseudo-RGB for MediaPipe
+        pseudo_rgb = cv2.applyColorMap(frame_norm, cv2.COLORMAP_JET)
+        rgb_for_mesh = cv2.cvtColor(pseudo_rgb, cv2.COLOR_BGR2RGB)
+
+        # Run FaceMesh
+        results = face_mesh.process(rgb_for_mesh)
+
+        # Draw landmarks
+        if results.multi_face_landmarks:
+            for face_lm in results.multi_face_landmarks:
+                for lm in face_lm.landmark:
+                    x = int(lm.x * width)
+                    y = int(lm.y * height)
+                    cv2.circle(pseudo_rgb, (x, y), 1, (0, 255, 0), -1)
+
+        # Show video live
+        cv2.imshow("Thermal FaceMesh", pseudo_rgb)
+
+        # Write frame if saving enabled
+        if out is not None:
+            out.write(pseudo_rgb)
+
+        # Quit on Q
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    if out:
+        out.release()
+    face_mesh.close()
+    cv2.destroyAllWindows()
