@@ -354,3 +354,62 @@ def compute_quality_index(signal, fs, normal_hr_freq):
 
     return quality_index
 
+
+def generate_ppg_signal(signals, fs, normal_hr_freq, quality_threshold):
+    """
+    Generate PPG signal by selecting and summing high-quality components.
+
+    Parameters:
+    - signals: list or array of candidate signals (e.g., from SVD components)
+    - fs: sampling frequency
+    - normal_hr_freq: normal heart rate frequency in Hz
+    - quality_threshold: minimum quality index to stop summing signals
+
+    Returns:
+    - ppg_signal: combined PPG signal
+    """
+    # Step 1: Compute quality index for each signal
+    quality_indexs = [compute_quality_index(s, fs, normal_hr_freq) for s in signals]
+
+    for i, q in enumerate(quality_indexs):
+        print(f"Component {i}: Quality Index = {q}")
+
+    # Step 2: Rank signals by quality (descending)
+    sorted_indices = np.argsort(quality_indexs)[::-1]
+
+    # Step 3: Sum signals until a good quality is reached
+    cumulative_signal = np.zeros_like(signals[0])
+    cumulative_quality = 0
+    for idx in sorted_indices:
+        cumulative_signal += signals[idx]
+        cumulative_quality = compute_quality_index(cumulative_signal, fs, normal_hr_freq)
+        print(f"Added component {idx}, Cumulative Quality Index = {cumulative_quality}")
+        if cumulative_quality >= quality_threshold:
+            break
+
+    return cumulative_signal
+
+
+def extract_curve(S_PPG_abs, lambda_reg=0.1, max_iter=100):
+    n_freq, n_time = S_PPG_abs.shape
+    cc = np.zeros(n_time)
+
+    # Initialize cc(t) with the frequency of maximum magnitude at each time
+    for t in range(n_time):
+        cc[t] = np.argmax(S_PPG_abs[:, t])
+
+    # Iterative optimization to find the best curve
+    for _ in range(max_iter):
+        new_cc = np.zeros(n_time)
+        for t in range(n_time):
+            if t > 0:
+                # Cost function: log|S_PPG| - λ * |cc(t) - cc(t-1)|
+                cost = np.log(S_PPG_abs[:, t] + 1e-10) - lambda_reg * np.abs(np.arange(n_freq) - cc[t-1])
+            else:
+                cost = np.log(S_PPG_abs[:, t] + 1e-10)
+            new_cc[t] = np.argmax(cost)
+        if np.allclose(cc, new_cc):
+            break
+        cc = new_cc
+
+    return cc

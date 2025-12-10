@@ -1,6 +1,6 @@
 from utils import *
 
-def preprocessing_pipeline():
+def preprocessing_pipeline(video_path, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, fps, edges_bandpass_filter):
         # Load video and get raw signal
     raw_signal_matrix = get_raw_signal(video_path)
 
@@ -61,10 +61,12 @@ def preprocessing_pipeline():
         first_derivative_matrix = np.load(first_derivative_matrix_path)
         second_derivative_matrix = np.load(second_derivative_matrix_path)
 
-    show_preprocessed_signal_as_video(signal_matrix=normalized_signal_matrix, fps=fps)
+    #show_preprocessed_signal_as_video(signal_matrix=normalized_signal_matrix, fps=fps)
 
     #plot_multiple_1d_signals([normalized_signal_matrix[:, x_visualization, y_visualization], first_derivative_matrix[:, x_visualization, y_visualization], second_derivative_matrix[:, x_visualization, y_visualization]], labels=['Normalized Signal', 'First Derivative', 'Second Derivative'])
 
     ## Feature Detection # TODO
     ## Dissolution and irregular cycle removal #TODO
     ## Feature Extraction # TODO
+
+    print("Preprocessing pipeline completed. [TODO: First, second derivative]")

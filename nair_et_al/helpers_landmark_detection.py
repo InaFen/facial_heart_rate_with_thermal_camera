@@ -4,6 +4,7 @@ import numpy as np
 import mediapipe as mp
 from imutils import face_utils, resize as imutils_resize
 
+
 def draw_landmarks_with_numbers(frame, landmarks, circle_color=(255, 0, 0),
                                 text_color=(0, 255, 0), font_scale=0.4, thickness=1):
     """
@@ -193,13 +194,8 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(video_path: str, path_
 
 def apply_facemesh_to_thermal_video(input_path: str, output_path: str=None):
     """
-    Apply MediaPipe FaceMesh to a thermal video, display the result in real-time,
-    and optionally save the annotated output video.
-
-    Args:
-        input_path: Path to the thermal input video.
-        output_path: Path to save the annotated output video (optional).
-                     If None, video is not saved.
+    Apply MediaPipe FaceMesh to a thermal video, draw ALL landmarks + ROIs,
+    display in real time, optionally save annotated video, and collect ROI pixel data.
     """
 
     cap = cv2.VideoCapture(input_path)
@@ -210,6 +206,7 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str=None):
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps    = cap.get(cv2.CAP_PROP_FPS)
+    delay = int(1000 / fps)
 
     # Optional video writer
     if output_path is not None:
@@ -226,44 +223,79 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str=None):
         min_tracking_confidence=0.5
     )
 
-    print("Processing video... Press 'Q' to quit.")
+    # ROI landmark groups
+    # source: https://i.sstatic.net/aGdBV.jpg
+    ROI_LANDMARKS = {
+        "left_cheek":  [143,116,123,147,207,206, 203, 142, 100, 120, 119, 118, 117, 111],
+        "right_cheek": [372, 345, 352, 376, 411, 427, 426, 423, 371, 329, 349, 348, 347, 346, 340],
+        "forehead":    [105, 104, 103, 67, 109, 10, 338, 297, 332, 333, 334, 296, 336, 9, 107, 66],
+        "nose":        [168, 122, 188, 174, 236, 134, 220, 45, 4, 275, 440, 363, 456, 399, 412, 351],
+        "chin":        [43, 106, 182, 83, 18, 313, 406, 335, 424, 431, 262, 428, 199, 208, 32, 211,210, 202]
+    }
+
+    roi_pixel_log = []   # List of dicts storing ROI pixel arrays per frame
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Normalize IF 16-bit thermal
+        thermal_original = frame.copy()
+
+        # Normalize if 16-bit
         if frame.dtype != np.uint8:
             frame_norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX)
             frame_norm = frame_norm.astype(np.uint8)
         else:
             frame_norm = frame
 
-        # Pseudo-RGB for MediaPipe
+        # Convert to pseudo-RGB
         pseudo_rgb = cv2.applyColorMap(frame_norm, cv2.COLORMAP_JET)
-        rgb_for_mesh = cv2.cvtColor(pseudo_rgb, cv2.COLOR_BGR2RGB)
+        mesh_input = cv2.cvtColor(pseudo_rgb, cv2.COLOR_BGR2RGB)
 
-        # Run FaceMesh
-        results = face_mesh.process(rgb_for_mesh)
+        results = face_mesh.process(mesh_input)
 
-        # Draw landmarks
+        frame_roi_data = {}
+
         if results.multi_face_landmarks:
-            for face_lm in results.multi_face_landmarks:
-                for lm in face_lm.landmark:
-                    x = int(lm.x * width)
-                    y = int(lm.y * height)
-                    cv2.circle(pseudo_rgb, (x, y), 1, (0, 255, 0), -1)
+            face_lm = results.multi_face_landmarks[0]
 
-        # Show video live
-        cv2.imshow("Thermal FaceMesh", pseudo_rgb)
+            # Convert all 468 landmarks to pixel coordinates
+            pts = np.array([
+                [int(lm.x * width), int(lm.y * height)]
+                for lm in face_lm.landmark
+            ])
 
-        # Write frame if saving enabled
+            # Draw ALL 468 landmarks 
+            for (x, y) in pts:
+                cv2.circle(pseudo_rgb, (x, y), 1, (0, 255, 0), -1)
+
+            # ------------------------------------------------------
+            # ✅ Draw the ROI polygons & extract ROI pixel data
+            # ------------------------------------------------------
+            for roi_name, indices in ROI_LANDMARKS.items():
+                roi_poly = pts[indices]  # polygon vertices
+
+                # Draw polygon on output
+                cv2.polylines(pseudo_rgb, [roi_poly], True, (255, 0, 0), 2)
+
+                # Create ROI mask
+                mask = np.zeros((height, width), dtype=np.uint8)
+                cv2.fillPoly(mask, [roi_poly], 255)
+
+                # Extract raw thermal pixels inside ROI
+                roi_pixels = thermal_original[mask == 255]
+                frame_roi_data[roi_name] = roi_pixels
+
+            roi_pixel_log.append(frame_roi_data)
+
+        # Show annotated output
+        cv2.imshow("Thermal FaceMesh + Landmarks + ROIs", pseudo_rgb)
+
         if out is not None:
             out.write(pseudo_rgb)
 
-        # Quit on Q
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(delay) & 0xFF == ord('q'):
             break
 
     cap.release()
@@ -271,3 +303,7 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str=None):
         out.release()
     face_mesh.close()
     cv2.destroyAllWindows()
+
+    print("Collected ROI pixel data for", len(roi_pixel_log), "frames.")
+    return roi_pixel_log
+
