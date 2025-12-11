@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 import mediapipe as mp
+import matplotlib.pyplot as plt
+
 
 def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict):
     """
@@ -98,7 +100,7 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         if out is not None:
             out.write(pseudo_rgb)
 
-        if cv2.waitKey(delay) & 0xFF == ord('q'):
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
@@ -111,14 +113,23 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
     return roi_mask_log
 
 
-def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: str):
+def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: str) -> list[dict]:
     """
-    Apply per-frame ROI masks to the original video and save the result.
+    Apply ROI masks to the original video AND record:
+      - all pixel values inside each ROI (per frame)
+      - all pixel coordinates inside each ROI (per frame)
 
-    Parameters:
-        video_path (str): Path to the original thermal video
-        roi_mask_log (list): List of dicts containing ROI masks per frame
-        output_path (str): Path to save the output video
+    Returns:
+        roi_pixel_data : list of dicts, one entry per frame:
+            {
+                "roi_name": {
+                    "coords": [(x1,y1), (x2,y2), ...],
+                    "values": [v1, v2, ...],
+                    "mean_value": float
+                },
+                ...
+            }
+    }
     """
 
     cap = cv2.VideoCapture(video_path)
@@ -132,45 +143,59 @@ def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: s
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
     frame_idx = 0
+    roi_pixel_data = []   # <-- NEW: store all ROI pixel/coord info here
 
     while True:
         ret, frame = cap.read()
         if not ret or frame_idx >= len(roi_mask_log):
             break
 
-        # If frame is 16-bit, normalize to 0-255 for visualization
+        # Convert 16-bit to 8-bit for display, but keep original frame for pixel extraction
         if frame.dtype != np.uint8:
-            frame_norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX)
-            frame_norm = frame_norm.astype(np.uint8)
+            frame_norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         else:
             frame_norm = frame.copy()
 
-        # Create a combined mask if there are multiple ROIs
+        roi_frame_data = {}   # stores data for all ROIs this frame
         combined_mask = np.zeros((height, width), dtype=np.uint8)
-        for mask in roi_mask_log[frame_idx].values():
+
+        # Process each ROI
+        for roi_name, mask in roi_mask_log[frame_idx].items():
             combined_mask = cv2.bitwise_or(combined_mask, mask)
 
-        # Apply the mask to the original frame
+            # Extract pixel coordinates
+            ys, xs = np.where(mask == 255)
+            coords = list(zip(xs, ys))
+
+            # Extract pixel values from original (grayscale) thermal frame
+            if frame.ndim == 3:
+                gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            else:
+                gray_frame = frame.copy()
+
+            values = gray_frame[ys, xs].tolist()
+
+            roi_frame_data[roi_name] = {
+                "coords": coords,
+                "values": values,
+                "mean_value": float(np.mean(values)) if len(values) > 0 else float('nan')
+            }
+
+        roi_pixel_data.append(roi_frame_data)
+
+        # Apply combined mask for output video
         masked_frame = cv2.bitwise_and(frame_norm, frame_norm, mask=combined_mask)
 
-        # Ensure the frame we write is BGR (3-channel). The input `frame_norm`
-        # may already be color (3-channel) or grayscale (1-channel). Only
-        # convert if it's a single-channel image.
-        if masked_frame.ndim == 2 or masked_frame.shape[2] == 1:
+        # Convert grayscale → BGR if needed
+        if masked_frame.ndim == 2:
             masked_bgr = cv2.cvtColor(masked_frame, cv2.COLOR_GRAY2BGR)
         else:
             masked_bgr = masked_frame
 
-        # Optional: overlay the mask in color for visibility
-        # color_overlay = np.zeros_like(masked_bgr)
-        # color_overlay[:, :, 2] = combined_mask  # red overlay
-        # masked_bgr = cv2.addWeighted(masked_bgr, 1.0, color_overlay, 0.5, 0)
-
         out.write(masked_bgr)
 
-        # Optional display
         cv2.imshow("ROI Masked Video", masked_bgr)
-        if cv2.waitKey(int(1000/fps)) & 0xFF == ord('q'):
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
         frame_idx += 1
@@ -179,3 +204,50 @@ def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: s
     out.release()
     cv2.destroyAllWindows()
     print(f"Saved masked video to: {output_path}")
+
+    return roi_pixel_data
+
+
+def plot_roi_mean_signals(roi_pixel_data: list):
+    """
+    Plot the mean temperature signal for each ROI across all frames.
+
+    Parameters:
+        roi_pixel_data (list):
+            Output of `apply_roi_masks_to_video()`, a list of dicts:
+            roi_pixel_data[frame_idx][roi_name]["mean_value"]
+    """
+
+    if len(roi_pixel_data) == 0:
+        print("Error: roi_pixel_data is empty.")
+        return
+
+    # Get list of ROI names from first frame
+    roi_names = list(roi_pixel_data[0].keys())
+
+    # Prepare time axis
+    num_frames = len(roi_pixel_data)
+    frames = list(range(num_frames))
+
+    # Prepare data container
+    roi_means = {roi: [] for roi in roi_names}
+
+    # Extract mean values per frame
+    for frame_data in roi_pixel_data:
+        for roi in roi_names:
+            val = frame_data[roi]["mean_value"]
+            roi_means[roi].append(val)
+
+    # Plot
+    plt.figure(figsize=(12, 6))
+
+    for roi in roi_names:
+        plt.plot(frames, roi_means[roi], label=roi)
+
+    plt.xlabel("Frame Index", fontsize=12)
+    plt.ylabel("Mean Temperature", fontsize=12)
+    plt.title("ROI Mean Temperature Over Time", fontsize=14)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
