@@ -109,3 +109,73 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
 
     print("Collected ROI masks for", len(roi_mask_log), "frames.")
     return roi_mask_log
+
+
+def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: str):
+    """
+    Apply per-frame ROI masks to the original video and save the result.
+
+    Parameters:
+        video_path (str): Path to the original thermal video
+        roi_mask_log (list): List of dicts containing ROI masks per frame
+        output_path (str): Path to save the output video
+    """
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {video_path}")
+
+    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps    = cap.get(cv2.CAP_PROP_FPS)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    frame_idx = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret or frame_idx >= len(roi_mask_log):
+            break
+
+        # If frame is 16-bit, normalize to 0-255 for visualization
+        if frame.dtype != np.uint8:
+            frame_norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX)
+            frame_norm = frame_norm.astype(np.uint8)
+        else:
+            frame_norm = frame.copy()
+
+        # Create a combined mask if there are multiple ROIs
+        combined_mask = np.zeros((height, width), dtype=np.uint8)
+        for mask in roi_mask_log[frame_idx].values():
+            combined_mask = cv2.bitwise_or(combined_mask, mask)
+
+        # Apply the mask to the original frame
+        masked_frame = cv2.bitwise_and(frame_norm, frame_norm, mask=combined_mask)
+
+        # Ensure the frame we write is BGR (3-channel). The input `frame_norm`
+        # may already be color (3-channel) or grayscale (1-channel). Only
+        # convert if it's a single-channel image.
+        if masked_frame.ndim == 2 or masked_frame.shape[2] == 1:
+            masked_bgr = cv2.cvtColor(masked_frame, cv2.COLOR_GRAY2BGR)
+        else:
+            masked_bgr = masked_frame
+
+        # Optional: overlay the mask in color for visibility
+        # color_overlay = np.zeros_like(masked_bgr)
+        # color_overlay[:, :, 2] = combined_mask  # red overlay
+        # masked_bgr = cv2.addWeighted(masked_bgr, 1.0, color_overlay, 0.5, 0)
+
+        out.write(masked_bgr)
+
+        # Optional display
+        cv2.imshow("ROI Masked Video", masked_bgr)
+        if cv2.waitKey(int(1000/fps)) & 0xFF == ord('q'):
+            break
+
+        frame_idx += 1
+
+    cap.release()
+    out.release()
+    cv2.destroyAllWindows()
+    print(f"Saved masked video to: {output_path}")
