@@ -1,9 +1,9 @@
-from utils import *
-from helpers_landmark_detection import *
+from .utils import *
+from .helpers_landmark_detection import *
 import numpy as np
 import os
 from scipy.signal import stft
-from preprocessing import preprocessing_pipeline
+from .preprocessing import preprocessing_pipeline
 
 
 edges_bandpass_filter = [0.1, 4.4]  # in Hz
