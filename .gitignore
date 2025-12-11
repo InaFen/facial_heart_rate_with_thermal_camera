@@ -29,3 +29,9 @@ Thumbs.db
 # dlib files
 *.dat
 *.bz2
+
+# ROS
+*.bag
+
+# Images
+*.png
