@@ -1,4 +1,4 @@
-from .utils import *
+from utils import *
 
 def preprocessing_pipeline(video_path, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, fps, edges_bandpass_filter):
         # Load video and get raw signal
