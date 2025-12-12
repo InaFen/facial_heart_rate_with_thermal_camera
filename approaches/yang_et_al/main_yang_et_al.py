@@ -72,14 +72,23 @@ block_features, roi_names = build_block_features_from_roi_pixel_data(roi_pixel_d
 adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_features)
 
 signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
-
+# plot each ROI signal seperately
 plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names)
 
 signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
+plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
+
 # compute mean ignoring NaNs
 mean_val = np.nanmean(signal_all_rois)
 # replace NaNs
 signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
+plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
+
 
 # Denoise signal via laplacian
 denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, L=laplacian)
+plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
+
+plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
+
+print("Finished Yang et al. approach pipeline.")
