@@ -7,6 +7,8 @@ sys.path.insert(0, project_root)
 
 from approaches.new_approach.utils_landmark_detection import *
 from utils_face_tracking import track_face, filter_out_pixels_below_threshold
+from utils_spatial_temporal_graph import *
+from approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
 
 
 path_video = 'recorded_videos/thermal_video_12_03.avi'
@@ -56,16 +58,19 @@ if not os.path.isfile(path_roi_pixel_data):
 else:
     roi_pixel_data = np.load(path_roi_pixel_data, allow_pickle=True)
 
-plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) #TODO double check if all frames are used
+#plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) 
 
 
-# TODO Schritt (zentrale Koordinaten bekommen)
-for frame_idx, frame_data in enumerate(roi_pixel_data):
-    for roi_name, roi_info in frame_data.items():
+# Calculate centroids of each ROI in each frame
+roi_pixel_data_with_centroids = add_centroids_to_roi_data(roi_pixel_data)
 
-        coords = roi_info["coords"]
-        centroid = compute_centroid(coords)
 
-        roi_info["centroid"] = centroid
+# Create graph and get laplacian
+block_features, roi_names = build_block_features_from_roi_pixel_data(roi_pixel_data)
 
-# Graph erstellen
+adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_features)
+
+# Denoise signal via laplacian
+denoise_via_laplacian(Y=NotImplemented, L=laplacian)
+
+
