@@ -134,7 +134,8 @@ def build_spatiotemporal_graph_2(block_features, temporal_weight=0.1, sigma_spat
     temporal_weight: default weight for same-block across adjacent frames (if temporal_mode == 'const').
     sigma_spatial: if provided, use exp(-dist^2/(2*sigma^2)), otherwise exp(-dist).
     temporal_mode: 'const' or 'similarity' (if 'similarity', weight by similarity of features across frames).
-    Returns: W (adjacency), L (laplacian)
+    Returns: W (adjacency), L (laplacian) - which has format: [t=0 ROI0, t=0 ROI1, ..., t=0 ROI3,
+    t=1 ROI0, t=1 ROI1, ..., t=1 ROI3,]
     """
     T = len(block_features) # Number of frames
     N = block_features[0].shape[0] # Number of blocks (= subregions)
@@ -148,7 +149,7 @@ def build_spatiotemporal_graph_2(block_features, temporal_weight=0.1, sigma_spat
     block_coords = [f[:, 1:3] for f in block_features]  # x,y
 
     # normalize values
-    all_vals = np.vstack(block_values)
+    all_vals = np.vstack(block_values) # format: [t=0 ROI0, t=0 ROI1, ..., t=0 ROI3,t=1 ROI0, t=1 ROI1, ..., t=1 ROI3,]
     mu_val = np.nanmean(all_vals, axis=0) # all_vals might have some NaNs if ROIs not detected in every frame
     s_val = np.nanstd(all_vals, axis=0) # all_vals might have some NaNs if ROIs not detected in every frame
     s_val[s_val==0] = 1.0
@@ -227,3 +228,4 @@ def denoise_via_laplacian(Y, L, mu=0.1):
     # If Y is vector:
     x = spsolve(A, Y) # solve (I + mu*L)x = Y
     return x # denoised signal
+
