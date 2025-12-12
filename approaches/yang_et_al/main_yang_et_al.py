@@ -9,6 +9,7 @@ from approaches.new_approach.utils_landmark_detection import *
 from utils_face_tracking import track_face, filter_out_pixels_below_threshold
 from utils_spatial_temporal_graph import *
 from approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
+from utils_plotting import *
 
 
 path_video = 'recorded_videos/thermal_video_12_03.avi'
@@ -70,7 +71,15 @@ block_features, roi_names = build_block_features_from_roi_pixel_data(roi_pixel_d
 
 adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_features)
 
+signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
+
+plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names)
+
+signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
+# compute mean ignoring NaNs
+mean_val = np.nanmean(signal_all_rois)
+# replace NaNs
+signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
+
 # Denoise signal via laplacian
-denoise_via_laplacian(Y=NotImplemented, L=laplacian)
-
-
+denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, L=laplacian)
