@@ -152,14 +152,16 @@ def build_spatiotemporal_graph_2(block_features, temporal_weight=0.1, sigma_spat
     mu_val = np.nanmean(all_vals, axis=0) # all_vals might have some NaNs if ROIs not detected in every frame
     s_val = np.nanstd(all_vals, axis=0) # all_vals might have some NaNs if ROIs not detected in every frame
     s_val[s_val==0] = 1.0
-    norm_values = [(v - mu_val)/s_val for v in block_values]
+    # temporarily replace NaNs with mean when normalizing
+    norm_values = [(np.where(np.isnan(v), mu_val, v) - mu_val)/s_val for v in block_values]
 
     # normalize coordinates
     all_coords = np.vstack(block_coords)
     mu_coord = np.nanmean(all_coords, axis=0) # all_coords might have some NaNs if ROIs not detected in every frame
     s_coord = np.nanstd(all_coords, axis=0)
     s_coord[s_coord==0] = 1.0
-    norm_coords = [(c - mu_coord)/s_coord for c in block_coords]
+    #  temporarily replace NaNs with mean when normalizing
+    norm_coords = [(np.where(np.isnan(c), mu_coord, c) - mu_coord)/s_coord for c in block_coords]
 
     # recombine
     norm_feats = [np.hstack([v, c]) for v,c in zip(norm_values, norm_coords)]
@@ -173,6 +175,12 @@ def build_spatiotemporal_graph_2(block_features, temporal_weight=0.1, sigma_spat
             Wsp = np.exp(-pdist)         # exp(-d) 
         else:
             Wsp = np.exp(-(pdist**2) / (2 * sigma_spatial**2)) # exp(-d^2/(2*sigma^2))
+        
+        # Set edges to 0 if original feature was NaN
+        mask_nan = np.isnan(block_features[t]).any(axis=1)
+        Wsp[mask_nan, :] = 0
+        Wsp[:, mask_nan] = 0
+
         start = t * N # starting index in W
         W[start:start+N, start:start+N] = Wsp # Fill the diagonal block for frame t with spatial weights
 
@@ -185,6 +193,9 @@ def build_spatiotemporal_graph_2(block_features, temporal_weight=0.1, sigma_spat
         if temporal_mode == 'const':
             # Same block across frames has constant weight
             for b in range(N):
+                 # skip if either block is NaN
+                if np.isnan(block_features[t][b]).any() or np.isnan(block_features[t+1][b]).any():
+                    continue
                 i = start_cur + b
                 j = start_next + b
                 W[i, j] = temporal_weight
@@ -194,6 +205,9 @@ def build_spatiotemporal_graph_2(block_features, temporal_weight=0.1, sigma_spat
             # similarity between same block across times
             pd = np.linalg.norm(Fcur - Fnext, axis=1)  # length N
             sim = np.exp(-pd)
+            # zero similarity if either feature was NaN
+            mask_nan = np.isnan(block_features[t]).any(axis=1) | np.isnan(block_features[t+1]).any(axis=1)
+            sim[mask_nan] = 0
             for b in range(N):
                 i = start_cur + b
                 j = start_next + b
