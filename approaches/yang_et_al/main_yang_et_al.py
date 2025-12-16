@@ -24,6 +24,8 @@ path_roi_pixel_data = "saved_data/yang_et_al/roi_pixel_data.npy"
 overwrite_existing_files = False
 fps = 8.7
 
+#TODO the code should be similar to Yang et al. but double-check before using
+
 #track_face(in_path= path_video, out_path=path_video_tracked_face)
 
 #filter_out_pixels_below_threshold(video_path=path_video, output_path=path_video_thresholded_pixel, threshold_value=160)
