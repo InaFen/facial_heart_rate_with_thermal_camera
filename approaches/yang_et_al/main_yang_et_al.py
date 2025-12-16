@@ -95,7 +95,7 @@ denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(b
 #plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
 
 bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=0.667, highcut=1.667, fs=fps, order=2)
-#plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
+plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
 
 
 # PCA 

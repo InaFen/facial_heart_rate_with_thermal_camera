@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy as np
 import matplotlib.pyplot as plt
-from utils_post_processing import transform_flatten_signal_to_original_shape
+from approaches.yang_et_al.utils_post_processing import transform_flatten_signal_to_original_shape
 
 def plot_signal_each_roi_seperately(block_features, roi_names):
     """
