@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy as np
 import matplotlib.pyplot as plt
-
+from utils_post_processing import transform_flatten_signal_to_original_shape
 
 def plot_signal_each_roi_seperately(block_features, roi_names):
     """
@@ -91,12 +91,11 @@ def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, 
         Title for the plot
     """
 
-    T = len(block_features)
     N = block_features[0].shape[0]
 
     # Reshape signals to (T, N)
-    orig_matrix = signal_flattened_orig.reshape(T, N)
-    denoised_matrix = signal_flattened_denoised.reshape(T, N)
+    orig_matrix = transform_flatten_signal_to_original_shape(block_features=block_features, flattened_signal=signal_flattened_orig)
+    denoised_matrix = transform_flatten_signal_to_original_shape(block_features=block_features, flattened_signal=signal_flattened_denoised)
 
     plt.figure(figsize=(12, 6))
 
@@ -111,3 +110,64 @@ def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, 
     plt.tight_layout()
     plt.show(block=True) 
 
+
+def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names):
+    """
+    Plot denoised signals per ROI in one figure.
+
+    Parameters
+    ----------
+    denoised_signal_unflat : array, shape (T, N)
+        Denoised signal in unflattened form.
+    roi_names : list of str
+        Names of ROIs
+    """
+
+    N = denoised_signal_unflat.shape[1]
+
+    plt.figure(figsize=(12, 6))
+
+    fps = 8.7  
+    time_seconds = np.arange(denoised_signal_unflat.shape[0]) / fps
+
+    for n in range(N):
+        plt.plot(time_seconds, denoised_signal_unflat[:, n], label=f'{roi_names[n]} - Denoised', alpha=0.9)
+
+    plt.xlabel("Seconds")
+    plt.ylabel("Signal Value")
+    plt.title("Denoised Signals per ROI")
+    plt.legend()
+    plt.tight_layout()
+    plt.show(block=True)
+
+def plot_principal_components_in_seperate_plots(principal_components):
+    """
+    Plot each principal component in a separate plot.
+
+    Parameters
+    ----------
+    principal_components : array, shape (T, num_components)
+        The principal components to plot.
+    """
+    T, num_components = principal_components.shape
+
+    plt.figure(figsize=(12, 3 * num_components))
+    for i in range(num_components):
+        plt.subplot(num_components, 1, i + 1)
+        plt.plot(principal_components[:, i])
+        plt.title(f'Principal Component {i + 1}')
+        plt.xlabel('Frame')
+        plt.ylabel('Amplitude')
+        plt.tight_layout()
+    plt.show()
+
+def plot_chosen_component(chosen_component, fps):
+    plt.figure(figsize=(10, 4))
+    time_seconds = np.arange(chosen_component.shape[0]) / fps
+    plt.plot(time_seconds, chosen_component, label='Most Periodic PCA Component', color='blue')
+    plt.xlabel("Seconds")
+    plt.ylabel("Signal Value")
+    plt.title("Most Periodic PCA Component Over Time")
+    plt.legend()
+    plt.tight_layout()
+    plt.show(block=True)

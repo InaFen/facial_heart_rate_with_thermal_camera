@@ -10,6 +10,7 @@ from utils_face_tracking import track_face, filter_out_pixels_below_threshold
 from utils_spatial_temporal_graph import *
 from approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
 from utils_plotting import *
+from utils_post_processing import *
 
 
 path_video = 'recorded_videos/thermal_video_12_03.avi'
@@ -20,6 +21,8 @@ path_pixels_log = "saved_data/yang_et_al/roi_pixel_log.npy"
 path_video_thermal_with_roi_masks = "recorded_videos/yang_et_al/output_video_with_roi_masks.mp4"
 path_roi_pixel_data = "saved_data/yang_et_al/roi_pixel_data.npy"
 
+overwrite_existing_files = False
+fps = 8.7
 
 #track_face(in_path= path_video, out_path=path_video_tracked_face)
 
@@ -32,27 +35,20 @@ roi_landmarks = {"whole face": [
     127, 162, 21, 54, 103, 67, 109
 ]}
 
-roi_landmarks_subgrid_face = {"temp1": [
-    338, 297, 299,296,336, 337
-],
-"temp2": [
-    10,338,337,336,9,151
-],
-"temp3": [
-    67,69,66,109,108,107
-],
-"temp4": [54,68,63,105,104,103
-]
+roi_landmarks_subgrid_face = {"forehead": [10, 338, 297, 332, 284, 251, 389, 368, 300, 293, 334, 296, 336, 9, 107, 66, 105, 63, 71, 162, 21, 54, 103, 67, 109],#[10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 300, 293, 334, 296, 336, 107, 66, 105, 63, 70, 127,103],
+"left_cheek": [245, 233, 232, 231, 230, 229, 228, 31, 111, 116, 123, 147, 187, 205, 36, 142, 126, 217, 174, 188],
+"right_cheek": [453, 357, 343, 420, 360, 266, 280, 352, 345, 449, 451],
+"chin": [202,210, 169, 170, 140, 171, 175, 262, 432, 422, 424, 418, 421, 200, 201, 194, 204]
 }
 
-if not os.path.isfile(path_pixels_log):
+if not os.path.isfile(path_pixels_log) or overwrite_existing_files:
     roi_pixel_log = apply_facemesh_to_thermal_video(input_path=path_video, output_path=path_video_facemesh, roi_landmarks=roi_landmarks_subgrid_face)
     os.makedirs(os.path.dirname(path_pixels_log), exist_ok=True)
     np.save(path_pixels_log, roi_pixel_log, allow_pickle=True)
 else:
     roi_pixel_log = np.load(path_pixels_log, allow_pickle=True)
 
-if not os.path.isfile(path_roi_pixel_data):
+if not os.path.isfile(path_roi_pixel_data) or overwrite_existing_files:
     roi_pixel_data = apply_roi_masks_to_video(video_path=path_video, roi_mask_log=roi_pixel_log, output_path= path_video_thermal_with_roi_masks)
     os.makedirs(os.path.dirname(path_roi_pixel_data), exist_ok=True)
     np.save(path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
@@ -71,24 +67,57 @@ block_features, roi_names = build_block_features_from_roi_pixel_data(roi_pixel_d
 
 adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_features)
 
+#TODO graph creation with optimal feature metric
+
 signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
 # plot each ROI signal seperately
-plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names)
+#plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names)
 
 signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
-plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
+#plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
 
 # compute mean ignoring NaNs
 mean_val = np.nanmean(signal_all_rois)
 # replace NaNs
 signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
-plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
+#plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
 
 
 # Denoise signal via laplacian
 denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, L=laplacian)
-plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
+#plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
+#plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
 
-plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
+# Bandpass filter
+denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
+#plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
+
+bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=0.667, highcut=1.667, fs=fps, order=2)
+#plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
+
+
+# PCA 
+prinicpal_components = pca(data=bandpassed_signal_each_roi_seperate, num_components=4)
+#plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
+
+# Find most periodic component
+selected_pca_component = find_most_periodic_pca_component(principal_components=prinicpal_components)
+#plot_chosen_component(chosen_component=selected_pca_component, fps = fps)
+
+# Apply FFT to the selected PCA component
+fft_selected = np.abs(np.fft.fft(selected_pca_component, n=502))
+
+# Calculate the frequencies corresponding to the FFT bins
+frequencies = np.fft.fftfreq(502, d=1/fps)
+
+# Find the dominant frequency
+dominant_frequency_index = np.argmax(fft_selected)
+dominant_frequency = frequencies[dominant_frequency_index]
+
+# Estimate heart rate
+heart_rate_estimate = dominant_frequency * 60
+print(f"Estimated heart rate: {heart_rate_estimate:.2f} beats per minute")
+
+
 
 print("Finished Yang et al. approach pipeline.")
