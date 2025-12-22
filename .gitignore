@@ -35,3 +35,11 @@ Thumbs.db
 
 # Images
 *.png
+*.PNG
+
+# Signals
+*.edf
+*.npz
+*.h5
+*.txt
+*.cmm
