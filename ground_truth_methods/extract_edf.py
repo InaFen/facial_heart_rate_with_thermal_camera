@@ -28,9 +28,23 @@ def read_edf(file_name):
         npt.NDArray[np.float64]: Extracted ECG signal data as a NumPy array."""
     # Lese Header und Daten mit edfread
     with EdfReader(file_name) as reader:
-        hdr, record = edfread(reader, label='ECG')
+        fs, record = edfread(reader, label='ECG')
     record_data = np.array(record)
-    return record_data, hdr
+    return record_data, fs
+
+def get_info_edf(file_name: str):
+    """Get information about the signals in an EDF file.
+    Args:
+        file_name (str): Path to the EDF file."""
+    f = pyedflib.EdfReader(file_name)
+    n = f.signals_in_file
+    for i in range(n):
+        label = f.getLabel(i)
+        unit = f.getPhysicalDimension(i)
+        fs = f.getSampleFrequency(i)
+        print(f"Channel {i}: {label}, unit={unit}, fs={fs} Hz")
+    f.close()
+    return label, unit, fs
 
 def plot_signal(signal: npt.NDArray[np.float64], title: str, xlabel: str, ylabel: str):
     """Plot a signal using Matplotlib.
@@ -64,13 +78,20 @@ def save_signal_to_npy(target_path: str, filename: str, signal: npt.NDArray[np.f
     print("Signal saved to", os.path.join(target_path, filename))
     
 if __name__ == "__main__":
-    signal_path = "saved_data/ground_truth/beurer/original_edf/Name Name/ECG/202512/17/153829.edf"
+    #signal_path = "saved_data/ground_truth/beurer/original_edf/Name Name/ECG/202512/17/153829.edf"
+    signal_path = "saved_data/ground_truth/opensignals/original_signal/opensignals_0007800f80fa_2025-12-22_17-19-20.edf"
+    npz_filename = "opensignals_0007800f80fa_2025-12-22_17-19-20.npz"
+    npz_path = "saved_data/ground_truth/opensignals/extracted_npy_files"
 
-    record_data, fs = read_edf(signal_path)
+    record_data, _ = read_edf(signal_path)
+    label, unit, fs = get_info_edf(signal_path)
 
-    # Convert from microvolts (EDF storage unit) to millivolts (more common unit)
-    record_data = record_data / 1000.0 
+    if unit == "uV":
+        # Convert from microvolts to millivolts (more common unit)
+        record_data = record_data / 1000.0 
+    else:
+        print(f"Signal unit is {unit}, no conversion applied.")
 
     #plot_signal(record_data, 'Beurer ECG signal', 'Samples', 'Amplitude (mV)')
 
-    save_signal_to_npy("saved_data/ground_truth/beurer/extracted_npy_files", filename= "202512_17_153829.npz",signal=record_data, sampling_rate=fs, units="mV")
+    save_signal_to_npy(target_path=npz_path, filename= npz_filename,signal=record_data, sampling_rate=fs, units="mV")
