@@ -29,6 +29,7 @@ preprocessing_pipeline(video_path, filtered_signal_matrix_path, normalized_signa
 ############
 #apply_facemesh_to_thermal_video(input_path=video_path, output_path=path_save_video_with_landmarks)
 
+# TODO try face detection with dlib but with image transferred to RGB, see yang et al.
 
 if not(os.path.exists(mean_of_subregions_path)):
     mean_values_subregions_matrix = get_facial_dlib_landmarks_regions_and_save_their_mean(video_path=video_path, path_save_video_with_landmarks=path_save_video_with_landmarks, upsample=2, resize_frame = True)
