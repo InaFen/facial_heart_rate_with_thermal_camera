@@ -50,7 +50,7 @@ def record_and_save_thermal_frames(device_path, output_folder="frames", duration
     return timestamps
 
 if __name__ == "__main__":
-    device_path = "/dev/v4l/by-id/usb-GroupGets_PureThermal__fw:v1.3.0__80030034-5101-3133-3332-373300000000-video-index0"  # Change as needed
+    device_path = "/dev/v4l/by-id/usb-GroupGets_PureThermal__fw:v1.3.0__80030034-5101-3133-3332-373300000000-video-index0"
     output_folder = "thermal_frames"
     duration = 5  
 
