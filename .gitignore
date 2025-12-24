@@ -43,3 +43,6 @@ Thumbs.db
 *.h5
 *.txt
 *.cmm
+
+# Raw data
+*.gray
