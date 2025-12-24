@@ -16,11 +16,41 @@
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
+/*
+ * Simple frame capture and camera-timestamp dumper for PureThermal + FLIR Lepton.
+ *
+ * What this program does:
+ * - Opens a V4L2 video device that exposes Lepton frames (e.g. PureThermal)
+ * - Captures Y16 (16-bit grayscale) frames
+ * - Reads the camera's telemetry millisecond counter (time_ms) embedded in the frame
+ * - Prints the timestamp for each frame and optionally saves the raw frame
+ *   using either a sequential index or the camera timestamp as the filename.
+ *
+ * Why height can be 122 instead of 120:
+ * - The image is 160x120 pixels, but when telemetry is enabled the device appends
+ *   extra lines. With PureThermal, we commonly see 2 telemetry lines at the end,
+ *   so the total frame height is 160x122 in Y16.
+ *
+ * Telemetry extraction:
+ * - The camera embeds telemetry words in one of the last lines (or first lines,
+ *   if telemetry-at-start). The time counter is stored as two 16-bit words in
+ *   little-endian order: time_ms = (high_word << 16) | low_word.
+ * - This program looks first at the second-to-last line (common on PureThermal),
+ *   then the last line, and falls back to the first lines if telemetry-at-start.
+ *
+ * Quick usage examples:
+ *   gcc -std=c11 -O2 -Wall capture_lepton_timestamps.c -o capture_lepton_timestamps
+ *   ./capture_lepton_timestamps --device /dev/v4l/by-id/usb-GroupGets_PureThermal... --frames 50 --telemetry end --width 160 --height 122
+ *   ./capture_lepton_timestamps ... --save /tmp/frame_          # save by index
+ *   ./capture_lepton_timestamps ... --save-ts /tmp/lepton_ts_   # save by camera timestamp
+ */
+
 struct buffer {
     void *start;
     size_t length;
 };
 
+/* Where telemetry lines are placed in the frame */
 typedef enum { TELEMETRY_UNKNOWN = 0, TELEMETRY_AT_START, TELEMETRY_AT_END } telemetry_loc_t;
 
 static char *dev_name = NULL;
@@ -28,17 +58,22 @@ static int fd = -1;
 static struct buffer *buffers = NULL;
 static unsigned int n_buffers = 0;
 static unsigned int frame_limit = 100;
+static double duration_sec = 0.0;  /* if > 0, capture for this many seconds instead of frame_limit frames */
 static telemetry_loc_t telemetry_loc = TELEMETRY_AT_END;
 static unsigned int width = 160;
 static unsigned int height = 122; /* default allows room for telemetry lines */
 static char *out_prefix = NULL;
 static int save_frames = 0;
+static char *save_ts_prefix = NULL;
+static int save_by_ts = 0;
 
+/* Print error and exit */
 static void errno_exit(const char *s) {
     fprintf(stderr, "%s error %d, %s\n", s, errno, strerror(errno));
     exit(EXIT_FAILURE);
 }
 
+/* Safe wrapper around ioctl that retries on EINTR */
 static int xioctl(int fh, int request, void *arg) {
     int r;
     do {
@@ -47,6 +82,14 @@ static int xioctl(int fh, int request, void *arg) {
     return r;
 }
 
+/*
+ * Extract the camera millisecond timestamp from the raw frame words.
+ * - frame_words: pointer to the frame mapped in memory
+ * - w, h: negotiated frame width/height (e.g., 160x122) -122 because telemetry lines are added
+ * - loc: expected telemetry placement (start or end)
+ * - out_time_ms: filled with 32-bit time in milliseconds if found
+ * Returns 0 on success, 1 if telemetry wasn't found, -1 on invalid input.
+ */
 static int extract_time_ms_from_frame(const uint16_t *frame_words, unsigned int w, unsigned int h, telemetry_loc_t loc, uint32_t *out_time_ms) {
     if (h == 0 || w == 0) return -1;
 
@@ -86,6 +129,11 @@ static int extract_time_ms_from_frame(const uint16_t *frame_words, unsigned int 
     return 1; /* telemetry not detected */
 }
 
+/*
+ * Called for each received frame buffer:
+ * - parse telemetry and print camera_time_ms
+ * - optionally save the raw frame using timestamp or a sequential index
+ */
 static void process_image(const void *p, int size, unsigned int frame_idx) {
     (void)size;
     uint32_t time_ms = 0;
@@ -97,7 +145,16 @@ static void process_image(const void *p, int size, unsigned int frame_idx) {
         printf("frame %u: camera_time_ms unknown (telemetry not detected)\n", frame_idx);
     }
 
-    if (save_frames && out_prefix) {
+    if (save_by_ts && save_ts_prefix && status == 0) {
+        char path[256];
+        /* Save using camera timestamp as filename */
+        snprintf(path, sizeof(path), "%s%010u.gray", save_ts_prefix, time_ms);
+        FILE *f = fopen(path, "wb");
+        if (f) {
+            fwrite(p, 1, (size_t)size, f);
+            fclose(f);
+        }
+    } else if (save_frames && out_prefix) {
         char path[256];
         snprintf(path, sizeof(path), "%s%06u.gray", out_prefix, frame_idx);
         FILE *f = fopen(path, "wb");
@@ -108,6 +165,7 @@ static void process_image(const void *p, int size, unsigned int frame_idx) {
     }
 }
 
+/* Dequeue a frame from the driver, process, and requeue the buffer */
 static int read_frame(unsigned int frame_idx) {
     struct v4l2_buffer buf;
     CLEAR(buf);
@@ -128,11 +186,31 @@ static int read_frame(unsigned int frame_idx) {
     return 1;
 }
 
+/*
+ * Main capture loop:
+ * - Waits for the device to become ready (select())
+ * - Dequeues and processes frames until frame_limit is reached or duration expires
+ */
 static void mainloop(void) {
     unsigned int count = frame_limit;
     unsigned int frame_idx = 0;
+    struct timeval start_time, current_time;
+    int duration_mode = (duration_sec > 0.0);
+    
+    if (duration_mode) {
+        gettimeofday(&start_time, NULL);
+    }
 
     while (frame_idx < count) {
+        /* Check if duration limit reached */
+        if (duration_mode) {
+            gettimeofday(&current_time, NULL);
+            double elapsed = (current_time.tv_sec - start_time.tv_sec) + 
+                            (current_time.tv_usec - start_time.tv_usec) / 1e6;
+            if (elapsed >= duration_sec) {
+                break;
+            }
+        }
         fd_set fds;
         struct timeval tv;
         int r;
@@ -159,12 +237,14 @@ static void mainloop(void) {
     }
 }
 
+/* Stop streaming */
 static void stop_capturing(void) {
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (xioctl(fd, VIDIOC_STREAMOFF, &type) == -1)
         errno_exit("VIDIOC_STREAMOFF");
 }
 
+/* Enqueue buffers and start streaming */
 static void start_capturing(void) {
     unsigned int i;
     enum v4l2_buf_type type;
@@ -185,6 +265,7 @@ static void start_capturing(void) {
         errno_exit("VIDIOC_STREAMON");
 }
 
+/* Unmap all buffers and free memory */
 static void uninit_device(void) {
     unsigned int i;
     for (i = 0; i < n_buffers; ++i)
@@ -192,6 +273,7 @@ static void uninit_device(void) {
     free(buffers);
 }
 
+/* Request MMAP buffers and map them to userspace */
 static void init_mmap(void) {
     struct v4l2_requestbuffers req;
     CLEAR(req);
@@ -233,6 +315,11 @@ static void init_mmap(void) {
     }
 }
 
+/*
+ * Query device capabilities, set the pixel format and dimensions, and
+ * initialize mmap buffers. Defaults to Y16 (16-bit grayscale), width=160,
+ * height=122 to include telemetry lines.
+ */
 static void init_device(void) {
     struct v4l2_capability cap;
     struct v4l2_format fmt;
@@ -265,11 +352,13 @@ static void init_device(void) {
     init_mmap();
 }
 
+/* Close the device file descriptor */
 static void close_device(void) {
     if (fd != -1)
         close(fd);
 }
 
+/* Open the V4L2 device for non-blocking read/write */
 static void open_device(void) {
     fd = open(dev_name, O_RDWR | O_NONBLOCK, 0);
     if (fd == -1) {
@@ -278,12 +367,22 @@ static void open_device(void) {
     }
 }
 
+/* Print usage information */
 static void usage(const char *prog) {
     fprintf(stderr,
-            "Usage: %s --device DEV [--frames N] [--telemetry start|end] [--width W] [--height H] [--save PREFIX]\n",
+            "Usage: %s --device DEV [--frames N] [--duration SEC] [--telemetry start|end] [--width W] [--height H] [--save PREFIX] [--save-ts PREFIX]\n",
             prog);
 }
 
+/*
+ * Parse command line arguments:
+ * --device PATH     : V4L2 device to open
+ * --frames N        : number of frames to capture
+ * --telemetry start|end : expected telemetry placement in frame
+ * --width W --height H   : desired frame dimensions (Y16)
+ * --save PREFIX     : save frames by sequential index to PREFIXNNNNNN.gray
+ * --save-ts PREFIX  : save frames named by camera timestamp to PREFIX##########.gray
+ */
 static void parse_args(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--device") && i + 1 < argc) {
@@ -302,6 +401,11 @@ static void parse_args(int argc, char **argv) {
         } else if (!strcmp(argv[i], "--save") && i + 1 < argc) {
             out_prefix = argv[++i];
             save_frames = 1;
+        } else if (!strcmp(argv[i], "--save-ts") && i + 1 < argc) {
+            save_ts_prefix = argv[++i];
+            save_by_ts = 1;
+        } else if (!strcmp(argv[i], "--duration") && i + 1 < argc) {
+            duration_sec = atof(argv[++i]);
         } else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
             usage(argv[0]);
             exit(EXIT_SUCCESS);
@@ -323,8 +427,13 @@ int main(int argc, char **argv) {
     init_device();
     start_capturing();
 
-    printf("Capturing %u frames from %s (w=%u h=%u, telemetry=%s)\n", frame_limit, dev_name, width, height,
+    printf("Capturing from %s (w=%u h=%u, telemetry=%s)\n", dev_name, width, height,
            telemetry_loc == TELEMETRY_AT_START ? "start" : "end");
+    if (duration_sec > 0.0) {
+        printf("Duration: %.1f seconds\n", duration_sec);
+    } else {
+        printf("Frames: %u\n", frame_limit);
+    }
 
     mainloop();
     stop_capturing();
