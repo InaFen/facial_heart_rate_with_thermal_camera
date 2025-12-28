@@ -201,7 +201,7 @@ static void mainloop(void) {
         gettimeofday(&start_time, NULL);
     }
 
-    while (frame_idx < count) {
+    while (duration_mode || frame_idx < count) {
         /* Check if duration limit reached */
         if (duration_mode) {
             gettimeofday(&current_time, NULL);
