@@ -136,7 +136,7 @@ def main():
     parser.add_argument(
         "--input-dir",
         type=str,
-        default = "saved_data/raw_lepton_data",
+        default = "saved_data/raw_lepton_data/unclear/",
         help="Directory containing .gray files (e.g., /path/to/raw_lepton_data)"
     )
     parser.add_argument(
