@@ -79,9 +79,9 @@ def save_signal_to_npy(target_path: str, filename: str, signal: npt.NDArray[np.f
     
 if __name__ == "__main__":
     #signal_path = "saved_data/ground_truth/beurer/original_edf/Name Name/ECG/202512/17/153829.edf"
-    signal_path = "saved_data/ground_truth/opensignals/original_signal/opensignals_0007800f80fa_2025-12-22_17-19-20.edf"
-    npz_filename = "opensignals_0007800f80fa_2025-12-22_17-19-20.npz"
-    npz_path = "saved_data/ground_truth/opensignals/extracted_npy_files"
+    signal_path = "data/ground_truth/opensignals/original_signal/29122025/opensignals_0007800f80fa_2025-12-29_17-47-57.edf"
+    npz_filename = "opensignals_0007800f80fa_2025-12-29_17-47-57.npz"
+    npz_path = "saved_data/ground_truth/opensignals/extracted_npy_files/29122025/"
 
     record_data, _ = read_edf(signal_path)
     label, unit, fs = get_info_edf(signal_path)
@@ -92,6 +92,6 @@ if __name__ == "__main__":
     else:
         print(f"Signal unit is {unit}, no conversion applied.")
 
-    #plot_signal(record_data, 'Beurer ECG signal', 'Samples', 'Amplitude (mV)')
+    plot_signal(record_data, 'ECG signal', 'Samples', 'Amplitude (mV)')
 
     save_signal_to_npy(target_path=npz_path, filename= npz_filename,signal=record_data, sampling_rate=fs, units="mV")
