@@ -9,7 +9,6 @@ Usage:
     python3 thermal_video_generator.py --input-dir /path/to/gray/frames --output video.mp4 [--fps 9] [--colormap turbo]
 """
 
-import argparse
 import glob
 import os
 import sys
@@ -76,6 +75,25 @@ def frame_to_8bit_grayscale(frame):
     
     return bgr_frame
 
+def plot_greyscale_frame(path_frame):
+    """
+    Load and display a .gray frame as grayscale image.
+    
+    Args:
+        path_frame: path to .gray file
+    """
+    frame_16bit = load_gray_frame(path_frame, width=160, height=122, drop_telemetry=True)
+    if frame_16bit is None:
+        return
+    
+    frame_8bit = frame_to_8bit_grayscale(frame_16bit)
+    if frame_8bit is None:
+        return
+    
+    cv2.imshow("Grayscale Frame", frame_8bit)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
 
 def create_thermal_video(input_dir, output_file, fps=9, width=160, height=120):
     """
@@ -120,68 +138,42 @@ def create_thermal_video(input_dir, output_file, fps=9, width=160, height=120):
         frame_8bit_bgr = frame_to_8bit_grayscale(frame_16bit)
         if frame_8bit_bgr is None:
             continue
+
+        # Flip vertically to match desired orientation
+        frame_8bit_bgr = cv2.flip(frame_8bit_bgr, 0)
         
         # Write to video
         out.write(frame_8bit_bgr)
         frame_count += 1
     
     out.release()
-    print(f"\n✓ Video written: {output_file} ({frame_count} frames)")
+    print(f"\n Video written: {output_file} ({frame_count} frames)")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Convert .gray thermal frames to a thermal video with colormap."
-    )
-    parser.add_argument(
-        "--input-dir",
-        type=str,
-        default = "saved_data/raw_lepton_data/unclear/",
-        help="Directory containing .gray files (e.g., /path/to/raw_lepton_data)"
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        default="recorded_videos/thermal_video_from_y16_frames/thermal.mp4",
-        help="Output video file (e.g., thermal.mp4)"
-    )
-    parser.add_argument(
-        "--fps",
-        type=float,
-        default=8.7,
-        help="Frames per second (default: 8.7, typical for Lepton)"
-    )
-    parser.add_argument(
-        "--width",
-        type=int,
-        default=160,
-        help="Frame width in pixels (default: 160)"
-    )
-    parser.add_argument(
-        "--height",
-        type=int,
-        default=120,
-        help="Frame height without telemetry in pixels (default: 120)"
-    )
-    
-    args = parser.parse_args()
-    
-    # Validate input directory
-    if not os.path.isdir(args.input_dir):
-        print(f"Error: Input directory '{args.input_dir}' does not exist.", file=sys.stderr)
+
+    input_dir = "data/lepton/processed_lepton_data/29122025_interpolated"
+    output = "data/recorded_videos/thermal_video_from_y16_frames/29122025.mp4"
+    fps = 8.767687772484802 # based on findings in get_consistent_fps_for_gray_images.py
+    width = 160
+    height = 120
+
+    if not os.path.isdir(input_dir):
+        print(f"Error: Input directory '{input_dir}' does not exist.", file=sys.stderr)
         sys.exit(1)
-    
-    # Create output directory if needed
-    output_dir = os.path.dirname(args.output)
+
+    output_dir = os.path.dirname(output)
     if output_dir and not os.path.isdir(output_dir):
         os.makedirs(output_dir, exist_ok=True)
-    
+
+    #plot_greyscale_frame("data/lepton/processed_lepton_data/29122025_interpolated/388438_interpolated.gray")
+
     create_thermal_video(
-        args.input_dir,
-        args.output,
-        fps=args.fps,
-        width=args.width,
-        height=args.height
+        input_dir,
+        output,
+        fps=fps,
+        width=width,
+        height=height
     )
 
 
