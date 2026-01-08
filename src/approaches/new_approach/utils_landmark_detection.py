@@ -168,6 +168,8 @@ def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: s
             coords = list(zip(xs, ys))
 
             # Extract pixel values from original (grayscale) thermal frame
+            # TODO it computes the "temperature" from the RGB to Grey frame, so one value is the weighted sum of R,G,B channels so not actual the temperature
+            # TODO does this cause problems later on? Should not be important that not temperature but the greyscale might be a rounded value?
             if frame.ndim == 3:
                 gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             else:
