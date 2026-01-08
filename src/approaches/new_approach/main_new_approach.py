@@ -122,7 +122,8 @@ plot_denoised_with_ground_truth_offset(denoised_signal_unflat=bandpassed_signal_
                                        gt_signal=ground_truth_signal,
                                        fps_denoised=fps,
                                        fps_gt=gt_fs,
-                                       gt_start_time=9.4)  
+                                       gt_start_time=0.0,
+                                       signal_start_time=15.0)  
 
 # TODO do they all have the same unit? Ground truth and own signal
 """
