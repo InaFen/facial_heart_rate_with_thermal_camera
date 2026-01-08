@@ -5,27 +5,28 @@ import numpy as np
 project_root = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, project_root)
 
-from approaches.new_approach.utils_landmark_detection import *
-from approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold
-from approaches.yang_et_al.utils_spatial_temporal_graph import *
-from approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
-from approaches.yang_et_al.utils_plotting import *
-from approaches.yang_et_al.utils_post_processing import *
+from src.approaches.new_approach.utils_landmark_detection import *
+from src.approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold
+from src.approaches.yang_et_al.utils_spatial_temporal_graph import *
+from src.approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
+from src.approaches.yang_et_al.utils_plotting import *
+from src.approaches.yang_et_al.utils_post_processing import *
 
-from approaches.new_approach.utils_add_ground_truth import *
-from ground_truth_methods.extract_edf import read_edf, save_signal_to_npy, plot_signal
+from src.approaches.new_approach.utils_add_ground_truth import *
+from src.ground_truth_methods.extract_edf import read_edf, save_signal_to_npy, plot_signal
 
-path_video = 'recorded_videos/thermal_video_12_03.avi'
-path_video_tracked_face = 'recorded_videos/yang_et_al/output_tracked_video.mp4'
-path_video_thresholded_pixel="recorded_videos/yang_et_al/output_thresholded_video.mp4"
-path_video_facemesh = "recorded_videos/yang_et_al/output_facemesh_video.mp4"
-path_pixels_log = "saved_data/yang_et_al/roi_pixel_log.npy"
-path_video_thermal_with_roi_masks = "recorded_videos/yang_et_al/output_video_with_roi_masks.mp4"
-path_roi_pixel_data = "saved_data/yang_et_al/roi_pixel_data.npy"
+path_video = 'data/recorded_videos/new_approach/thermal_video_12_03.avi'
+path_video_tracked_face = 'data/recorded_videos/yang_et_al/output_tracked_video.mp4'
+path_video_thresholded_pixel="data/recorded_videos/yang_et_al/output_thresholded_video.mp4"
+path_video_facemesh = "data/recorded_videos/yang_et_al/output_facemesh_video.mp4"
+path_pixels_log = "data/yang_et_al/roi_pixel_log.npy"
+path_video_thermal_with_roi_masks = "data/recorded_videos/yang_et_al/output_video_with_roi_masks.mp4"
+path_roi_pixel_data = "data/saved_data/yang_et_al/roi_pixel_data.npy"
 
 overwrite_existing_files = False
 fps = 8.7
 
+# TODO see utils_landmark_detection.py todo about grey scale
 #TODO the code should be similar to Yang et al. but double-check before using
 
 #track_face(in_path= path_video, out_path=path_video_tracked_face)
@@ -45,7 +46,7 @@ roi_landmarks_subgrid_face = {"forehead": [10, 338, 297, 332, 284, 251, 389, 368
 "chin": [202,210, 169, 170, 140, 171, 175, 262, 432, 422, 424, 418, 421, 200, 201, 194, 204]
 }
 
-file_path_ground_truth="saved_data/ground_truth/beurer/extracted_npy_files/202512_17_153829.npz"
+file_path_ground_truth="data/ground_truth/beurer/extracted_npy_files/202512_17_153829.npz"
 #file_path_ground_truth="saved_data/ground_truth/opensignals/extracted_npy_files/opensignals_0007800f80fa_2025-12-22_17-19-20.npz"
 
 
