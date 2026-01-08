@@ -15,7 +15,7 @@ from src.approaches.yang_et_al.utils_post_processing import *
 from src.approaches.new_approach.utils_add_ground_truth import *
 from src.ground_truth_methods.extract_edf import read_edf, save_signal_to_npy, plot_signal
 
-path_video = 'data/recorded_videos/new_approach/thermal_video_12_03.avi'
+path_video = "data/recorded_videos/thermal_video_from_y16_frames/29122025.mp4" #'data/recorded_videos/new_approach/thermal_video_12_03.avi'
 path_video_tracked_face = 'data/recorded_videos/yang_et_al/output_tracked_video.mp4'
 path_video_thresholded_pixel="data/recorded_videos/yang_et_al/output_thresholded_video.mp4"
 path_video_facemesh = "data/recorded_videos/yang_et_al/output_facemesh_video.mp4"
@@ -24,7 +24,10 @@ path_video_thermal_with_roi_masks = "data/recorded_videos/yang_et_al/output_vide
 path_roi_pixel_data = "data/saved_data/yang_et_al/roi_pixel_data.npy"
 
 overwrite_existing_files = False
-fps = 8.7
+plot_steps = False
+fps = 8.767687772484802 # based on findings in get_consistent_fps_for_gray_images.py
+
+file_path_ground_truth = "data/ground_truth/opensignals/extracted_npy_files/29122025/opensignals_0007800f80fa_2025-12-29_17-47-57.npz"
 
 # TODO see utils_landmark_detection.py todo about grey scale
 #TODO the code should be similar to Yang et al. but double-check before using
@@ -46,10 +49,6 @@ roi_landmarks_subgrid_face = {"forehead": [10, 338, 297, 332, 284, 251, 389, 368
 "chin": [202,210, 169, 170, 140, 171, 175, 262, 432, 422, 424, 418, 421, 200, 201, 194, 204]
 }
 
-file_path_ground_truth="data/ground_truth/beurer/extracted_npy_files/202512_17_153829.npz"
-#file_path_ground_truth="saved_data/ground_truth/opensignals/extracted_npy_files/opensignals_0007800f80fa_2025-12-22_17-19-20.npz"
-
-
 if not os.path.isfile(path_pixels_log) or overwrite_existing_files:
     roi_pixel_log = apply_facemesh_to_thermal_video(input_path=path_video, output_path=path_video_facemesh, roi_landmarks=roi_landmarks_subgrid_face)
     os.makedirs(os.path.dirname(path_pixels_log), exist_ok=True)
@@ -64,7 +63,8 @@ if not os.path.isfile(path_roi_pixel_data) or overwrite_existing_files:
 else:
     roi_pixel_data = np.load(path_roi_pixel_data, allow_pickle=True)
 
-#plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) 
+if plot_steps:
+    plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) 
 
 
 # Calculate centroids of each ROI in each frame
@@ -80,35 +80,42 @@ adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_
 
 signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
 # plot each ROI signal seperately
-#plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names)
+if plot_steps:
+    plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names)
 
 signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
-#plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
+if plot_steps:
+    plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising")
 
 # compute mean ignoring NaNs
 mean_val = np.nanmean(signal_all_rois)
 # replace NaNs
 signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
-#plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
+if plot_steps:
+    plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
 
 
 # Denoise signal via laplacian
 denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, L=laplacian)
-#plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
-#plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
+if plot_steps:
+    plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
+    plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
 
 # Bandpass filter
 denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
-#plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
-
+if plot_steps:
+    plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
 bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=0.667, highcut=1.667, fs=fps, order=2)
-#plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
+if plot_steps:
+    plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
 
 # Get ground truth signal
 ground_truth_signal, gt_fs, gt_units = load_ground_truth_signal_and_fs(file_path_ground_truth)
-plot_signal(title="Ground Truth ECG Signal", signal=ground_truth_signal, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
+if plot_steps:
+    plot_signal(title="Ground Truth ECG Signal", signal=ground_truth_signal, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
 ground_truth_signal_denoised = apply_butterworth_bandpass_filter(signal=ground_truth_signal, lowcut=0.667, highcut=1.667, fs=gt_fs, order=2)
-#plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
+if plot_steps:
+    plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
 
 plot_denoised_with_ground_truth_offset(denoised_signal_unflat=bandpassed_signal_each_roi_seperate,
                                        roi_names=roi_names,
