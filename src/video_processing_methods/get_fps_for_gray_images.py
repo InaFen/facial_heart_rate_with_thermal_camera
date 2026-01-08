@@ -79,22 +79,25 @@ def interpolate_frames(path_frame_1, path_frame_2, expected_time_difference, out
     
     return None
 
-def adapt_gray_frames_to_expected_time_differences(path_gray_images: str, expected_time_differences: list[int], output_dir: str):
-    """
-    Adapt gray frames in a directory to match expected time differences by interpolating frames as needed.
-    Parameters:
-        path_gray_images: directory containing .gray files
-        expected_time_differences: list of expected time differences in ms between frames
-        output_dir: directory to save adapted .gray files
-    Returns:
-        None
+def check_and_interpolate_frame_timing(path_gray_images: str, expected_time_differences: list[int], output_dir: str) -> None:
+    """Copy raw .gray frames and interpolate missing frames based on expected timing.
+
+    - Copies all source frames to `output_dir` (skips if already present)
+    - Detects gaps larger than expected_time_differences (e.g., 114/115 ms)
+    - If a gap is an exact multiple (or multiple+1) of an expected interval, it linearly interpolates
+      the missing frames and writes them with `_interpolated` suffix.
+
+    Args:
+        path_gray_images: Directory containing source .gray files.
+        expected_time_differences: List of expected inter-frame times in ms (e.g., [114, 115]).
+        output_dir: Destination directory to store original and interpolated frames.
     """
     os.makedirs(output_dir, exist_ok=True)
     
     # Get all .gray files timestamps in the directory
     frames_timestamps = sorted([f.split('.')[0] for f in os.listdir(path_gray_images) if f.endswith('.gray')])
 
-    # Save first frame as is to output directory
+    # Save first frame to output directory as loop starts from second frame
     src_path = os.path.join(path_gray_images, f"{frames_timestamps[0]}.gray")
     dst_path = os.path.join(output_dir, f"{frames_timestamps[0]}.gray")
     if not os.path.exists(dst_path):
@@ -103,16 +106,17 @@ def adapt_gray_frames_to_expected_time_differences(path_gray_images: str, expect
     # Calculate time differences between consecutive frames
     time_diffs = []
     for i in range(1, len(frames_timestamps)):
-        timestamp_1 = float(frames_timestamps[i-1])
-        timestamp_2 = float(frames_timestamps[i])
-        time_difference = timestamp_2 - timestamp_1
-        time_diffs.append(time_difference)
-
-        # Save frame as is to output directory
+        # Save frame to output directory
         src_path = os.path.join(path_gray_images, f"{frames_timestamps[i]}.gray")
         dst_path = os.path.join(output_dir, f"{frames_timestamps[i]}.gray")
         if not os.path.exists(dst_path):
             shutil.copyfile(src_path, dst_path)
+
+        # Calculate time difference to previous frame
+        timestamp_1 = float(frames_timestamps[i-1])
+        timestamp_2 = float(frames_timestamps[i])
+        time_difference = timestamp_2 - timestamp_1
+        time_diffs.append(time_difference)
 
         if time_difference not in expected_time_differences:
             # Time difference btw. two frames is smaller than expected
@@ -172,11 +176,10 @@ def get_fps_of_frames_in_directory(path_gray_images: str) -> float:
     
     
 if __name__ == "__main__":
-    #path_original_gray_images = "data/lepton/raw_lepton_data/29122025/"
-    path_original_gray_images = "data/lepton/processed_lepton_data/temp/"
+    path_original_gray_images = "data/lepton/raw_lepton_data/29122025/"
+    path_frames_interpolated = "data/lepton/processed_lepton_data/29122025_interpolated/"
+
     expected_timedifference = [114, 115] # in ms, an inaccuracy of 1 ms can be expected
-    #path_frames_interpolated = "data/lepton/processed_lepton_data/29122025_interpolated/"
-    path_frames_interpolated = "data/lepton/processed_lepton_data/temp/interpolated/"
-    adapt_gray_frames_to_expected_time_differences(path_original_gray_images, expected_timedifference, path_frames_interpolated)
+
+    check_and_interpolate_frame_timing(path_original_gray_images, expected_timedifference, path_frames_interpolated)
     get_fps_of_frames_in_directory(path_frames_interpolated)
-    # TODO fix that fps is 8.75, now after interpolation around 11, function to interpolate frames seems correct
