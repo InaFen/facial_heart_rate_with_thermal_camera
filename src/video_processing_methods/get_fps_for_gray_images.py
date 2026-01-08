@@ -94,6 +94,12 @@ def adapt_gray_frames_to_expected_time_differences(path_gray_images: str, expect
     # Get all .gray files timestamps in the directory
     frames_timestamps = sorted([f.split('.')[0] for f in os.listdir(path_gray_images) if f.endswith('.gray')])
 
+    # Save first frame as is to output directory
+    src_path = os.path.join(path_gray_images, f"{frames_timestamps[0]}.gray")
+    dst_path = os.path.join(output_dir, f"{frames_timestamps[0]}.gray")
+    if not os.path.exists(dst_path):
+        shutil.copyfile(src_path, dst_path)
+
     # Calculate time differences between consecutive frames
     time_diffs = []
     for i in range(1, len(frames_timestamps)):
@@ -102,14 +108,13 @@ def adapt_gray_frames_to_expected_time_differences(path_gray_images: str, expect
         time_difference = timestamp_2 - timestamp_1
         time_diffs.append(time_difference)
 
-        if time_difference in expected_time_differences:
-            # Save frame as is to output directory
-            src_path = os.path.join(path_gray_images, f"{frames_timestamps[i]}.gray")
-            dst_path = os.path.join(output_dir, f"{frames_timestamps[i]}.gray")
-            if not os.path.exists(dst_path):
-                shutil.copyfile(src_path, dst_path)
+        # Save frame as is to output directory
+        src_path = os.path.join(path_gray_images, f"{frames_timestamps[i]}.gray")
+        dst_path = os.path.join(output_dir, f"{frames_timestamps[i]}.gray")
+        if not os.path.exists(dst_path):
+            shutil.copyfile(src_path, dst_path)
 
-        else:
+        if time_difference not in expected_time_differences:
             # Time difference btw. two frames is smaller than expected
             if time_difference < min(expected_time_differences):
                 raise ValueError(f"Time difference {time_difference} is smaller than expected minimum {min(expected_time_differences)}")
@@ -167,9 +172,11 @@ def get_fps_of_frames_in_directory(path_gray_images: str) -> float:
     
     
 if __name__ == "__main__":
-    path_original_gray_images = "data/lepton/raw_lepton_data/29122025/"
-    expected_timedifference = [114, 115] # in ms, a inaccuracy of 1 ms can be expected
-    path_frames_interpolated = "data/lepton/processed_lepton_data/temp/"
-    #adapt_gray_frames_to_expected_time_differences(path_original_gray_images, expected_timedifference, path_frames_interpolated)
+    #path_original_gray_images = "data/lepton/raw_lepton_data/29122025/"
+    path_original_gray_images = "data/lepton/processed_lepton_data/temp/"
+    expected_timedifference = [114, 115] # in ms, an inaccuracy of 1 ms can be expected
+    #path_frames_interpolated = "data/lepton/processed_lepton_data/29122025_interpolated/"
+    path_frames_interpolated = "data/lepton/processed_lepton_data/temp/interpolated/"
+    adapt_gray_frames_to_expected_time_differences(path_original_gray_images, expected_timedifference, path_frames_interpolated)
     get_fps_of_frames_in_directory(path_frames_interpolated)
     # TODO fix that fps is 8.75, now after interpolation around 11, function to interpolate frames seems correct
