@@ -50,10 +50,12 @@ def interpolate_frames(path_frame_1, path_frame_2, expected_time_difference, out
     timestamp_1 = float(os.path.basename(path_frame_1).split('.')[0])
     timestamp_2 = float(os.path.basename(path_frame_2).split('.')[0])
     time_difference = timestamp_2 - timestamp_1
-    print(f"Interpolating frames between {timestamp_1} and {timestamp_2} with time difference {time_difference} ms")
     
     multiple = time_difference // expected_time_difference
     num_frames_to_interpolate = int(multiple - 1)
+
+    print(f"Interpolating frames between {timestamp_1} and {timestamp_2} with time difference {time_difference} ms")
+    print(f"Expected time difference: {expected_time_difference} ms, Number of frames to interpolate: {num_frames_to_interpolate}")
     
     # Load the two frames
     frame_1 = load_gray_frame(path_frame_1)
@@ -126,10 +128,6 @@ def adapt_gray_frames_to_expected_time_differences(path_gray_images: str, expect
                 if not should_interpolate:
                     raise ValueError(f"Time difference {time_difference} is larger than expected and not a valid multiple")
 
-    time_diff_counts = Counter(time_diffs)
-    print(dict(time_diff_counts))
-    print(len(time_diffs))
-
     return None
 
 def get_fps_of_frames_in_directory(path_gray_images: str) -> float:
@@ -138,12 +136,11 @@ def get_fps_of_frames_in_directory(path_gray_images: str) -> float:
     Parameters:
         path_gray_images: directory containing .gray files
     """
-    # Get all .gray files timestamps in the directory
-    frames_timestamps = sorted([f.split('.')[0] for f in os.listdir(path_gray_images) if f.endswith('.gray')])
-
-    # If "_interpolated" suffix exists, remove it for timestamp calculation
-    frames_timestamps = [ts.replace('_interpolated', '') for ts in frames_timestamps]
-
+    # Get all .gray files timestamps sorted in the directory
+    frames_timestamps_interpolated_removed = [f.replace('_interpolated', '') for f in os.listdir(path_gray_images) if f.endswith('.gray')]
+    frames_timestamps_redundant_zeros_removed = [ts.lstrip('0') if ts.lstrip('0') != '' else '0' for ts in frames_timestamps_interpolated_removed]
+    frames_timestamps = sorted([f.split('.')[0] for f in frames_timestamps_redundant_zeros_removed])
+    
     # Calculate time differences between consecutive frames
     time_diffs = []
     for i in range(1, len(frames_timestamps)):
@@ -151,6 +148,9 @@ def get_fps_of_frames_in_directory(path_gray_images: str) -> float:
         timestamp_2 = float(frames_timestamps[i])
         time_difference = timestamp_2 - timestamp_1
         time_diffs.append(time_difference)
+
+        if time_difference < 114 or time_difference > 115:
+            print(f"{frames_timestamps[i-1]}, {frames_timestamps[i]}: Time difference {time_difference} ms")
 
     if not time_diffs:
         print("No time differences found. Cannot calculate FPS.")
@@ -161,16 +161,15 @@ def get_fps_of_frames_in_directory(path_gray_images: str) -> float:
 
     time_diff_counts = Counter(time_diffs)
     print(dict(time_diff_counts))
-    print(len(time_diffs))
 
     print(f"Average time difference: {avg_time_diff_ms} ms, Estimated FPS: {fps}")
     return fps
     
     
 if __name__ == "__main__":
-    path_original_gray_images = "saved_data/raw_lepton_data/29122025/"
-    expected_timedifference = [114, 115]
-    path_frames_interpolated = "saved_data/processed_lepton_data/29122025_interpolated/"
-    adapt_gray_frames_to_expected_time_differences(path_original_gray_images, expected_timedifference, path_frames_interpolated)
+    path_original_gray_images = "data/lepton/raw_lepton_data/29122025/"
+    expected_timedifference = [114, 115] # in ms, a inaccuracy of 1 ms can be expected
+    path_frames_interpolated = "data/lepton/processed_lepton_data/temp/"
+    #adapt_gray_frames_to_expected_time_differences(path_original_gray_images, expected_timedifference, path_frames_interpolated)
     get_fps_of_frames_in_directory(path_frames_interpolated)
     # TODO fix that fps is 8.75, now after interpolation around 11, function to interpolate frames seems correct
