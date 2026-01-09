@@ -24,7 +24,6 @@ def sort_grayfiles_with_interpolations(path_gray_images: str):
 
     # Get sorted original filenames
     sorted_frames_original_name = [frames_original_name[idx] for idx in idx_frames]
-    print(sorted_frames_original_name)
-    print(sorted_frames)
+    
     return sorted_frames, sorted_frames_original_name
     
