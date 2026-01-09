@@ -27,6 +27,9 @@ overwrite_existing_files = False
 plot_steps = False
 fps = 8.767687772484802 # based on findings in get_consistent_fps_for_gray_images.py
 
+time_first_frame_signal =None# 17∶48∶05 # based on properties of video file #TODO save time properly somewhere
+time_first_frame_ecg = None#17∶47∶57 #17:48:2.615 # based on properties of txt file #TODO extract time properly from txt file
+
 file_path_ground_truth = "data/ground_truth/opensignals/extracted_npy_files/29122025/opensignals_0007800f80fa_2025-12-29_17-47-57.npz"
 
 # TODO see utils_landmark_detection.py todo about grey scale
@@ -117,13 +120,30 @@ ground_truth_signal_denoised = apply_butterworth_bandpass_filter(signal=ground_t
 if plot_steps:
     plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
 
+# Estimate time offset via cross-correlation per ROI (positive => denoised starts later than GT)
+# TODO check if this correlation makes sense as measurment
+offsets_seconds, best_lag_samples, peak_corrs, best_roi_idx = estimate_signal_offset_via_xcorr(
+    denoised_signal_unflat=bandpassed_signal_each_roi_seperate,
+    gt_signal=ground_truth_signal_denoised,
+    fps_denoised=fps,
+    fps_gt=gt_fs
+)
+print("Per-ROI offsets (s):", offsets_seconds)
+print("Per-ROI lag samples:", best_lag_samples)
+print("Per-ROI peak correlations:", peak_corrs)
+print(f"Selected ROI for alignment (max peak corr): {roi_names[best_roi_idx]} (idx {best_roi_idx})")
+
+# Use the best ROI's offset for alignment
+offset_seconds = offsets_seconds[best_roi_idx]
+
+
 plot_denoised_with_ground_truth_offset(denoised_signal_unflat=bandpassed_signal_each_roi_seperate,
                                        roi_names=roi_names,
-                                       gt_signal=ground_truth_signal,
+                                       gt_signal=ground_truth_signal_denoised,
                                        fps_denoised=fps,
                                        fps_gt=gt_fs,
                                        gt_start_time=0.0,
-                                       signal_start_time=15.0)  
+                                       signal_start_time=13.0)  
 
 # TODO do they all have the same unit? Ground truth and own signal
 """

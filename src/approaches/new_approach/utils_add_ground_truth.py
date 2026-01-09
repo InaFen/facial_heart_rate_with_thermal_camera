@@ -79,3 +79,58 @@ def plot_denoised_with_ground_truth_offset(
     plt.legend()
     plt.tight_layout()
     plt.show(block=True)
+
+
+
+def estimate_signal_offset_via_xcorr(
+    denoised_signal_unflat: np.ndarray,
+    gt_signal: np.ndarray,
+    fps_denoised: float,
+    fps_gt: float
+) -> tuple[list[float], list[int], list[float], int]:
+    """Estimate start-time offset per ROI between own signal and ground truth via cross-correlation.
+
+    Returns lists (per ROI):
+      offsets_seconds (positive -> denoised starts later than GT),
+      best_lags (samples at fps_denoised),
+      peak_corrs (correlation peak values),
+      and the index of the ROI with the highest peak correlation.
+    """
+
+    num_rois = denoised_signal_unflat.shape[1]
+    offsets_seconds: list[float] = []
+    best_lags: list[int] = []
+    peak_corrs: list[float] = []
+
+    # Determine common duration across signals, so shortest signal length is used
+    duration = min(denoised_signal_unflat.shape[0] / fps_denoised, len(gt_signal) / fps_gt)
+    if duration <= 0:
+        raise ValueError("Signals have zero duration")
+
+    t_common = np.arange(0, duration, 1.0 / fps_denoised)
+    t_gt = np.arange(len(gt_signal)) / fps_gt
+    gt_resamp = np.interp(t_common, t_gt, gt_signal)
+    gt_z = gt_resamp - np.mean(gt_resamp)
+
+    for roi_idx in range(num_rois):
+        own_sig = denoised_signal_unflat[:, roi_idx]
+        own_sig = np.nan_to_num(own_sig, nan=np.nanmean(own_sig))
+
+        t_own = np.arange(len(own_sig)) / fps_denoised
+        own_resamp = np.interp(t_common, t_own, own_sig)
+        own_z = own_resamp - np.mean(own_resamp)
+
+        corr = np.correlate(gt_z, own_z, mode="full")
+        lags = np.arange(-len(own_z) + 1, len(gt_z))
+        best_idx = int(np.argmax(corr))
+        best_lag = int(lags[best_idx])  # samples at fps_denoised
+        peak_corr = float(corr[best_idx])
+
+        offset_seconds = -best_lag / fps_denoised  # positive -> own starts later
+
+        offsets_seconds.append(offset_seconds)
+        best_lags.append(best_lag)
+        peak_corrs.append(peak_corr)
+
+    best_roi_idx = int(np.argmax(peak_corrs))
+    return offsets_seconds, best_lags, peak_corrs, best_roi_idx
