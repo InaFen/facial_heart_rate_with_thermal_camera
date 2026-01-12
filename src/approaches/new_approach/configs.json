@@ -1,0 +1,53 @@
+{
+  "paths": {
+    "video": "data/recorded_videos/thermal_video_from_y16_frames/29122025.mp4",
+    "video_tracked_face": "data/recorded_videos/yang_et_al/output_tracked_video.mp4",
+    "video_thresholded_pixel": "data/recorded_videos/yang_et_al/output_thresholded_video.mp4",
+    "video_facemesh": "data/recorded_videos/yang_et_al/output_facemesh_video.mp4",
+    "pixels_log": "data/yang_et_al/roi_pixel_log.npy",
+    "video_thermal_with_roi_masks": "data/recorded_videos/yang_et_al/output_video_with_roi_masks.mp4",
+    "roi_pixel_data": "data/saved_data/yang_et_al/roi_pixel_data.npy",
+    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/29122025/opensignals_0007800f80fa_2025-12-29_17-47-57.npz"
+  },
+  "processing": {
+    "overwrite_existing_files": false,
+    "plot_steps": false,
+    "fps": 8.767687772484802,
+    "bandpass_lowcut": 0.667,
+    "bandpass_highcut": 1.667,
+    "bandpass_order": 2
+  },
+  "timing": {
+    "time_first_frame_signal": null,
+    "time_first_frame_ecg": null,
+    "notes": {
+      "time_first_frame_signal_expected": "17:48:05",
+      "time_first_frame_ecg_expected": "17:47:57"
+    }
+  },
+  "roi_landmarks": {
+    "whole_face": [
+      10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
+      379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234,
+      127, 162, 21, 54, 103, 67, 109
+    ]
+  },
+  "roi_landmarks_subgrid_face": {
+    "forehead": [
+      10, 338, 297, 332, 284, 251, 389, 368, 300, 293, 334, 296, 336, 9, 
+      107, 66, 105, 63, 71, 162, 21, 54, 103, 67, 109
+    ],
+    "left_cheek": [
+      245, 233, 232, 231, 230, 229, 228, 31, 111, 116, 123, 147, 187, 205, 
+      36, 142, 126, 217, 174, 188
+    ],
+    "right_cheek": [
+      453, 357, 343, 420, 360, 266, 280, 352, 345, 449, 451
+    ],
+    "chin": [
+      202, 210, 169, 170, 140, 171, 175, 262, 432, 422, 424, 418, 421, 200, 
+      201, 194, 204
+    ]
+  }
+}
+
