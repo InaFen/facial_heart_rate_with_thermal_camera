@@ -57,11 +57,10 @@ def apply_roi_masks_to_gray_frames(
             ys, xs = np.where(mask == 255)
             coords = list(zip(xs.tolist(), ys.tolist()))
             values = frame[ys, xs].astype(np.float64)
-            # TODO next step: convert raw values to temperature
             frame_data[roi_name] = {
                 "coords": coords,
-                "values": values.tolist(),
-                "mean_value": float(np.mean(values)) if values.size > 0 else float('nan'),
+                "adc_values": values.tolist(),
+                "mean_adc": float(np.mean(values)) if values.size > 0 else float('nan'),
             }
 
         roi_pixel_data.append(frame_data)
@@ -94,7 +93,7 @@ def plot_roi_temporal_means(roi_pixel_data: List[Dict[str, Dict[str, object]]], 
 
     plt.figure(figsize=(12, 6))
     for roi in roi_names:
-        means = [frame.get(roi, {}).get("mean_value", np.nan) for frame in roi_pixel_data]
+        means = [frame.get(roi, {}).get("mean_adc", np.nan) for frame in roi_pixel_data]
         plt.plot(t, means, label=roi)
 
     plt.xlabel("Frames" if fps is None else "Time (s)")
@@ -107,7 +106,6 @@ def plot_roi_temporal_means(roi_pixel_data: List[Dict[str, Dict[str, object]]], 
 
 
 if __name__ == "__main__":
-    # Example usage: update paths and provide roi_mask_log from detection stage
     gray_dir = "data/lepton/processed_lepton_data/29122025_interpolated/"
     output_npz = "data/saved_data/roi_pixel_data_from_gray.npz"
 
