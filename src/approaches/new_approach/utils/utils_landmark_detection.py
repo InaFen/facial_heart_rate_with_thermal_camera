@@ -7,11 +7,17 @@ from typing import List, Dict
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
 
-def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict):
+def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict, show_display: bool = False):
     """
     Apply MediaPipe FaceMesh to a thermal video, draw ALL landmarks + ROIs,
-    display in real time, optionally save annotated video, and collect ROI masks.
+    optionally display in real time, save annotated video, and collect ROI masks.
     If a frame has no detected face, a blank mask is stored to maintain alignment.
+    
+    Parameters:
+        input_path: Path to input thermal video
+        output_path: Path to save annotated video (or None to skip saving)
+        roi_landmarks: Dict mapping ROI names to landmark indices
+        show_display: If True, display video during processing. Default: False (fastest)
     """
 
     cap = cv2.VideoCapture(input_path)
@@ -97,30 +103,39 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         # Append masks for this frame
         roi_mask_log.append(frame_roi_masks)
 
-        # Show annotated output
-        cv2.imshow("Thermal FaceMesh + Landmarks + ROIs", pseudo_rgb)
+        if show_display:
+            # Show annotated output
+            cv2.imshow("Thermal FaceMesh + Landmarks + ROIs", pseudo_rgb)
 
         if out is not None:
             out.write(pseudo_rgb)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if show_display and cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
     if out:
         out.release()
     face_mesh.close()
-    cv2.destroyAllWindows()
+    if show_display:
+        cv2.destroyAllWindows()
 
     print("Collected ROI masks for", len(roi_mask_log), "frames.")
+    print(f"Saved annotated video to: {output_path}" if output_path else "No annotated video saved.")
     return roi_mask_log
 
 
-def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: str) -> list[dict]:
+def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: str, show_display: bool = False) -> list[dict]:
     """
     Apply ROI masks to the original video AND record:
       - all pixel values inside each ROI (per frame)
       - all pixel coordinates inside each ROI (per frame)
+
+    Parameters:
+        video_path: Path to input video
+        roi_mask_log: List of per-frame ROI masks
+        output_path: Path to save masked video
+        show_display: If True, display video during processing. Default: False (fastest)
 
     Returns:
         roi_pixel_data : list of dicts, one entry per frame:
@@ -199,15 +214,17 @@ def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: s
 
         out.write(masked_bgr)
 
-        cv2.imshow("ROI Masked Video", masked_bgr)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if show_display:
+            cv2.imshow("ROI Masked Video", masked_bgr)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
         frame_idx += 1
 
     cap.release()
     out.release()
-    cv2.destroyAllWindows()
+    if show_display:
+        cv2.destroyAllWindows()
     print(f"Saved masked video to: {output_path}")
 
     return roi_pixel_data
@@ -346,8 +363,8 @@ def plot_roi_adc_means(roi_pixel_data: List[Dict[str, Dict[str, object]]], fps: 
         plt.plot(t, means, label=roi)
 
     plt.xlabel("Frames" if fps is None else "Time (s)")
-    plt.ylabel("Mean Temperature (raw units)")
-    plt.title("ROI Mean Temperature Over Time")
+    plt.ylabel("Mean ADC (raw units)")
+    plt.title("ROI Mean ADC Over Time")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
