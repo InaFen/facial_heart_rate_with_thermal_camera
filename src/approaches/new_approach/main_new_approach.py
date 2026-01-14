@@ -2,7 +2,6 @@
 Based on Yang et al. """
 
 import sys
-import numpy as np
 
 PROJECT_ROOT = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, PROJECT_ROOT)
@@ -13,6 +12,7 @@ from src.approaches.yang_et_al.utils_post_processing import transform_flatten_si
 from src.approaches.yang_et_al.utils_plotting import plot_denoised_signal_unflat
 from src.approaches.new_approach.pipelines.comparison_to_ground_truth import compare_signal_to_ground_truth_pipeline
 from src.approaches.new_approach.classes.user_input import Config
+from src.approaches.new_approach.utils.utils_denoised_baseline import add_random_baseline_signal
 
 def main():
     configs = Config.from_json(CONFIGS_PATH)
@@ -25,6 +25,13 @@ def main():
 
     # Bandpass filter
     denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
+    
+    # Add random baseline ROI to denoised signal (control signal for validation)
+    denoised_signal_each_roi_seperate, baseline_names = add_random_baseline_signal(
+        denoised_signal_each_roi_seperate, seed=42, amplitude_scale=0.2
+    )
+    roi_names = list(roi_names) + baseline_names  # Append baseline to ROI names list
+    
     if configs.plot_steps:
         plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
     bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
