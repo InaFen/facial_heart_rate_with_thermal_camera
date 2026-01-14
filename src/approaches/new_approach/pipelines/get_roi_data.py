@@ -4,6 +4,7 @@ import os
 import numpy as np
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_adc_means
+from src.approaches.new_approach.utils.utils_baseline import add_random_baseline_roi
 
 def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_files = False) -> List[Dict[str, Dict[str, object]]]:
     
@@ -32,6 +33,10 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             np.save(configs.path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
         else:
             roi_pixel_data = np.load(configs.path_roi_pixel_data, allow_pickle=True)
+
+    # Add random baseline ROI (control signal for validation)
+    roi_pixel_data = add_random_baseline_roi(roi_pixel_data, num_pixels_in_baseline=100, adc_range=(28000, 32000), seed=42)
+
     # Plot
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
         plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) 
