@@ -1,152 +1,42 @@
+"""
+Based on Yang et al. """
+
 import sys
-import os
 import numpy as np
 
-project_root = "/home/arbeit/Dokumente/master_thesis/"
-sys.path.insert(0, project_root)
+PROJECT_ROOT = "/home/arbeit/Dokumente/master_thesis/"
+sys.path.insert(0, PROJECT_ROOT)
 
-from src.approaches.new_approach.utils_landmark_detection import *
-from src.approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold
-from src.approaches.yang_et_al.utils_spatial_temporal_graph import *
-from src.approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
-from src.approaches.yang_et_al.utils_plotting import *
-from src.approaches.yang_et_al.utils_post_processing import *
+from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
+from src.approaches.new_approach.pipelines.denoising_graph_application import apply_denoising_graph_pipeline
+from src.approaches.yang_et_al.utils_post_processing import transform_flatten_signal_to_original_shape, apply_butterworth_bandpass_filter
+from src.approaches.yang_et_al.utils_plotting import plot_denoised_signal_unflat
+from src.approaches.new_approach.pipelines.comparison_to_ground_truth import compare_signal_to_ground_truth_pipeline
+from src.approaches.new_approach.classes.user_input import Config
 
-from src.approaches.new_approach.utils_add_ground_truth import *
-from src.ground_truth_methods.extract_edf import read_edf, save_signal_to_npy, plot_signal
+def main():
+    configs = Config.from_json(CONFIGS_PATH)
 
-path_video = "data/recorded_videos/thermal_video_from_y16_frames/29122025.mp4" #'data/recorded_videos/new_approach/thermal_video_12_03.avi'
-path_video_tracked_face = 'data/recorded_videos/yang_et_al/output_tracked_video.mp4'
-path_video_thresholded_pixel="data/recorded_videos/yang_et_al/output_thresholded_video.mp4"
-path_video_facemesh = "data/recorded_videos/yang_et_al/output_facemesh_video.mp4"
-path_pixels_log = "data/yang_et_al/roi_pixel_log.npy"
-path_video_thermal_with_roi_masks = "data/recorded_videos/yang_et_al/output_video_with_roi_masks.mp4"
-path_roi_pixel_data = "data/saved_data/yang_et_al/roi_pixel_data.npy"
+    # Get ROI data
+    roi_pixel_data = get_roi_data_pipeline(configs=configs) #TODO mean or median better?
 
-overwrite_existing_files = False
-plot_steps = False
-fps = 8.767687772484802 # based on findings in get_consistent_fps_for_gray_images.py
+    # Apply graph denoising
+    denoised_signal_all_rois, signal_each_roi_seperate, roi_names = apply_denoising_graph_pipeline(roi_pixel_data=roi_pixel_data, configs=configs)
 
-time_first_frame_signal =None# 17∶48∶05 # based on properties of video file #TODO save time properly somewhere
-time_first_frame_ecg = None#17∶47∶57 #17:48:2.615 # based on properties of txt file #TODO extract time properly from txt file
+    # Bandpass filter
+    denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
+    if configs.plot_steps:
+        plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
+    bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
+    if configs.plot_steps:
+        plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
 
-file_path_ground_truth = "data/ground_truth/opensignals/extracted_npy_files/29122025/opensignals_0007800f80fa_2025-12-29_17-47-57.npz"
-
-# TODO see utils_landmark_detection.py todo about grey scale
-#TODO the code should be similar to Yang et al. but double-check before using
-
-#track_face(in_path= path_video, out_path=path_video_tracked_face)
-
-#filter_out_pixels_below_threshold(video_path=path_video, output_path=path_video_thresholded_pixel, threshold_value=160)
-
-# get face with mediapipe (not original pipeline)
-roi_landmarks = {"whole face": [
-    10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
-    379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234,
-    127, 162, 21, 54, 103, 67, 109
-]}
-
-roi_landmarks_subgrid_face = {"forehead": [10, 338, 297, 332, 284, 251, 389, 368, 300, 293, 334, 296, 336, 9, 107, 66, 105, 63, 71, 162, 21, 54, 103, 67, 109],#[10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 300, 293, 334, 296, 336, 107, 66, 105, 63, 70, 127,103],
-"left_cheek": [245, 233, 232, 231, 230, 229, 228, 31, 111, 116, 123, 147, 187, 205, 36, 142, 126, 217, 174, 188],
-"right_cheek": [453, 357, 343, 420, 360, 266, 280, 352, 345, 449, 451],
-"chin": [202,210, 169, 170, 140, 171, 175, 262, 432, 422, 424, 418, 421, 200, 201, 194, 204]
-}
-
-if not os.path.isfile(path_pixels_log) or overwrite_existing_files:
-    roi_pixel_log = apply_facemesh_to_thermal_video(input_path=path_video, output_path=path_video_facemesh, roi_landmarks=roi_landmarks_subgrid_face)
-    os.makedirs(os.path.dirname(path_pixels_log), exist_ok=True)
-    np.save(path_pixels_log, roi_pixel_log, allow_pickle=True)
-else:
-    roi_pixel_log = np.load(path_pixels_log, allow_pickle=True)
-
-if not os.path.isfile(path_roi_pixel_data) or overwrite_existing_files:
-    roi_pixel_data = apply_roi_masks_to_video(video_path=path_video, roi_mask_log=roi_pixel_log, output_path= path_video_thermal_with_roi_masks)
-    os.makedirs(os.path.dirname(path_roi_pixel_data), exist_ok=True)
-    np.save(path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
-else:
-    roi_pixel_data = np.load(path_roi_pixel_data, allow_pickle=True)
-
-if plot_steps:
-    plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) 
+    # Comparison with ground truth
+    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
 
 
-# Calculate centroids of each ROI in each frame
-roi_pixel_data_with_centroids = add_centroids_to_roi_data(roi_pixel_data)
-
-
-# Create graph and get laplacian
-block_features, roi_names = build_block_features_from_roi_pixel_data(roi_pixel_data)
-
-adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_features)
-
-#TODO graph creation with optimal feature metric
-
-signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
-# plot each ROI signal seperately
-if plot_steps:
-    plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names)
-
-signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
-if plot_steps:
-    plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising")
-
-# compute mean ignoring NaNs
-mean_val = np.nanmean(signal_all_rois)
-# replace NaNs
-signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
-if plot_steps:
-    plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
-
-
-# Denoise signal via laplacian
-denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, L=laplacian)
-if plot_steps:
-    plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
-    plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
-
-# Bandpass filter
-denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
-if plot_steps:
-    plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
-bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=0.667, highcut=1.667, fs=fps, order=2)
-if plot_steps:
-    plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
-
-# Get ground truth signal
-ground_truth_signal, gt_fs, gt_units = load_ground_truth_signal_and_fs(file_path_ground_truth)
-if plot_steps:
-    plot_signal(title="Ground Truth ECG Signal", signal=ground_truth_signal, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
-ground_truth_signal_denoised = apply_butterworth_bandpass_filter(signal=ground_truth_signal, lowcut=0.667, highcut=1.667, fs=gt_fs, order=2)
-if plot_steps:
-    plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
-
-# Estimate time offset via cross-correlation per ROI (positive => denoised starts later than GT)
-# TODO check if this correlation makes sense as measurment
-offsets_seconds, best_lag_samples, peak_corrs, best_roi_idx = estimate_signal_offset_via_xcorr(
-    denoised_signal_unflat=bandpassed_signal_each_roi_seperate,
-    gt_signal=ground_truth_signal_denoised,
-    fps_denoised=fps,
-    fps_gt=gt_fs
-)
-print("Per-ROI offsets (s):", offsets_seconds)
-print("Per-ROI lag samples:", best_lag_samples)
-print("Per-ROI peak correlations:", peak_corrs)
-print(f"Selected ROI for alignment (max peak corr): {roi_names[best_roi_idx]} (idx {best_roi_idx})")
-
-# Use the best ROI's offset for alignment
-offset_seconds = offsets_seconds[best_roi_idx]
-
-
-plot_denoised_with_ground_truth_offset(denoised_signal_unflat=bandpassed_signal_each_roi_seperate,
-                                       roi_names=roi_names,
-                                       gt_signal=ground_truth_signal_denoised,
-                                       fps_denoised=fps,
-                                       fps_gt=gt_fs,
-                                       gt_start_time=0.0,
-                                       signal_start_time=13.0)  
-
-# TODO do they all have the same unit? Ground truth and own signal
 """
+
 # PCA 
 prinicpal_components = pca(data=bandpassed_signal_each_roi_seperate, num_components=4)
 #plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
@@ -170,5 +60,6 @@ heart_rate_estimate = dominant_frequency * 60
 print(f"Estimated heart rate: {heart_rate_estimate:.2f} beats per minute")
 """
 
-
-print("Finished Yang et al. approach pipeline.")
+if __name__ == "__main__":
+    CONFIGS_PATH = "src/approaches/new_approach/configs.json"
+    main()
