@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import json
 import os
 
+from src.ground_truth_methods.extract_edf import plot_signal
+
 
 def read_opensignals_txt(file_name: str) -> tuple[npt.NDArray[np.float64], float]:
     """Read OpenSignals text file and extract ECG signal data.
@@ -85,23 +87,6 @@ def get_info_opensignals_txt(file_name: str) -> dict:
     }
     
     return info
-
-
-def plot_signal(signal: npt.NDArray[np.float64], title: str, xlabel: str, ylabel: str):
-    """Plot a signal using Matplotlib.
-    
-    Parameters:
-        signal (npt.NDArray[np.float64]): The signal data to plot.
-        title (str): The title of the plot.
-        xlabel (str): The label for the x-axis.
-        ylabel (str): The label for the y-axis.
-    """
-    plt.plot(signal)
-    plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.grid(True)
-    plt.show()
 
 
 def save_signal_to_npz(target_path: str, filename: str, signal: npt.NDArray[np.float64], sampling_rate: float, units: str = "mV"):
