@@ -15,6 +15,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
     else:
         roi_pixel_log = np.load(configs.path_pixels_log, allow_pickle=True)
 
+    # Extract ROI pixel data
     if extract_from_video_instead_of_gray_files:
         # Extract ROI pixel data from video instead of gray frames
         if not os.path.isfile(configs.path_roi_pixel_data) or configs.overwrite_existing_files:
@@ -31,7 +32,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             np.save(configs.path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
         else:
             roi_pixel_data = np.load(configs.path_roi_pixel_data, allow_pickle=True)
-
+    # Plot
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
         plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) 
     elif configs.plot_steps and not extract_from_video_instead_of_gray_files:
