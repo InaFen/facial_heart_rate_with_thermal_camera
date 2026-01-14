@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from src.approaches.yang_et_al.utils_post_processing import transform_flatten_signal_to_original_shape
 
-def plot_signal_each_roi_seperately(block_features, roi_names):
+def plot_signal_each_roi_seperately(block_features, roi_names, title):
     """
     Plot the mean signal of each ROI on a single plot over time.
 
@@ -30,6 +30,7 @@ def plot_signal_each_roi_seperately(block_features, roi_names):
     
     plt.xlabel('Frame')
     plt.ylabel('Mean Pixel Value')
+    plt.title(title)
     plt.legend()
     plt.tight_layout()
     plt.show()
