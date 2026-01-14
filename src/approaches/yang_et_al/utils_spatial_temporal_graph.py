@@ -109,7 +109,16 @@ def build_spatiotemporal_graph(block_features, temporal_weight=0.1):
 
 
 def build_block_features_from_roi_pixel_data(roi_pixel_data):
-    # roi_pixel_data: list per frame: dict {roi_name: {'coords':..., 'values':..., 'mean_value':...}}
+    """ Build block features from roi_pixel_data.
+    Each block feature vector contains:
+    - Mean pixel value
+    - Centroid x-coordinate
+    - Centroid y-coordinate
+    Parameters:
+        roi_pixel_data: list per frame: dict {roi_name: {'coords':..., 'adc_values':..., 'mean_adc':...}}
+    Returns:
+        block_features: list of length T; each element is an (N, 3) array of features for N blocks at frame t.
+        roi_names: list of ROI names in order"""
     T = len(roi_pixel_data)
     roi_names = list(roi_pixel_data[0].keys())
     N = len(roi_names)
@@ -118,7 +127,7 @@ def build_block_features_from_roi_pixel_data(roi_pixel_data):
         feats_t = []
         for name in roi_names:
             info = roi_pixel_data[t][name]
-            meanv = info['mean_value'] if info['mean_value'] is not None else np.nan
+            meanv = info['mean_adc'] if info['mean_adc'] is not None else np.nan
             centroid = compute_centroid(info['coords'])  # returns (cx, cy) or None
             if centroid is None:
                 cx, cy = np.nan, np.nan
