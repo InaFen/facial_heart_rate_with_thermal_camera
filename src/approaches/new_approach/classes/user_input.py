@@ -39,6 +39,7 @@ class Config:
     """
     
     # Paths
+    path_gray_frames: str
     path_video: str
     path_video_tracked_face: str
     path_video_thresholded_pixel: str
@@ -92,6 +93,7 @@ class Config:
         
         return cls(
             # Paths
+            path_gray_frames=paths_data['gray_frames'],
             path_video=paths_data['video'],
             path_video_tracked_face=paths_data['video_tracked_face'],
             path_video_thresholded_pixel=paths_data['video_thresholded_pixel'],
