@@ -40,8 +40,18 @@ def apply_butterworth_bandpass_filter(signal, lowcut, highcut, fs, order):
     filtered_signal : array, shape (T, N)
         Filtered signal."""
 
-    # Normalize cutoff frequencies to match expected input format for butter
+    if fs <= 0:
+        raise ValueError(f"Sampling frequency must be positive. Got fs={fs}.")
+
     nyquist = 0.5 * fs
+    if not (0 < lowcut < nyquist and 0 < highcut < nyquist):
+        raise ValueError(
+            "Bandpass frequencies must satisfy 0 < lowcut, highcut < Nyquist. "
+            f"Got lowcut={lowcut}, highcut={highcut}, Nyquist={nyquist}. "
+            "Lower the cutoff values or increase the sampling rate."
+        )
+
+    # Normalize cutoff frequencies to match expected input format for butter
     low = lowcut / nyquist
     high = highcut / nyquist
 
