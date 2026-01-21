@@ -1,14 +1,14 @@
 {
   "paths": {
-    "gray_frames": "data/lepton/processed_lepton_data/29122025_interpolated/",
-    "video": "data/recorded_videos/thermal_video_from_y16_frames/29122025.mp4",
-    "video_tracked_face": "data/recorded_videos/yang_et_al/output_tracked_video.mp4",
-    "video_thresholded_pixel": "data/recorded_videos/yang_et_al/output_thresholded_video.mp4",
-    "video_facemesh": "data/recorded_videos/yang_et_al/output_facemesh_video.mp4",
-    "pixels_log": "data/yang_et_al/roi_pixel_log.npy",
-    "video_thermal_with_roi_masks": "data/recorded_videos/yang_et_al/output_video_with_roi_masks.mp4",
+    "gray_frames": "data/lepton/processed_lepton_data/19012026_interpolated/",
+    "video": "data/recorded_videos/thermal_video_from_y16_frames/19012026.mp4",
+    "video_tracked_face": "data/recorded_videos/new_approach/output_tracked_video.mp4",
+    "video_thresholded_pixel": "data/recorded_videos/new_approach/output_thresholded_video.mp4",
+    "video_facemesh": "data/recorded_videos/new_approach/output_facemesh_video.mp4",
+    "pixels_log": "data/new_approach/roi_pixel_log.npy",
+    "video_thermal_with_roi_masks": "data/recorded_videos/new_approach/output_video_with_roi_masks.mp4",
     "roi_pixel_data": "data/saved_data/new_approach/roi_pixel_data.npy",
-    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/29122025/opensignals_0007800f80fa_2025-12-29_17-47-57.npz"
+    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/19012026/opensignals_0007800F80FA_2026-01-19_13-53-34.npz"
   },
   "processing": {
     "overwrite_existing_files": false,
@@ -22,8 +22,8 @@
     "time_first_frame_signal": null,
     "time_first_frame_ecg": null,
     "notes": {
-      "time_first_frame_signal_expected": "17:48:05",
-      "time_first_frame_ecg_expected": "17:47:57"
+      "time_first_frame_signal_expected": "17:00:00",
+      "time_first_frame_ecg_expected": "16:49:70"
     }
   },
   "roi_landmarks": {

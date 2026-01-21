@@ -39,7 +39,8 @@ def main():
         plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
 
     # Comparison with ground truth
-    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
+    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=denoised_signal_each_roi_seperate, roi_names=roi_names)
+
 
 
 """

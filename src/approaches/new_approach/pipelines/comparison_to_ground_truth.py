@@ -37,7 +37,7 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
 
     plot_denoised_with_ground_truth_offset(denoised_signal_unflat=bandpassed_signal_each_roi_seperate,
                                         roi_names=roi_names,
-                                        gt_signal=ground_truth_signal_denoised,
+                                        gt_signal=ground_truth_signal,
                                         fps_denoised=configs.fps,
                                         fps_gt=gt_fs,
                                         gt_start_time=0.0,

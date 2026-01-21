@@ -1,8 +1,13 @@
 import numpy as np
 import numpy.typing as npt
-import matplotlib.pyplot as plt
 import json
 import os
+
+import os, sys
+
+
+SRC_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
+sys.path.insert(0, SRC_PATH)
 
 from src.ground_truth_methods.extract_edf import plot_signal
 
@@ -109,9 +114,9 @@ def save_signal_to_npz(target_path: str, filename: str, signal: npt.NDArray[np.f
 
 
 if __name__ == "__main__":
-    signal_path = "data/ground_truth/opensignals/original_signal/29122025/opensignals_0007800f80fa_2025-12-29_17-47-57.txt"
-    npz_filename = "opensignals_0007800f80fa_2025-12-29_17-47-57.npz"
-    npz_path = "data/ground_truth/opensignals/extracted_npy_files/29122025/"
+    signal_path = "data/ground_truth/opensignals/original_signal/19012026/opensignals_0007800F80FA_2026-01-19_13-53-34.txt"
+    npz_filename = "opensignals_0007800F80FA_2026-01-19_13-53-34.npz"
+    npz_path = "data/ground_truth/opensignals/extracted_npy_files/19012026/"
     
     # Read signal
     record_data, fs = read_opensignals_txt(signal_path)

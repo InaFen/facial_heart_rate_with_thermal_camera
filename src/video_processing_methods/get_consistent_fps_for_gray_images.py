@@ -176,8 +176,8 @@ def get_fps_of_frames_in_directory(path_gray_images: str) -> float:
     
     
 if __name__ == "__main__":
-    path_original_gray_images = "data/lepton/raw_lepton_data/29122025/"
-    path_frames_interpolated = "data/lepton/processed_lepton_data/29122025_interpolated/"
+    path_original_gray_images = "data/lepton/raw_lepton_data/19012026/"
+    path_frames_interpolated = "data/lepton/processed_lepton_data/19012026_interpolated/"
 
     expected_timedifference = [114, 115] # in ms, an inaccuracy of 1 ms can be expected
 
