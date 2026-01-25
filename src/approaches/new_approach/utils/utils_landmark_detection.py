@@ -53,16 +53,18 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
 
         thermal_original = frame.copy()
 
-        # Normalize if 16-bit
+        # Robust normalize 16-bit → 8-bit: clip outliers then map to 0-255
         if frame.dtype != np.uint8:
-            frame_norm = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX)
-            frame_norm = frame_norm.astype(np.uint8)
+            vmin, vmax = np.percentile(frame, [1, 99])
+            frame_clipped = np.clip(frame, vmin, vmax)
+            frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         else:
             frame_norm = frame
 
-        # Convert to pseudo-RGB for visualization
-        pseudo_rgb = cv2.applyColorMap(frame_norm, cv2.COLORMAP_JET)
-        mesh_input = cv2.cvtColor(pseudo_rgb, cv2.COLOR_BGR2RGB)
+        # Apply perceptual colormap once; keep BGR for drawing, RGB for MediaPipe
+        pseudo_bgr = cv2.applyColorMap(frame_norm, cv2.COLORMAP_TURBO)
+        mesh_input = cv2.cvtColor(pseudo_bgr, cv2.COLOR_BGR2RGB)
+        pseudo_rgb = pseudo_bgr
 
         results = face_mesh.process(mesh_input)
 
