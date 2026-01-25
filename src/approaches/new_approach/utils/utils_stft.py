@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import signal
+import pywt
 
 
 def get_frequencies_over_time_spectrogram(signal_each_roi_seperate, fps, window_seconds, roi_names=None, save_path=None, plot=True):
@@ -85,23 +86,25 @@ def get_frequencies_over_time_spectrogram(signal_each_roi_seperate, fps, window_
             spectrograms,
             dominant_frequencies_over_time,
             roi_names=roi_names, 
-            save_path=save_path
+            save_path=save_path,
+            plot_type='spectrogram'
         )
     
     return time_points, frequencies, spectrograms, dominant_frequencies_over_time
 
 
-def plot_spectrogram_and_dominant_frequency(time_points, frequencies, spectrograms, dominant_frequencies_over_time, roi_names=None, save_path=None):
+def plot_spectrogram_and_dominant_frequency(time_points, frequencies, spectrograms, dominant_frequencies_over_time, roi_names=None, save_path=None, plot_type='spectrogram'):
     """
-    Plot frequency-time spectrogram with dominant frequency overlay for each ROI.
+    Plot frequency-time spectrogram or scalogram with dominant frequency overlay for each ROI.
     
     Args:
         time_points: Array of time points in seconds
         frequencies: Array of frequency bins in Hz
-        spectrograms: List of spectrograms (one per ROI), each of shape (num_freqs, num_times)
+        spectrograms: List of spectrograms/scalograms (one per ROI), each of shape (num_freqs, num_times)
         dominant_frequencies_over_time: Array of shape (num_rois, num_times) with dominant frequencies
         roi_names: Optional list of ROI names
         save_path: Optional path to save the plot
+        plot_type: Either 'spectrogram' (STFT) or 'scalogram' (CWT) for appropriate labeling
     """
     num_rois = len(spectrograms)
     
@@ -151,9 +154,9 @@ def plot_spectrogram_and_dominant_frequency(time_points, frequencies, spectrogra
         
         # Set title
         if roi_names is not None and roi_idx < len(roi_names):
-            title = f"Spectrogram: {roi_names[roi_idx]}"
+            title = f"{plot_type.capitalize()}: {roi_names[roi_idx]}"
         else:
-            title = f"Spectrogram: ROI {roi_idx + 1}"
+            title = f"{plot_type.capitalize()}: ROI {roi_idx + 1}"
         ax.set_title(title, fontsize=12, fontweight='bold')
         
         # Add colorbar
@@ -171,7 +174,83 @@ def plot_spectrogram_and_dominant_frequency(time_points, frequencies, spectrogra
     
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Spectrogram saved to {save_path}")
+        print(f"{plot_type.capitalize()} saved to {save_path}")
     
     plt.show()
+
+
+def get_frequencies_over_time_cwt(signal_each_roi_seperate, fps, roi_names=None, save_path=None, plot=True, 
+                                  wavelet='morl', freq_min=0.3, freq_max=5.0, num_freqs=60):
+    """
+    Calculate a time-frequency spectrogram (scalogram) using Continuous Wavelet Transform (CWT) via PyWavelets.
+
+    Args:
+        signal_each_roi_seperate: Array of shape (num_timepoints, num_rois)
+        fps: Frames per second
+        roi_names: Optional list of ROI names for plotting
+        save_path: Optional path to save the plot
+        plot: Whether to generate and display the scalogram (default True)
+        wavelet: Continuous wavelet name for PyWavelets (e.g., 'morl' for Morlet)
+        freq_min: Minimum frequency (Hz) for analysis
+        freq_max: Maximum frequency (Hz) for analysis
+        num_freqs: Number of frequency bins between freq_min and freq_max
+
+    Returns:
+        time_points: Array of time points in seconds
+        frequencies: Array of frequency bins in Hz (PyWavelets pseudo-frequencies)
+        scalograms: List of scalograms (one per ROI), each of shape (num_freqs, num_times)
+        dominant_frequencies_over_time: Array of shape (num_rois, num_times) with dominant frequencies
+    """
+
+    num_timepoints, num_rois = signal_each_roi_seperate.shape
+
+    # Time axis in seconds for CWT output (one coefficient per sample)
+    time_points = np.arange(num_timepoints) / fps
+
+    # Define target frequency axis (Hz)
+    frequencies = np.linspace(freq_min, freq_max, num_freqs)
+
+    # Map desired frequencies to PyWavelets scales using scale2frequency
+    sampling_period = 1.0 / fps
+    scales = pywt.scale2frequency(wavelet, 1.0) / (frequencies * sampling_period)
+
+    scalograms = []
+    dominant_frequencies_over_time = []
+
+    for roi_idx in range(num_rois):
+        sig_roi = signal_each_roi_seperate[:, roi_idx]
+
+        # Optional high-pass to suppress drift and DC
+        print("[WARNING CWT]: Applying high-pass filter at 0.4 Hz to reduce drift and DC.")
+        sos_hp = signal.butter(4, 0.4, btype='high', fs=fps, output='sos')
+        sig_roi = signal.sosfilt(sos_hp, sig_roi)
+
+        # Compute CWT via PyWavelets: returns coeffs shape (num_scales, num_samples) and frequency array (Hz)
+        cwt_coeffs, pywt_freqs = pywt.cwt(sig_roi, scales, wavelet, sampling_period=sampling_period)
+
+        # Magnitude scalogram
+        scalogram = np.abs(cwt_coeffs)
+        scalograms.append(scalogram)
+
+        # Dominant frequency per time column
+        dominant_idx = np.argmax(scalogram, axis=0)  # over frequency axis
+        dominant_freqs = pywt_freqs[dominant_idx]
+
+        print(f"  [CWT ROI {roi_idx}] Dominant frequencies: min={dominant_freqs.min():.3f}, max={dominant_freqs.max():.3f}, mean={dominant_freqs.mean():.3f} Hz")
+        dominant_frequencies_over_time.append(dominant_freqs)
+
+    dominant_frequencies_over_time = np.array(dominant_frequencies_over_time)  # (num_rois, num_times)
+
+    if plot:
+        plot_spectrogram_and_dominant_frequency(
+            time_points,
+            pywt_freqs,
+            scalograms,
+            dominant_frequencies_over_time,
+            roi_names=roi_names,
+            save_path=save_path,
+            plot_type='scalogram'
+        )
+
+    return time_points, pywt_freqs, scalograms, dominant_frequencies_over_time
 
