@@ -14,6 +14,7 @@ from src.approaches.new_approach.pipelines.comparison_to_ground_truth import com
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.utils.utils_denoised_baseline import add_random_baseline_signal
 from src.approaches.new_approach.utils.utils_stft import get_frequencies_over_time_spectrogram
+from src.approaches.new_approach.utils.utils_detrend import detrend_signal
 
 def main():
     configs = Config.from_json(CONFIGS_PATH)
@@ -31,11 +32,16 @@ def main():
         denoised_signal_each_roi_seperate, seed=42, amplitude_scale=0.2
     )
     roi_names = list(roi_names) + baseline_names  # Append baseline to ROI names list
+
+    # Remove mean (remove DC component - constant offset)
+    denoised_signal_each_roi_seperate = detrend_signal(denoised_signal_each_roi_seperate, roi_names)
     
     if configs.plot_steps:
         plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
 
+    # Get frequencies over time using STFT
     get_frequencies_over_time_spectrogram(denoised_signal_each_roi_seperate, fps=configs.fps, window_seconds=5.0, roi_names=roi_names, save_path=None, plot=True)
+    
     # Apply bandpass filter
     #bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
     
@@ -45,7 +51,7 @@ def main():
     # Get dominant frequency for each time point
 
     # Comparison with ground truth
-    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=denoised_signal_each_roi_seperate, roi_names=roi_names)
+    #compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=denoised_signal_each_roi_seperate, roi_names=roi_names)
 
 
 
