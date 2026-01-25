@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 from scipy import signal
 
 
-def get_frequencies_over_time_spectrogram(signal_each_roi_seperate, fps=8.767687772484802, window_seconds=1.0, roi_names=None, save_path=None, plot=True):
+def get_frequencies_over_time_spectrogram(signal_each_roi_seperate, fps, window_seconds, roi_names=None, save_path=None, plot=True):
     """
-    Calculate dominant frequency for each second (or time window) of the signal using STFT.
+    Calculate frequencies for each second (or time window) of the signal using STFT.
     
     Args:
         signal_each_roi_seperate: Array of shape (num_timepoints, num_rois)
@@ -38,13 +38,8 @@ def get_frequencies_over_time_spectrogram(signal_each_roi_seperate, fps=8.767687
     for roi_idx in range(num_rois):
         signal_roi = signal_each_roi_seperate[:, roi_idx]
         
-        # Preprocess: Remove mean (DC offset) and detrend
-        # TODO move out of this function and to initial preprocessing steps
-        signal_roi = signal_roi - np.mean(signal_roi)
-        signal_roi = signal.detrend(signal_roi, type='linear')
-        
         # Apply high-pass filter to remove very low frequencies (< 0.4 Hz)
-        # TODO maybe remove again
+        print("[WARNING STFT]: Applying high-pass filter at 0.4 Hz to remove DC and very low frequencies.")
         sos_hp = signal.butter(4, 0.4, btype='high', fs=fps, output='sos')
         signal_roi = signal.sosfilt(sos_hp, signal_roi)
         
@@ -69,9 +64,9 @@ def get_frequencies_over_time_spectrogram(signal_each_roi_seperate, fps=8.767687
         frequencies_no_dc = frequencies[1:]
         
         # Debug: Print info about spectrogram
-        print(f"ROI {roi_idx}: Signal shape={signal_roi.shape}, Spectrogram shape={spectrogram.shape}")
-        print(f"  Frequency range: {frequencies_no_dc.min():.3f} - {frequencies_no_dc.max():.3f} Hz")
-        print(f"  Power range: {spectrogram_no_dc.min():.2e} - {spectrogram_no_dc.max():.2e}")
+        #print(f"ROI {roi_idx}: Signal shape={signal_roi.shape}, Spectrogram shape={spectrogram.shape}")
+        #print(f"  Frequency range: {frequencies_no_dc.min():.3f} - {frequencies_no_dc.max():.3f} Hz")
+        #print(f"  Power range: {spectrogram_no_dc.min():.2e} - {spectrogram_no_dc.max():.2e}")
         
         dominant_freq_indices = np.argmax(spectrogram_no_dc, axis=0)
         dominant_freqs = frequencies_no_dc[dominant_freq_indices]
