@@ -112,7 +112,7 @@ def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, 
     plt.show(block=True) 
 
 
-def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names):
+def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names, title ="Denoised Signal per ROI"):
     """
     Plot denoised signals per ROI in one figure.
 
@@ -136,10 +136,56 @@ def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names):
 
     plt.xlabel("Seconds")
     plt.ylabel("Signal Value")
-    plt.title("Denoised Signals per ROI")
+    plt.title(title)
     plt.legend()
     plt.tight_layout()
     plt.show(block=True)
+
+
+def plot_signal_before_after(signal_before, signal_after, roi_names, title="Signal Before vs After Processing", fps=8.767687772484802):
+    """
+    Plot signals before and after processing for all ROIs in one plot.
+
+    Parameters
+    ----------
+    signal_before : array, shape (T, N)
+        Signal before processing
+    signal_after : array, shape (T, N)
+        Signal after processing
+    roi_names : list of str
+        Names of ROIs
+    title : str
+        Title for the plot
+    fps : float
+        Frames per second for time axis
+    """
+    N = signal_before.shape[1]
+    time_seconds = np.arange(signal_before.shape[0]) / fps
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+    
+    # Use distinct colors for each ROI
+    colors = plt.cm.tab10(np.linspace(0, 1, N))
+
+    for n in range(N):
+        ax1.plot(time_seconds, signal_before[:, n], label=roi_names[n], alpha=0.8, linewidth=1.5, color=colors[n])
+        ax2.plot(time_seconds, signal_after[:, n], label=roi_names[n], alpha=0.8, linewidth=1.5, color=colors[n])
+
+    ax1.set_ylabel("Signal Value", fontsize=11)
+    ax1.set_title("Before Processing", fontsize=12, fontweight='bold')
+    ax1.legend(loc='upper right', fontsize=9, ncol=2)
+    ax1.grid(True, alpha=0.3)
+
+    ax2.set_ylabel("Signal Value", fontsize=11)
+    ax2.set_xlabel("Time (seconds)", fontsize=11)
+    ax2.set_title("After Processing", fontsize=12, fontweight='bold')
+    ax2.legend(loc='upper right', fontsize=9, ncol=2)
+    ax2.grid(True, alpha=0.3)
+
+    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.995)
+    plt.tight_layout()
+    plt.show(block=True)
+
 
 def plot_principal_components_in_seperate_plots(principal_components):
     """
