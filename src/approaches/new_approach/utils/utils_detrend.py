@@ -4,7 +4,7 @@ from scipy import signal
 from src.approaches.yang_et_al.utils_plotting import plot_signal_before_after
 
 
-def detrend_signal(signal_each_roi_seperate, roi_names):
+def detrend_signal(signal_each_roi_seperate, roi_names, plot):
     """
     Detrend the signal for each ROI by removing the mean and linear trend.
     Args:
@@ -31,12 +31,13 @@ def detrend_signal(signal_each_roi_seperate, roi_names):
         # Save the detrended signal back to the array
         detrended_signal[:, roi_idx] = signal_roi
     
-    # Plot before and after in one figure
-    plot_signal_before_after(
-        signal_before=signal_each_roi_seperate,
-        signal_after=detrended_signal,
-        roi_names=roi_names,
-        title="Signal Before vs After Detrending"
-    )
+    if plot:
+        # Plot before and after in one figure
+        plot_signal_before_after(
+            signal_before=signal_each_roi_seperate,
+            signal_after=detrended_signal,
+            roi_names=roi_names,
+            title="Signal Before vs After Detrending"
+        )
 
     return detrended_signal
