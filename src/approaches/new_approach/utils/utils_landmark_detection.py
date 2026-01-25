@@ -7,7 +7,7 @@ from typing import List, Dict
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
 
-def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict, show_display: bool = False):
+def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict, fps: int, show_display: bool = False):
     """
     Apply MediaPipe FaceMesh to a thermal video, draw ALL landmarks + ROIs,
     optionally display in real time, save annotated video, and collect ROI masks.
@@ -27,7 +27,6 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
 
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps    = cap.get(cv2.CAP_PROP_FPS)
     delay = int(1000 / fps)
 
     # Optional video writer
@@ -42,7 +41,7 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         max_num_faces=1,
         refine_landmarks=True,
         min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
+        min_tracking_confidence=0.7
     )
 
     roi_mask_log = []   # List of dicts storing ROI masks per frame
@@ -79,15 +78,15 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
             ])
 
             # Draw ALL 468 landmarks 
-            for (x, y) in pts:
-                cv2.circle(pseudo_rgb, (x, y), 1, (0, 255, 0), -1)
+            #for (x, y) in pts:
+            #    cv2.circle(pseudo_rgb, (x, y), 1, (0, 255, 0), 1)
 
             # Draw the ROI polygons & create ROI masks
             for roi_name, indices in roi_landmarks.items():
                 roi_poly = pts[indices]  # polygon vertices
 
                 # Draw polygon on output
-                cv2.polylines(pseudo_rgb, [roi_poly], True, (255, 0, 0), 2)
+                cv2.polylines(pseudo_rgb, [roi_poly], True, (255, 0, 0), 1)
 
                 # Create ROI mask
                 mask = np.zeros((height, width), dtype=np.uint8)
