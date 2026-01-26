@@ -56,6 +56,8 @@ class Config:
     bandpass_lowcut: float
     bandpass_highcut: float
     bandpass_order: int
+    use_ema: bool 
+    ema_alpha: float 
     
     # Timing
     time_first_frame_signal: Optional[str] = None
@@ -110,6 +112,8 @@ class Config:
             bandpass_lowcut=processing_data['bandpass_lowcut'],
             bandpass_highcut=processing_data['bandpass_highcut'],
             bandpass_order=processing_data['bandpass_order'],
+            use_ema=processing_data['use_ema'],
+            ema_alpha=processing_data['ema_alpha'],
             
             # Timing
             time_first_frame_signal=timing_data['time_first_frame_signal'],

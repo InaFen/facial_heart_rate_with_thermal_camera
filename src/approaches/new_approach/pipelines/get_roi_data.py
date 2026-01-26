@@ -9,7 +9,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
     
     # Detect face
     if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
-        roi_pixel_log = apply_facemesh_to_thermal_video(input_path=configs.path_video, output_path=configs.path_video_facemesh, roi_landmarks=configs.roi_landmarks_subgrid_face, fps = configs.fps)
+        roi_pixel_log = apply_facemesh_to_thermal_video(input_path=configs.path_video, output_path=configs.path_video_facemesh, roi_landmarks=configs.roi_landmarks_subgrid_face, fps = configs.fps, use_ema = configs.use_ema, ema_alpha = configs.ema_alpha)
         os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
         np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
     else:

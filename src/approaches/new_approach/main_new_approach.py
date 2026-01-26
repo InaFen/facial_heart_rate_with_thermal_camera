@@ -13,7 +13,7 @@ from src.approaches.yang_et_al.utils_plotting import plot_denoised_signal_unflat
 from src.approaches.new_approach.pipelines.comparison_to_ground_truth import compare_signal_to_ground_truth_pipeline
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.utils.utils_denoised_baseline import add_random_baseline_signal
-from src.approaches.new_approach.utils.utils_stft import get_frequencies_over_time_spectrogram
+from src.approaches.new_approach.utils.utils_stft import get_frequencies_over_time_spectrogram, get_frequencies_over_time_cwt
 from src.approaches.new_approach.utils.utils_detrend import detrend_signal
 
 def main():
@@ -34,14 +34,16 @@ def main():
     roi_names = list(roi_names) + baseline_names  # Append baseline to ROI names list
 
     # Remove mean (remove DC component - constant offset)
-    denoised_signal_each_roi_seperate = detrend_signal(denoised_signal_each_roi_seperate, roi_names)
+    denoised_signal_each_roi_seperate = detrend_signal(denoised_signal_each_roi_seperate, roi_names, plot =configs.plot_steps)
     
     if configs.plot_steps:
         plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
 
-    # Get frequencies over time using STFT
-    get_frequencies_over_time_spectrogram(denoised_signal_each_roi_seperate, fps=configs.fps, window_seconds=5.0, roi_names=roi_names, save_path=None, plot=True)
+    # Get frequencies over time using STFT and CWT
+    #get_frequencies_over_time_spectrogram(denoised_signal_each_roi_seperate, fps=configs.fps, window_seconds=5.0, roi_names=roi_names, save_path=None, plot=True)
     
+    #get_frequencies_over_time_cwt(denoised_signal_each_roi_seperate, fps=configs.fps, roi_names=roi_names, save_path=None, plot=True)
+
     # Apply bandpass filter
     #bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
     

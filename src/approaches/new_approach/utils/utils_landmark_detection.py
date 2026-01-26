@@ -7,7 +7,7 @@ from typing import List, Dict
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
 
-def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict, fps: int, show_display: bool = False):
+def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict, fps: int, use_ema: bool, ema_alpha: float, show_display: bool = False):
     """
     Apply MediaPipe FaceMesh to a thermal video, draw ALL landmarks + ROIs,
     optionally display in real time, save annotated video, and collect ROI masks.
@@ -17,7 +17,10 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         input_path: Path to input thermal video
         output_path: Path to save annotated video (or None to skip saving)
         roi_landmarks: Dict mapping ROI names to landmark indices
+        fps: Frames per second
         show_display: If True, display video during processing. Default: False (fastest)
+        use_ema: If True, apply exponential moving average smoothing to landmarks. Default: True
+        ema_alpha: EMA blending factor (0.0-1.0); lower = smoother but more lag. Default: 0.2
     """
 
     cap = cv2.VideoCapture(input_path)
@@ -41,10 +44,12 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         max_num_faces=1,
         refine_landmarks=True,
         min_detection_confidence=0.5,
-        min_tracking_confidence=0.7
+        min_tracking_confidence=0.5
     )
 
     roi_mask_log = []   # List of dicts storing ROI masks per frame
+    smoothed_pts = None
+    alpha = ema_alpha if use_ema else 1.0  # If not using EMA, alpha = 1.0 (always use current frame)
 
     while True:
         ret, frame = cap.read()
@@ -69,7 +74,7 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         results = face_mesh.process(mesh_input)
 
         frame_roi_masks = {}  # Store masks for all ROIs in this frame
-
+        
         if results.multi_face_landmarks:
             face_lm = results.multi_face_landmarks[0]
 
@@ -79,13 +84,22 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
                 for lm in face_lm.landmark
             ])
 
+            pts = pts.astype(np.float32)
+
+            if smoothed_pts is None:
+                smoothed_pts = pts
+            else:
+                smoothed_pts = alpha * pts + (1 - alpha) * smoothed_pts
+
+            pts_smooth = smoothed_pts.astype(np.int32)
+
             # Draw ALL 468 landmarks 
             #for (x, y) in pts:
             #    cv2.circle(pseudo_rgb, (x, y), 1, (0, 255, 0), 1)
 
             # Draw the ROI polygons & create ROI masks
             for roi_name, indices in roi_landmarks.items():
-                roi_poly = pts[indices]  # polygon vertices
+                roi_poly = pts_smooth[indices]  # polygon vertices
 
                 # Draw polygon on output
                 cv2.polylines(pseudo_rgb, [roi_poly], True, (255, 0, 0), 1)
@@ -97,8 +111,10 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
                 frame_roi_masks[roi_name] = mask
         else:
             # No face detected: create blank masks for each ROI
-            
+            print("Warning: No face detected in frame.")
+            smoothed_pts = None
             for roi_name in roi_landmarks.keys():
+
                 frame_roi_masks[roi_name] = np.zeros((height, width), dtype=np.uint8)
 
         # Append masks for this frame
