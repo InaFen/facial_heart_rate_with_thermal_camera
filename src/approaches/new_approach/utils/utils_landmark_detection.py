@@ -111,7 +111,6 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
                 frame_roi_masks[roi_name] = mask
         else:
             # No face detected: create blank masks for each ROI
-            print("Warning: No face detected in frame.")
             smoothed_pts = None
             for roi_name in roi_landmarks.keys():
 
