@@ -18,11 +18,11 @@
     "bandpass_highcut": 1.667,
     "bandpass_order": 2,
     "use_ema": true,
-    "ema_alpha": 0.2
+    "ema_alpha": 0.15
   },
   "timing": {
-    "time_first_frame_signal": null,
-    "time_first_frame_ecg": null,
+    "time_first_frame_signal": 10.3,
+    "time_first_frame_ecg": 0.0,
     "notes": {
       "time_first_frame_signal_expected": "17:00:00",
       "time_first_frame_ecg_expected": "16:49:70"
@@ -36,6 +36,17 @@
     ]
   },
   "roi_landmarks_subgrid_face": {
+    "above_eyebrow_left_in_image": [
+      66,107,108,69
+    ],
+    "above_eyebrow_right_in_image": [
+      336,296,299,337
+    ],
+    "middle_forehead":[
+      9, 337, 151, 108
+    ]
+  },
+  "currently_unused":{
     "forehead": [
       10, 338, 297, 332, 284, 251, 389, 368, 300, 293, 334, 296, 336, 9, 
       107, 66, 105, 63, 71, 162, 21, 54, 103, 67, 109
