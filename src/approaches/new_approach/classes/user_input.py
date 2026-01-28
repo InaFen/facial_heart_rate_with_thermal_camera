@@ -62,6 +62,7 @@ class Config:
     # Timing
     time_first_frame_signal: Optional[str] = None
     time_first_frame_ecg: Optional[str] = None
+    timespan_signal_to_look_at: Optional[List[float]] = None
     
     # ROI Landmarks
     whole_face: List[int] = field(default_factory=list)
@@ -118,6 +119,7 @@ class Config:
             # Timing
             time_first_frame_signal=timing_data['time_first_frame_signal'],
             time_first_frame_ecg=timing_data['time_first_frame_ecg'],
+            timespan_signal_to_look_at=timing_data.get('timespan_signal_to_look_at', None),
             
             # ROI Landmarks
             whole_face=roi_data['whole_face'],

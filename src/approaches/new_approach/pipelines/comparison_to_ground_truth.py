@@ -6,10 +6,24 @@ from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
 
 
-def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_seperate, roi_names):
+def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_seperate, roi_names, timespan_filter=None):
 
     # Get ground truth signal
     ground_truth_signal, gt_fs, gt_units = load_ground_truth_signal_and_fs(configs.path_ground_truth)
+
+    # Apply timespan filter to ground truth if configured
+    if timespan_filter is not None:
+        start_time, end_time = timespan_filter
+        # Adjust for ground truth offset: GT time = signal_time + (gt_start - signal_start)
+        time_offset = configs.time_first_frame_signal - configs.time_first_frame_ecg
+        if time_offset < 0:
+            print("Warning: Negative time offset between signal and ground truth.")
+        gt_start_time = start_time + time_offset
+        gt_end_time = end_time + time_offset
+        gt_start_sample = int(gt_start_time * gt_fs)
+        gt_end_sample = int(gt_end_time * gt_fs)
+        ground_truth_signal = ground_truth_signal[gt_start_sample:gt_end_sample]
+        print(f"Applied GT timespan filter: {gt_start_time:.2f}s to {gt_end_time:.2f}s (samples {gt_start_sample} to {gt_end_sample})")
 
     if configs.plot_steps:
         plot_signal(title="Ground Truth ECG Signal", signal=ground_truth_signal, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
@@ -19,6 +33,14 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
     
     if configs.plot_steps:
         plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
+
+    # Determine effective start times (accounting for timespan filter)
+    effective_signal_start_time = configs.time_first_frame_signal
+    effective_gt_start_time = configs.time_first_frame_ecg
+    if timespan_filter is not None:
+        start_time, end_time = timespan_filter
+        effective_signal_start_time = start_time
+        effective_gt_start_time = start_time # offset already applied above
 
     # Optional: estimate time offset via cross-correlation per ROI (informational)
     offsets_seconds, best_lag_samples, peak_corrs, best_roi_idx = estimate_signal_offset_via_xcorr(
@@ -39,8 +61,8 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
         gt_signal=ground_truth_signal,
         fps_denoised=configs.fps,
         fps_gt=gt_fs,
-        gt_start_time=configs.time_first_frame_ecg,
-        signal_start_time=configs.time_first_frame_signal
+        gt_start_time=effective_gt_start_time,
+        signal_start_time=effective_signal_start_time
     )
 
     # --- Peak-based HR estimation and comparison ---
@@ -76,11 +98,9 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
             sig_roi, configs.fps, min_distance_s=0.3, prominence=None, configs=configs
         )
 
-        # Align times: apply manual start offset (thermal starts later)
-        signal_start_time = configs.time_first_frame_signal
-        gt_start_time = configs.time_first_frame_ecg
-        roi_hr_times = roi_hr_times_rel + signal_start_time
-        gt_hr_times_aligned = gt_hr_times + gt_start_time
+        # Align times using effective start times (already computed above)
+        roi_hr_times = roi_hr_times_rel + effective_signal_start_time
+        gt_hr_times_aligned = gt_hr_times + effective_gt_start_time
 
         # Interpolate GT HR onto ROI HR times for comparison
         if len(gt_hr_times_aligned) >= 2 and len(roi_hr_times) >= 1:
@@ -107,9 +127,9 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
 
         # Plot per ROI: signal with peaks (top) and HR comparison (bottom)
         roi_times = np.arange(len(sig_roi)) / configs.fps
-        roi_times_aligned = roi_times + signal_start_time
+        roi_times_aligned = roi_times + effective_signal_start_time
         gt_times = np.arange(len(ground_truth_signal_denoised)) / gt_fs
-        gt_times_aligned = gt_times + gt_start_time
+        gt_times_aligned = gt_times + effective_gt_start_time
         
         fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=False)
         

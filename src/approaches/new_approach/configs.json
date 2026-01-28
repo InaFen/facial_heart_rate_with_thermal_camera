@@ -12,7 +12,7 @@
   },
   "processing": {
     "overwrite_existing_files": true,
-    "plot_steps": false,
+    "plot_steps": true,
     "fps": 8.767687772484802,
     "bandpass_lowcut": 0.667,
     "bandpass_highcut": 1.667,
@@ -23,6 +23,7 @@
   "timing": {
     "time_first_frame_signal": 10.3,
     "time_first_frame_ecg": 0.0,
+    "timespan_signal_to_look_at": [21,30],
     "notes": {
       "time_first_frame_signal_expected": "17:00:00",
       "time_first_frame_ecg_expected": "16:49:70"

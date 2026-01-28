@@ -22,6 +22,14 @@ def main():
     # Get ROI data
     roi_pixel_data = get_roi_data_pipeline(configs=configs)
 
+    # Apply timespan filter if configured
+    if configs.timespan_signal_to_look_at is not None:
+        start_time, end_time = configs.timespan_signal_to_look_at
+        start_frame = int(start_time * configs.fps)
+        end_frame = int(end_time * configs.fps)
+        roi_pixel_data = roi_pixel_data[start_frame:end_frame]
+        print(f"Applied timespan filter: {start_time}s to {end_time}s (frames {start_frame} to {end_frame})")
+
     # Apply graph denoising
     denoised_signal_all_rois, signal_each_roi_seperate, roi_names = apply_denoising_graph_pipeline(roi_pixel_data=roi_pixel_data, configs=configs)
 
@@ -51,7 +59,7 @@ def main():
         plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
 
     # Comparison with ground truth
-    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=bandpassed_signal_each_roi_seperate, roi_names=roi_names)
+    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=bandpassed_signal_each_roi_seperate, roi_names=roi_names, timespan_filter=configs.timespan_signal_to_look_at)
 
 
 
