@@ -141,7 +141,7 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
     return roi_mask_log
 
 
-def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: str, show_display: bool = False) -> list[dict]:
+def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: str, fps: float, show_display: bool = False) -> list[dict]:
     """
     Apply ROI masks to the original video AND record:
       - all pixel values inside each ROI (per frame)
@@ -172,12 +172,11 @@ def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: s
 
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps    = cap.get(cv2.CAP_PROP_FPS)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
     frame_idx = 0
-    roi_pixel_data = []   # <-- NEW: store all ROI pixel/coord info here
+    roi_pixel_data = []  
 
     while True:
         ret, frame = cap.read()
