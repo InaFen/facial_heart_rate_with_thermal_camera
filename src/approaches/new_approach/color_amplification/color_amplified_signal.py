@@ -640,6 +640,93 @@ def plot_roi_mean_signals_with_ground_truth(roi_pixel_data, fps, ground_truth_si
     plt.show(block=True)
 
 
+def plot_roi_mean_signals_with_ground_truth_subplot(roi_pixel_data, fps, ground_truth_signal=None, gt_fs=None, plot_in_secs=True):
+    """
+    Plot each ROI with ground truth in separate subplots.
+    Each subplot contains one ROI signal and the ground truth signal for direct comparison.
+    
+    Args:
+        roi_pixel_data: List of dictionaries containing ROI data per frame
+        fps: Frames per second of the video
+        ground_truth_signal: Optional ground truth signal array for comparison
+        gt_fs: Sampling frequency of ground truth signal (Hz)
+        plot_in_secs: If True, plot x-axis in seconds; otherwise in frames
+    """
+    if len(roi_pixel_data) == 0:
+        print("Error: roi_pixel_data is empty.")
+        return
+
+    # Get list of ROI names from first frame
+    roi_names = list(roi_pixel_data[0].keys())
+
+    # Prepare time axis for ROI data
+    num_frames = len(roi_pixel_data)
+    if plot_in_secs:
+        roi_x_axis = np.array([frame / fps for frame in range(num_frames)])
+    else:
+        roi_x_axis = np.arange(num_frames)
+
+    # Prepare data container
+    roi_means = {roi: [] for roi in roi_names}
+
+    # Extract mean values per frame
+    for frame_data in roi_pixel_data:
+        for roi in roi_names:
+            val = frame_data[roi]["mean_value"]
+            roi_means[roi].append(val)
+
+    # Prepare ground truth time axis if provided
+    if ground_truth_signal is not None and gt_fs is not None:
+        num_gt_samples = len(ground_truth_signal)
+        if plot_in_secs:
+            gt_x_axis = np.array([sample / gt_fs for sample in range(num_gt_samples)])
+        else:
+            # Scale GT to match frame indices
+            gt_x_axis = np.linspace(0, num_frames-1, num_gt_samples)
+        
+        # Normalize ground truth for scaling
+        gt_normalized = (ground_truth_signal - np.mean(ground_truth_signal)) / np.std(ground_truth_signal)
+
+    # Create subplots - one for each ROI
+    num_rois = len(roi_names)
+    fig, axes = plt.subplots(num_rois, 1, figsize=(14, 4*num_rois))
+    if num_rois == 1:
+        axes = [axes]
+
+    # Plot each ROI with ground truth
+    for idx, roi in enumerate(roi_names):
+        ax = axes[idx]
+        roi_signal = np.array(roi_means[roi])
+        
+        # Plot ROI signal
+        ax.plot(roi_x_axis, roi_signal, label=roi, linewidth=1.5, color='blue')
+        
+        # Plot ground truth if provided (scaled to ROI range)
+        if ground_truth_signal is not None and gt_fs is not None:
+            # Scale GT to match this ROI's mean and std
+            roi_mean = np.mean(roi_signal)
+            roi_std = np.std(roi_signal)
+            gt_scaled = gt_normalized * roi_std + roi_mean
+            
+            ax.plot(gt_x_axis, gt_scaled, label='Ground Truth (scaled)', 
+                   linewidth=1.5, color='red', linestyle='--', alpha=0.8)
+        
+        # Labels and styling
+        if plot_in_secs:
+            ax.set_xlabel("Time (seconds)", fontsize=11)
+        else:
+            ax.set_xlabel("Frame Index", fontsize=11)
+        ax.set_ylabel("Mean Value", fontsize=11)
+        ax.set_title(f'{roi} vs Ground Truth', fontsize=12)
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('roi_signals_with_ground_truth_subplot.png', dpi=100)
+    print(f"Saved ROI signals with ground truth subplot to: roi_signals_with_ground_truth_subplot.png")
+    plt.show(block=True)
+
+
 if __name__ == "__main__":
 
     path_video_color_magnification = "data/recorded_videos/new_approach/0_1_3_5_Hz_40amp.mp4"
@@ -702,7 +789,8 @@ if __name__ == "__main__":
     # Add random baseline ROI for comparison (pure Gaussian noise, independent of video content)
     roi_pixel_data = add_random_baseline_roi(roi_pixel_data=roi_pixel_data, roi_size=(50, 50), seed=42, amplitude_scale=0.5)
 
-    # Get ground truth
+    plot_roi_mean_signals(roi_pixel_data=roi_pixel_data, fps=fps_to_get_values_from, plot_in_secs=True)
+    ##########
     # Get ground truth signal
     ground_truth_signal, gt_fs, gt_units = load_ground_truth_signal_and_fs(path_ground_truth)
 
@@ -719,8 +807,42 @@ if __name__ == "__main__":
     ground_truth_signal = ground_truth_signal[gt_start_sample:gt_end_sample]
     print(f"Applied GT timespan filter: {gt_start_time:.2f}s to {gt_end_time:.2f}s (samples {gt_start_sample} to {gt_end_sample})")
 
+    # Calculate actual duration and correct FPS if needed
+    num_signal_frames = len(roi_pixel_data)
+    num_gt_samples = len(ground_truth_signal)
+    
+    # The actual duration should be the same for both signals
+    actual_duration_gt = num_gt_samples / gt_fs
+    
+    # Correct the video FPS to match actual duration
+    fps_corrected = num_signal_frames / actual_duration_gt
+    
+    print(f"\nFPS Correction:")
+    print(f"  Original FPS: {fps_to_get_values_from:.4f} Hz")
+    print(f"  Corrected FPS: {fps_corrected:.4f} Hz")
+    print(f"  Signal frames: {num_signal_frames}")
+    print(f"  GT samples: {num_gt_samples}")
+    print(f"  Actual duration: {actual_duration_gt:.2f}s")
+    
+    # Ensure ground truth is not longer than signal duration
+    max_gt_samples = int(num_signal_frames / fps_corrected * gt_fs)
+    if num_gt_samples > max_gt_samples:
+        print(f"  Warning: Ground truth too long, trimming from {num_gt_samples} to {max_gt_samples} samples")
+        ground_truth_signal = ground_truth_signal[:max_gt_samples]
+        num_gt_samples = len(ground_truth_signal)
+    
+    # Use corrected FPS for all subsequent analysis
+    fps_to_use = fps_corrected
 
-    plot_roi_mean_signals(roi_pixel_data=roi_pixel_data, fps = fps_to_get_values_from, plot_in_secs=True)
+
+    # Plot ROI signals with ground truth in separate subplot
+    plot_roi_mean_signals_with_ground_truth_subplot(
+        roi_pixel_data=roi_pixel_data, 
+        fps=fps_to_use, 
+        ground_truth_signal=ground_truth_signal,
+        gt_fs=gt_fs,
+        plot_in_secs=True
+    )
     
     # Get frequency range for each ROI
     frequency_ranges = get_frequency_range_for_rois(
