@@ -245,7 +245,7 @@ def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: s
     return roi_pixel_data
 
 
-def plot_roi_mean_signals(roi_pixel_data: list):
+def plot_roi_mean_signals(roi_pixel_data: list, fps: float = None, plot_in_secs: bool = False) -> None:
     """
     Plot the mean temperature signal for each ROI across all frames.
 
@@ -264,7 +264,10 @@ def plot_roi_mean_signals(roi_pixel_data: list):
 
     # Prepare time axis
     num_frames = len(roi_pixel_data)
-    frames = list(range(num_frames))
+    if fps is not None and plot_in_secs:
+        x_axis_values = [frame / fps for frame in range(num_frames)]
+    else:
+        x_axis_values = list(range(num_frames))
 
     # Prepare data container
     roi_means = {roi: [] for roi in roi_names}
@@ -279,9 +282,12 @@ def plot_roi_mean_signals(roi_pixel_data: list):
     plt.figure(figsize=(12, 6))
 
     for roi in roi_names:
-        plt.plot(frames, roi_means[roi], label=roi)
+        plt.plot(x_axis_values, roi_means[roi], label=roi)
 
-    plt.xlabel("Frame Index", fontsize=12)
+    if fps is not None and plot_in_secs:
+        plt.xlabel("Time (seconds)", fontsize=12)
+    else:
+        plt.xlabel("Frame Index", fontsize=12)
     plt.ylabel("Mean Temperature", fontsize=12)
     plt.title("ROI Mean Temperature Over Time", fontsize=14)
     plt.legend()
