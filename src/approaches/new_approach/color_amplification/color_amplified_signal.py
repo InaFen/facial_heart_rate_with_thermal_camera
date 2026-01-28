@@ -727,23 +727,228 @@ def plot_roi_mean_signals_with_ground_truth_subplot(roi_pixel_data, fps, ground_
     plt.show(block=True)
 
 
+def subdivide_roi_into_sub_rois(roi_pixel_data, video_path, roi_mask_log, fps, sub_roi_size=8):
+    """
+    Subdivide each ROI into smaller sub-ROIs (default 8x8 pixels).
+    Extract mean signals for each sub-ROI.
+    Only includes pixels that are within the ROI mask.
+    
+    Args:
+        roi_pixel_data: List of dictionaries containing ROI data per frame
+        video_path: Path to the video file
+        roi_mask_log: List of ROI masks per frame
+        fps: Frames per second
+        sub_roi_size: Size of sub-ROI (default 8x8 pixels)
+        
+    Returns:
+        sub_roi_data: List of dictionaries with sub-ROI data per frame
+        sub_roi_names: List of sub-ROI names (roi_name_x_y format)
+        sub_roi_coords: Dictionary with sub-ROI coordinates
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {video_path}")
+    
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    print(f"\nSubdividing ROIs into {sub_roi_size}x{sub_roi_size} pixel sub-ROIs...")
+    
+    # Get ROI names from first frame of roi_pixel_data
+    if not roi_pixel_data or len(roi_pixel_data) == 0:
+        print("  Error: No ROI data available")
+        return [], [], {}
+    
+    roi_names = list(roi_pixel_data[0].keys())
+    
+    # Create sub-ROI data structure
+    sub_roi_data = []
+    sub_roi_coords = {}  # Store coordinates of each sub-ROI for later extraction
+    
+    # First pass: identify all sub-ROI regions from roi_mask_log
+    for roi_name in roi_names:
+        sub_roi_coords[roi_name] = []
+        
+        # Get mask for this ROI from first frame
+        if len(roi_mask_log) > 0 and roi_name in roi_mask_log[0]:
+            mask = roi_mask_log[0][roi_name]
+            
+            # Find bounding box of the ROI
+            ys, xs = np.where(mask == 255)
+            if len(xs) > 0 and len(ys) > 0:
+                x_min, x_max = xs.min(), xs.max()
+                y_min, y_max = ys.min(), ys.max()
+                
+                # Subdivide into sub-ROIs and only keep regions with ROI pixels
+                for y_start in range(int(y_min), int(y_max), sub_roi_size):
+                    for x_start in range(int(x_min), int(x_max), sub_roi_size):
+                        y_end = min(y_start + sub_roi_size, int(y_max) + 1)
+                        x_end = min(x_start + sub_roi_size, int(x_max) + 1)
+                        
+                        # Check if this sub-ROI region contains any ROI pixels
+                        sub_roi_mask_region = mask[y_start:y_end, x_start:x_end]
+                        roi_pixel_count = np.sum(sub_roi_mask_region == 255)
+                        
+                        # Only create sub-ROI if it contains ROI pixels
+                        if roi_pixel_count > 0:
+                            sub_roi_name = f"{roi_name}_{x_start}_{y_start}"
+                            sub_roi_coords[roi_name].append({
+                                "name": sub_roi_name,
+                                "x_start": x_start,
+                                "y_start": y_start,
+                                "x_end": x_end,
+                                "y_end": y_end,
+                                "roi_pixel_count": roi_pixel_count
+                            })
+    
+    # Second pass: extract pixel values for each sub-ROI from all frames
+    frame_idx = 0
+    while frame_idx < len(roi_pixel_data):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Convert to grayscale if needed
+        if frame.ndim == 3 and frame.shape[2] == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = frame
+        
+        frame_sub_roi_data = {}
+        
+        # Extract sub-ROI data
+        for roi_name in roi_names:
+            frame_sub_roi_data[roi_name] = {}
+            
+            for sub_roi_info in sub_roi_coords[roi_name]:
+                sub_roi_name = sub_roi_info["name"]
+                x_start = sub_roi_info["x_start"]
+                y_start = sub_roi_info["y_start"]
+                x_end = sub_roi_info["x_end"]
+                y_end = sub_roi_info["y_end"]
+                
+                # Extract sub-ROI region
+                sub_roi_region = gray[y_start:y_end, x_start:x_end]
+                
+                # Calculate mean and store
+                mean_value = np.mean(sub_roi_region) if sub_roi_region.size > 0 else 0.0
+                
+                frame_sub_roi_data[roi_name][sub_roi_name] = {
+                    "mean_value": float(mean_value),
+                    "x_start": x_start,
+                    "y_start": y_start,
+                    "x_end": x_end,
+                    "y_end": y_end
+                }
+        
+        sub_roi_data.append(frame_sub_roi_data)
+        frame_idx += 1
+        
+        if frame_idx % 20 == 0:
+            print(f"  Processed {frame_idx}/{len(roi_pixel_data)} frames")
+    
+    cap.release()
+    
+    # Generate list of all sub-ROI names
+    all_sub_roi_names = []
+    for roi_name in roi_names:
+        for sub_roi_info in sub_roi_coords[roi_name]:
+            all_sub_roi_names.append(sub_roi_info["name"])
+    
+    print(f"  Created {len(all_sub_roi_names)} sub-ROIs from {len(roi_names)} ROIs")
+    
+    return sub_roi_data, all_sub_roi_names, sub_roi_coords
+
+
+def save_video_with_sub_roi_visualization(video_path, roi_mask_log, sub_roi_coords, output_path, fps):
+    """
+    Save a video with sub-ROI rectangles overlaid on each frame.
+    
+    Args:
+        video_path: Path to input video
+        roi_mask_log: List of ROI masks per frame
+        sub_roi_coords: Dictionary with sub-ROI coordinates (from subdivide_roi_into_sub_rois)
+        output_path: Path to save output video
+        fps: Frames per second
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {video_path}")
+    
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Create video writer
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    print(f"\nSaving sub-ROI visualization video to: {output_path}")
+    
+    # Color palette for different ROIs
+    colors = {
+        "forehead": (255, 0, 0),      # Blue
+        "left_cheek": (0, 255, 0),    # Green
+        "right_cheek": (0, 0, 255),   # Red
+        "chin": (255, 255, 0),        # Cyan
+        "random_baseline": (255, 0, 255)  # Magenta
+    }
+    
+    frame_idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret or frame_idx >= len(roi_mask_log):
+            break
+        
+        # Convert to BGR if needed for display
+        if frame.dtype != np.uint8:
+            frame_display = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            if frame_display.ndim == 2:
+                frame_display = cv2.cvtColor(frame_display, cv2.COLOR_GRAY2BGR)
+        else:
+            if frame.ndim == 2:
+                frame_display = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            else:
+                frame_display = frame
+        
+        # Draw sub-ROI rectangles
+        for roi_name, sub_rois in sub_roi_coords.items():
+            color = colors.get(roi_name, (128, 128, 128))
+            
+            for sub_roi_info in sub_rois:
+                x_start = sub_roi_info["x_start"]
+                y_start = sub_roi_info["y_start"]
+                x_end = sub_roi_info["x_end"]
+                y_end = sub_roi_info["y_end"]
+                
+                # Draw rectangle
+                cv2.rectangle(frame_display, (x_start, y_start), (x_end, y_end), color, 1)
+        
+        # Write frame to video
+        out.write(frame_display)
+        frame_idx += 1
+        
+        if frame_idx % 20 == 0:
+            print(f"  Processed {frame_idx}/{len(roi_mask_log)} frames")
+    
+    cap.release()
+    out.release()
+    
+    print(f"  Sub-ROI visualization video saved successfully")
+
+
 if __name__ == "__main__":
-
-    path_video_color_magnification = "data/recorded_videos/new_approach/0_1_3_5_Hz_40amp.mp4"
-    fps_color_magnification = 9
-
     path_video_original = "data/temp/19012026_thermal_cut.mp4"
     fps_original = 8.767687772484802
 
-    path_last = "data/recorded_videos/new_approach/1_2_Hz_100amp.mp4"
-    fps_last = 9
+    path_video_color_magnification = "data/recorded_videos/new_approach/0_7_1_7_Hz_100amp.mp4"
+    fps_color_magnification = 9
 
     ######
     path_video = path_video_original
     fps = fps_original
 
-    path_video_to_get_values_from = path_last
-    fps_to_get_values_from = fps_last
+    path_video_to_get_values_from = path_video_color_magnification
+    fps_to_get_values_from = fps_color_magnification
 
     path_pixels_log = "data/saved_data/new_approach/roi_pixel_log.npy"
     path_video_facemesh = "data/recorded_videos/new_approach/color_amplification/facemesh_overlay.mp4"
@@ -835,13 +1040,35 @@ if __name__ == "__main__":
     fps_to_use = fps_corrected
 
 
-    # Plot ROI signals with ground truth in separate subplot
+    # Plot ROI signals using original function (all ROIs together)
+    plot_roi_mean_signals(roi_pixel_data=roi_pixel_data, fps=fps_to_use, plot_in_secs=True)
+
+    # Plot ROI signals with ground truth in separate subplots
     plot_roi_mean_signals_with_ground_truth_subplot(
         roi_pixel_data=roi_pixel_data, 
         fps=fps_to_use, 
         ground_truth_signal=ground_truth_signal,
         gt_fs=gt_fs,
         plot_in_secs=True
+    )
+    
+    # Subdivide ROIs into 8x8 pixel sub-ROIs
+    sub_roi_data, sub_roi_names, sub_roi_coords = subdivide_roi_into_sub_rois(
+        roi_pixel_data=roi_pixel_data,
+        video_path=path_video_to_get_values_from,
+        roi_mask_log=roi_pixel_log,
+        fps=fps_to_use,
+        sub_roi_size=2
+    )
+    
+    # Save video visualization of sub-ROIs
+    print("Saving sub-ROI video visualization...")
+    save_video_with_sub_roi_visualization(
+        video_path=path_video_to_get_values_from,
+        roi_mask_log=roi_pixel_log,
+        sub_roi_coords=sub_roi_coords,
+        output_path="data/recorded_videos/new_approach/color_amplification/sub_roi_visualization.mp4",
+        fps=fps_to_use
     )
     
     # Get frequency range for each ROI
@@ -854,7 +1081,7 @@ if __name__ == "__main__":
         gt_fs=gt_fs
     ) 
 
-# add maybe bandpass filter
+# todo add maybe bandpass filter
 
 
 """
