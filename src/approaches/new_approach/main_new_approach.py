@@ -20,7 +20,7 @@ def main():
     configs = Config.from_json(CONFIGS_PATH)
 
     # Get ROI data
-    roi_pixel_data = get_roi_data_pipeline(configs=configs)
+    roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 
     # Apply timespan filter if configured
     if configs.timespan_signal_to_look_at is not None:
