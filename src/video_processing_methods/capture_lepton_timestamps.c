@@ -40,19 +40,8 @@
  *
  * Quick usage examples:
  *   gcc -std=c11 -O2 -Wall src/video_processing_methods/capture_lepton_timestamps.c -o capture_lepton_timestamps 
-
-    ./debugging/capture_lepton_timestamps \ 
-
-    --device /dev/v4l/by-id/usb-GroupGets_PureThermal__fw:v1.3.0__80030034-5101-3133-3332-373300000000-video-index0 \ 
-
-    --duration 10 \ 
-
-    --telemetry end \ 
-
-    --width 160 --height 122 \ 
-
-    --save-ts /home/arbeit/Dokumente/master_thesis/data/lepton/raw_lepton_data/19012026
- 
+ *
+ *   ./capture_lepton_timestamps --device /dev/v4l/by-id/usb-GroupGets_PureThermal__fw:v1.3.0__80030034-5101-3133-3332-373300000000-video-index0 --duration 10 --telemetry end --width 160 --height 122 --save-ts /home/arbeit/Dokumente/master_thesis/data/lepton/raw_lepton_data/temp/
  */
 
 struct buffer {
