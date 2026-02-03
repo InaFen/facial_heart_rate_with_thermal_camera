@@ -29,9 +29,6 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         return
 
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    delay = int(1000 / fps)
-
     # Optional video writer
     if output_path is not None:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -86,16 +83,8 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
 
             pts = pts.astype(np.float32)
 
-            if smoothed_pts is None:
-                smoothed_pts = pts
-            else:
-                smoothed_pts = alpha * pts + (1 - alpha) * smoothed_pts
 
             pts_smooth = smoothed_pts.astype(np.int32)
-
-            # Draw ALL 468 landmarks 
-            #for (x, y) in pts:
-            #    cv2.circle(pseudo_rgb, (x, y), 1, (0, 255, 0), 1)
 
             # Draw the ROI polygons & create ROI masks
             for roi_name, indices in roi_landmarks.items():
@@ -129,19 +118,21 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         if show_display and cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    cap.release()
-    if out:
-        out.release()
-    face_mesh.close()
-    if show_display:
-        cv2.destroyAllWindows()
 
     print("Collected ROI masks for", len(roi_mask_log), "frames.")
     print(f"Saved annotated video to: {output_path}" if output_path else "No annotated video saved.")
     return roi_mask_log
 
 
-def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: str, fps: float, show_display: bool = False) -> list[dict]:
+def apply_roi_masks_to_video(
+    video_path: str,
+    roi_mask_log: list,
+    output_path: str,
+    fps: float,
+    show_display: bool = False,
+    start_frame: int = 0,
+    end_frame: int = None,
+) -> list[dict]:
     """
     Apply ROI masks to the original video AND record:
       - all pixel values inside each ROI (per frame)
@@ -175,10 +166,20 @@ def apply_roi_masks_to_video(video_path: str, roi_mask_log: list, output_path: s
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
+    if start_frame > 0:
+        for _ in range(start_frame):
+            ret, _ = cap.read()
+            if not ret:
+                break
+
     frame_idx = 0
     roi_pixel_data = []  
 
-    while True:
+    max_frames = len(roi_mask_log)
+    if end_frame is not None:
+        max_frames = min(max_frames, max(0, end_frame - start_frame))
+
+    while frame_idx < max_frames:
         ret, frame = cap.read()
         if not ret or frame_idx >= len(roi_mask_log):
             break
@@ -315,6 +316,7 @@ def create_manual_roi_mask_log_from_gray_frames(
     frame_index: int = 0,
     mask_load_path: str = None,
     mask_save_path: str = None,
+    use_colormap: bool = True,
 ) -> List[Dict[str, np.ndarray]]:
     """Create a fixed ROI mask by manually drawing on the first gray frame.
 
@@ -340,7 +342,10 @@ def create_manual_roi_mask_log_from_gray_frames(
     vmin, vmax = np.percentile(first_frame, [1, 99])
     frame_clipped = np.clip(first_frame, vmin, vmax)
     frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    frame_display = cv2.applyColorMap(frame_norm, cv2.COLORMAP_TURBO)
+    if use_colormap:
+        frame_display = cv2.applyColorMap(frame_norm, cv2.COLORMAP_TURBO)
+    else:
+        frame_display = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
 
     mask = np.zeros(first_frame.shape, dtype=np.uint8)
 
