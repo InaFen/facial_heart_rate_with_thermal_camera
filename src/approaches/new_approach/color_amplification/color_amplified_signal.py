@@ -5,6 +5,7 @@ matplotlib.use('TkAgg')  # Force interactive backend
 import matplotlib.pyplot as plt
 import sys
 from scipy import signal as scipy_signal
+from scipy.signal import find_peaks
 
 PROJECT_ROOT = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, PROJECT_ROOT)
@@ -83,7 +84,7 @@ def detect_face_mask(path_video, visualize=True, brightness_threshold=40):
         plt.tight_layout()
         plt.savefig('debug_mask.png', dpi=100)
         print(f"  Saved visualization to: debug_mask.png")
-        plt.show(block=True)
+        plt.show(block=False)
     
     return face_mask, (height, width)
 
@@ -312,7 +313,7 @@ def plot_average_frequency_spectrum(fft_magnitudes, frequencies, freq_range=(0, 
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
-    plt.show(block=True)
+    plt.show(block=False)
     
     print(f"\nDominant frequency: {dominant_freq:.3f} Hz ({dominant_freq*60:.1f} bpm)")
 
@@ -488,7 +489,7 @@ def get_frequency_range_for_rois(roi_pixel_data, fps, freq_range=(0.5, 4.0), vis
         plt.tight_layout()
         plt.savefig('roi_frequency_ranges.png', dpi=100)
         print(f"\n  Saved visualization to: roi_frequency_ranges.png")
-        plt.show(block=True)
+        plt.show(block=False)
     
     return frequency_ranges
 
@@ -637,7 +638,7 @@ def plot_roi_mean_signals_with_ground_truth(roi_pixel_data, fps, ground_truth_si
     plt.tight_layout()
     plt.savefig('roi_signals_with_ground_truth.png', dpi=100)
     print(f"Saved ROI signals with ground truth to: roi_signals_with_ground_truth.png")
-    plt.show(block=True)
+    plt.show(block=False)
 
 
 def plot_roi_mean_signals_with_ground_truth_subplot(roi_pixel_data, fps, ground_truth_signal=None, gt_fs=None, plot_in_secs=True):
@@ -724,7 +725,7 @@ def plot_roi_mean_signals_with_ground_truth_subplot(roi_pixel_data, fps, ground_
     plt.tight_layout()
     plt.savefig('roi_signals_with_ground_truth_subplot.png', dpi=100)
     print(f"Saved ROI signals with ground truth subplot to: roi_signals_with_ground_truth_subplot.png")
-    plt.show(block=True)
+    plt.show(block=False)
 
 
 def subdivide_roi_into_sub_rois(roi_pixel_data, video_path, roi_mask_log, fps, sub_roi_size=8):
@@ -936,6 +937,487 @@ def save_video_with_sub_roi_visualization(video_path, roi_mask_log, sub_roi_coor
     print(f"  Sub-ROI visualization video saved successfully")
 
 
+def analyze_and_plot_top_sub_rois_by_frequency(sub_roi_data, sub_roi_names, fps, freq_range=(1.0, 2.0), top_n=5, ground_truth_signal=None, gt_fs=None):
+    """
+    Analyze frequency spectrum of all sub-ROIs and plot the top N with highest amplitude in specified frequency range.
+    
+    Args:
+        sub_roi_data: List of dictionaries with sub-ROI data per frame
+        sub_roi_names: List of all sub-ROI names
+        fps: Frames per second
+        freq_range: Tuple of (min_freq, max_freq) in Hz to analyze
+        top_n: Number of top sub-ROIs to plot
+        ground_truth_signal: Optional ground truth signal array for comparison
+        gt_fs: Sampling frequency of ground truth signal (Hz)
+        
+    Returns:
+        top_sub_rois: List of tuples (sub_roi_name, max_amplitude, dominant_freq)
+    """
+    print(f"\nAnalyzing frequency spectrum for {len(sub_roi_names)} sub-ROIs...")
+    print(f"  Frequency range of interest: {freq_range[0]:.2f} - {freq_range[1]:.2f} Hz")
+    
+    # Extract mean signal for each sub-ROI
+    sub_roi_signals = {}
+    
+    for sub_roi_name in sub_roi_names:
+        signal_values = []
+        
+        # Find which ROI this sub-ROI belongs to
+        parent_roi = None
+        for roi_name in sub_roi_data[0].keys():
+            if sub_roi_name in sub_roi_data[0][roi_name]:
+                parent_roi = roi_name
+                break
+        
+        if parent_roi is None:
+            continue
+        
+        # Extract signal across all frames
+        for frame_data in sub_roi_data:
+            if parent_roi in frame_data and sub_roi_name in frame_data[parent_roi]:
+                signal_values.append(frame_data[parent_roi][sub_roi_name]["mean_value"])
+        
+        if len(signal_values) > 0:
+            sub_roi_signals[sub_roi_name] = np.array(signal_values)
+    
+    print(f"  Extracted signals for {len(sub_roi_signals)} sub-ROIs")
+    
+    # Analyze frequency spectrum for each sub-ROI
+    sub_roi_freq_analysis = []
+    
+    for sub_roi_name, signal in sub_roi_signals.items():
+        # Detrend signal (remove mean)
+        signal_detrended = signal - np.mean(signal)
+        
+        # Apply FFT
+        n = len(signal_detrended)
+        fft_result = np.fft.rfft(signal_detrended)
+        fft_freq = np.fft.rfftfreq(n, d=1.0/fps)
+        fft_magnitude = np.abs(fft_result)
+        
+        # Find max amplitude in the frequency range of interest
+        freq_mask = (fft_freq >= freq_range[0]) & (fft_freq <= freq_range[1])
+        
+        if np.sum(freq_mask) > 0:
+            max_amp_in_range = np.max(fft_magnitude[freq_mask])
+            max_amp_idx = np.argmax(fft_magnitude[freq_mask])
+            dominant_freq = fft_freq[freq_mask][max_amp_idx]
+            
+            sub_roi_freq_analysis.append({
+                'name': sub_roi_name,
+                'max_amplitude': max_amp_in_range,
+                'dominant_freq': dominant_freq,
+                'signal': signal_detrended,
+                'fft_freq': fft_freq,
+                'fft_magnitude': fft_magnitude
+            })
+    
+    # Sort by max amplitude in descending order
+    sub_roi_freq_analysis.sort(key=lambda x: x['max_amplitude'], reverse=True)
+    
+    # Get top N sub-ROIs
+    top_sub_rois = sub_roi_freq_analysis[:top_n]
+    
+    print(f"\nTop {top_n} sub-ROIs by amplitude in {freq_range[0]:.2f}-{freq_range[1]:.2f} Hz range:")
+    for i, roi_info in enumerate(top_sub_rois, 1):
+        print(f"  {i}. {roi_info['name']}: amplitude={roi_info['max_amplitude']:.2f}, dominant_freq={roi_info['dominant_freq']:.3f} Hz ({roi_info['dominant_freq']*60:.1f} bpm)")
+    
+    # Helper function for HR computation from peaks
+    def compute_hr_from_peaks(sig, fs, min_distance_s=0.3, prominence=None):
+        """Detect peaks and compute instantaneous HR (bpm) per beat.
+        Returns: hr_times (seconds), hr_bpm (array), peak_times (seconds), peak_indices (array)
+        """
+        distance = int(min_distance_s * fs)
+        peaks, _ = find_peaks(sig, distance=max(1, distance), prominence=prominence)
+        peak_times = peaks / fs
+        if len(peaks) < 2:
+            return np.array([]), np.array([]), peak_times, peaks
+        ibi = np.diff(peak_times)  # seconds between consecutive peaks
+        hr_bpm = 60.0 / ibi
+        hr_times = peak_times[1:]  # Assign HR to the latter peak time
+        return hr_times, hr_bpm, peak_times, peaks
+    
+    # Compute HR for ground truth if provided
+    gt_hr_times, gt_hr_bpm, gt_peak_times, gt_peaks = None, None, None, None
+    if ground_truth_signal is not None and gt_fs is not None:
+        gt_hr_times, gt_hr_bpm, gt_peak_times, gt_peaks = compute_hr_from_peaks(
+            ground_truth_signal, gt_fs, min_distance_s=0.3, prominence=None
+        )
+    
+    # Create visualization with 3 columns: time domain with peaks, frequency, HR comparison
+    fig, axes = plt.subplots(top_n, 3, figsize=(18, 3*top_n))
+    
+    if top_n == 1:
+        axes = axes.reshape(1, -1)
+    
+    for i, roi_info in enumerate(top_sub_rois):
+        # Compute peaks and HR for this sub-ROI
+        roi_hr_times, roi_hr_bpm, roi_peak_times, roi_peaks = compute_hr_from_peaks(
+            roi_info['signal'], fps, min_distance_s=0.3, prominence=None
+        )
+        
+        # Column 0: Time domain plot with peaks
+        ax_time = axes[i, 0]
+        time_axis = np.arange(len(roi_info['signal'])) / fps
+        
+        # Plot sub-ROI signal on primary axis
+        ax_time.plot(time_axis, roi_info['signal'], linewidth=1.5, color='C0', label='Sub-ROI Signal')
+        if roi_peaks.size > 0:
+            ax_time.plot(time_axis[roi_peaks], roi_info['signal'][roi_peaks], 'rx', 
+                        label=f'Sub-ROI Peaks (n={len(roi_peaks)})', markersize=8)
+        ax_time.set_ylabel('Sub-ROI Amplitude', color='C0')
+        ax_time.tick_params(axis='y', labelcolor='C0')
+        
+        # Add ground truth on secondary axis if provided
+        if ground_truth_signal is not None and gt_fs is not None:
+            ax_gt = ax_time.twinx()
+            gt_time_axis = np.arange(len(ground_truth_signal)) / gt_fs
+            ax_gt.plot(gt_time_axis, ground_truth_signal, linewidth=1.0, color='C1', 
+                      linestyle='--', alpha=0.7, label='Ground Truth')
+            if gt_peaks is not None and gt_peaks.size > 0:
+                ax_gt.plot(gt_time_axis[gt_peaks], ground_truth_signal[gt_peaks], 'g^', 
+                          label=f'GT Peaks (n={len(gt_peaks)})', markersize=6, alpha=0.7)
+            ax_gt.set_ylabel('GT Amplitude', color='C1')
+            ax_gt.tick_params(axis='y', labelcolor='C1')
+            
+            # Combine legends
+            lines0, labels0 = ax_time.get_legend_handles_labels()
+            lines1, labels1 = ax_gt.get_legend_handles_labels()
+            ax_time.legend(lines0 + lines1, labels0 + labels1, loc='upper right', fontsize=7)
+        else:
+            ax_time.legend(fontsize=8)
+        
+        ax_time.set_xlabel('Time (s)')
+        ax_time.set_title(f"{i+1}. {roi_info['name']} - Signals with Peaks")
+        ax_time.grid(True, alpha=0.3)
+        
+        # Column 1: Frequency domain plot
+        ax_freq = axes[i, 1]
+        ax_freq.plot(roi_info['fft_freq'], roi_info['fft_magnitude'], linewidth=1, color='red')
+        ax_freq.axvline(roi_info['dominant_freq'], color='green', linestyle='--', linewidth=2, 
+                       label=f"Dominant: {roi_info['dominant_freq']:.3f} Hz ({roi_info['dominant_freq']*60:.1f} bpm)")
+        ax_freq.axvspan(freq_range[0], freq_range[1], alpha=0.2, color='yellow', label='Analysis Range')
+        ax_freq.set_xlabel('Frequency (Hz)')
+        ax_freq.set_ylabel('Magnitude')
+        ax_freq.set_title(f"{i+1}. {roi_info['name']} - Frequency Spectrum")
+        ax_freq.set_xlim(0, 4.0)
+        ax_freq.legend(fontsize=8)
+        ax_freq.grid(True, alpha=0.3)
+        
+        # Column 2: HR comparison plot
+        ax_hr = axes[i, 2]
+        if roi_hr_bpm.size > 0:
+            ax_hr.plot(roi_hr_times, roi_hr_bpm, 'o-', label='Sub-ROI HR', markersize=4, color='C0')
+            mean_hr_roi = np.mean(roi_hr_bpm)
+            ax_hr.axhline(mean_hr_roi, color='C0', linestyle=':', alpha=0.5, 
+                         label=f'Mean: {mean_hr_roi:.1f} bpm')
+        
+        if gt_hr_bpm is not None and gt_hr_bpm.size > 0:
+            ax_hr.plot(gt_hr_times, gt_hr_bpm, 'x-', label='GT HR', markersize=4, color='C1')
+            mean_hr_gt = np.mean(gt_hr_bpm)
+            ax_hr.axhline(mean_hr_gt, color='C1', linestyle=':', alpha=0.5, 
+                         label=f'GT Mean: {mean_hr_gt:.1f} bpm')
+            
+            # Calculate MAE and RMSE if both signals have HR data
+            if roi_hr_bpm.size > 0 and gt_hr_bpm.size > 0:
+                # Interpolate GT HR onto ROI HR times for comparison
+                gt_hr_interp = np.interp(roi_hr_times, gt_hr_times, gt_hr_bpm, left=np.nan, right=np.nan)
+                mask = ~np.isnan(gt_hr_interp)
+                if mask.any():
+                    mae = np.mean(np.abs(roi_hr_bpm[mask] - gt_hr_interp[mask]))
+                    rmse = np.sqrt(np.mean((roi_hr_bpm[mask] - gt_hr_interp[mask])**2))
+                    ax_hr.set_title(f"{i+1}. HR Comparison (MAE={mae:.2f}, RMSE={rmse:.2f} bpm)", fontsize=9)
+                else:
+                    ax_hr.set_title(f"{i+1}. HR Comparison (no overlap)", fontsize=9)
+            else:
+                ax_hr.set_title(f"{i+1}. Heart Rate Comparison", fontsize=9)
+        else:
+            ax_hr.set_title(f"{i+1}. Heart Rate (no GT)", fontsize=9)
+        
+        ax_hr.set_xlabel('Time (s)')
+        ax_hr.set_ylabel('HR (bpm)')
+        ax_hr.legend(fontsize=7)
+        ax_hr.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show(block=False)
+    plt.pause(0.5)
+    
+    # Return summary
+    return [(roi['name'], roi['max_amplitude'], roi['dominant_freq']) for roi in top_sub_rois]
+
+
+def analyze_and_plot_top_sub_rois_per_roi(sub_roi_data, sub_roi_names, fps, freq_range=(1.0, 2.0), top_n=5, ground_truth_signal=None, gt_fs=None):
+    """
+    Analyze frequency spectrum of sub-ROIs and plot the top N for each parent ROI separately.
+    Creates n_rois x top_n subplots.
+    
+    Args:
+        sub_roi_data: List of dictionaries with sub-ROI data per frame
+        sub_roi_names: List of all sub-ROI names
+        fps: Frames per second
+        freq_range: Tuple of (min_freq, max_freq) in Hz to analyze
+        top_n: Number of top sub-ROIs to plot per parent ROI
+        ground_truth_signal: Optional ground truth signal array for comparison
+        gt_fs: Sampling frequency of ground truth signal (Hz)
+        
+    Returns:
+        roi_top_sub_rois: Dictionary mapping ROI name to list of top sub-ROIs
+    """
+    print(f"\nAnalyzing frequency spectrum for sub-ROIs by parent ROI...")
+    print(f"  Frequency range of interest: {freq_range[0]:.2f} - {freq_range[1]:.2f} Hz")
+    
+    # Get parent ROI names
+    parent_roi_names = list(sub_roi_data[0].keys())
+    
+    # Organize sub-ROIs by parent ROI
+    sub_rois_by_parent = {roi_name: [] for roi_name in parent_roi_names}
+    
+    for sub_roi_name in sub_roi_names:
+        # Find parent ROI
+        for roi_name in parent_roi_names:
+            if sub_roi_name in sub_roi_data[0][roi_name]:
+                sub_rois_by_parent[roi_name].append(sub_roi_name)
+                break
+    
+    # Analyze each parent ROI's sub-ROIs
+    roi_top_sub_rois = {}
+    
+    for roi_name in parent_roi_names:
+        print(f"\n  Analyzing {roi_name}: {len(sub_rois_by_parent[roi_name])} sub-ROIs")
+        
+        # Extract signals for this ROI's sub-ROIs
+        sub_roi_freq_analysis = []
+        
+        for sub_roi_name in sub_rois_by_parent[roi_name]:
+            signal_values = []
+            
+            # Extract signal across all frames
+            for frame_data in sub_roi_data:
+                if roi_name in frame_data and sub_roi_name in frame_data[roi_name]:
+                    signal_values.append(frame_data[roi_name][sub_roi_name]["mean_value"])
+            
+            if len(signal_values) == 0:
+                continue
+            
+            signal = np.array(signal_values)
+            signal_detrended = signal - np.mean(signal)
+            
+            # Apply FFT
+            n = len(signal_detrended)
+            fft_result = np.fft.rfft(signal_detrended)
+            fft_freq = np.fft.rfftfreq(n, d=1.0/fps)
+            fft_magnitude = np.abs(fft_result)
+            
+            # Find max amplitude in the frequency range of interest
+            freq_mask = (fft_freq >= freq_range[0]) & (fft_freq <= freq_range[1])
+            
+            if np.sum(freq_mask) > 0:
+                max_amp_in_range = np.max(fft_magnitude[freq_mask])
+                max_amp_idx = np.argmax(fft_magnitude[freq_mask])
+                dominant_freq = fft_freq[freq_mask][max_amp_idx]
+                
+                sub_roi_freq_analysis.append({
+                    'name': sub_roi_name,
+                    'parent_roi': roi_name,
+                    'max_amplitude': max_amp_in_range,
+                    'dominant_freq': dominant_freq,
+                    'signal': signal_detrended,
+                    'fft_freq': fft_freq,
+                    'fft_magnitude': fft_magnitude
+                })
+        
+        # Sort by amplitude and get top N
+        sub_roi_freq_analysis.sort(key=lambda x: x['max_amplitude'], reverse=True)
+        top_for_this_roi = sub_roi_freq_analysis[:top_n]
+        roi_top_sub_rois[roi_name] = top_for_this_roi
+        
+        print(f"    Top {len(top_for_this_roi)} sub-ROIs:")
+        for i, roi_info in enumerate(top_for_this_roi, 1):
+            print(f"      {i}. {roi_info['name']}: amplitude={roi_info['max_amplitude']:.2f}, dominant_freq={roi_info['dominant_freq']:.3f} Hz ({roi_info['dominant_freq']*60:.1f} bpm)")
+    
+    # Create visualization: n_rois rows x (top_n * 2) columns
+    n_rois = len(parent_roi_names)
+    fig, axes = plt.subplots(n_rois, top_n * 2, figsize=(5*top_n, 3*n_rois))
+    
+    # Ensure axes is 2D
+    if n_rois == 1 and top_n == 1:
+        axes = axes.reshape(1, -1)
+    elif n_rois == 1:
+        axes = axes.reshape(1, -1)
+    elif top_n == 1:
+        axes = axes.reshape(-1, 2)
+    
+    for roi_idx, roi_name in enumerate(parent_roi_names):
+        top_sub_rois = roi_top_sub_rois[roi_name]
+        
+        # Prepare ground truth if provided
+        if ground_truth_signal is not None and gt_fs is not None:
+            gt_normalized = (ground_truth_signal - np.mean(ground_truth_signal)) / np.std(ground_truth_signal)
+        
+        for sub_roi_idx, roi_info in enumerate(top_sub_rois):
+            # Time domain plot
+            col_time = sub_roi_idx * 2
+            ax_time = axes[roi_idx, col_time] if n_rois > 1 else axes[col_time]
+            
+            time_axis = np.arange(len(roi_info['signal'])) / fps
+            ax_time.plot(time_axis, roi_info['signal'], linewidth=1, color='blue', label='Sub-ROI')
+            
+            # Add ground truth if provided
+            if ground_truth_signal is not None and gt_fs is not None:
+                roi_mean = np.mean(roi_info['signal'])
+                roi_std = np.std(roi_info['signal'])
+                gt_scaled = gt_normalized * roi_std + roi_mean
+                num_gt_samples = len(ground_truth_signal)
+                gt_time_axis = np.arange(num_gt_samples) / gt_fs
+                ax_time.plot(gt_time_axis, gt_scaled, linewidth=1, color='red', linestyle='--', alpha=0.7, label='GT')
+            
+            ax_time.set_xlabel('Time (s)', fontsize=8)
+            ax_time.set_ylabel('Signal', fontsize=8)
+            ax_time.set_title(f"{roi_name} - {roi_info['name'].split('_')[-2]}_{roi_info['name'].split('_')[-1]} (Time)", fontsize=9)
+            ax_time.grid(True, alpha=0.3)
+            ax_time.legend(fontsize=6)
+            ax_time.tick_params(labelsize=7)
+            
+            # Frequency domain plot
+            col_freq = sub_roi_idx * 2 + 1
+            ax_freq = axes[roi_idx, col_freq] if n_rois > 1 else axes[col_freq]
+            
+            ax_freq.plot(roi_info['fft_freq'], roi_info['fft_magnitude'], linewidth=1, color='red')
+            ax_freq.axvline(roi_info['dominant_freq'], color='green', linestyle='--', linewidth=1.5, 
+                           label=f"{roi_info['dominant_freq']:.2f} Hz")
+            ax_freq.axvspan(freq_range[0], freq_range[1], alpha=0.2, color='yellow')
+            ax_freq.set_xlabel('Frequency (Hz)', fontsize=8)
+            ax_freq.set_ylabel('Magnitude', fontsize=8)
+            ax_freq.set_title(f"{roi_name} - {roi_info['name'].split('_')[-2]}_{roi_info['name'].split('_')[-1]} (Freq)", fontsize=9)
+            ax_freq.set_xlim(0, 4.0)
+            ax_freq.legend(fontsize=6)
+            ax_freq.grid(True, alpha=0.3)
+            ax_freq.tick_params(labelsize=7)
+        
+        # Hide unused subplots if fewer than top_n sub-ROIs
+        for sub_roi_idx in range(len(top_sub_rois), top_n):
+            col_time = sub_roi_idx * 2
+            col_freq = sub_roi_idx * 2 + 1
+            if n_rois > 1:
+                axes[roi_idx, col_time].axis('off')
+                axes[roi_idx, col_freq].axis('off')
+            else:
+                axes[col_time].axis('off')
+                axes[col_freq].axis('off')
+    
+    plt.tight_layout()
+    plt.show(block=True)
+    
+    return roi_top_sub_rois
+
+
+def save_video_with_top_sub_rois_only(video_path, sub_roi_coords, top_sub_rois, roi_top_sub_rois, fps, output_path="sub_rois_top_only.mp4"):
+    """
+    Save a video showing only the top sub-ROIs (overall and per ROI) overlaid on frames.
+    Draws rectangles for top sub-ROIs only, not all sub-ROIs.
+    
+    Args:
+        video_path: Path to input video
+        sub_roi_coords: Dictionary with sub-ROI coordinates from subdivide_roi_into_sub_rois
+        top_sub_rois: List of tuples (sub_roi_name, max_amplitude, dominant_freq) overall top 5
+        roi_top_sub_rois: Dictionary mapping ROI name to list of top sub-ROIs
+        fps: Frames per second
+        output_path: Path to save output video
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {video_path}")
+    
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Create video writer
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    print(f"\nSaving video with top sub-ROIs only to: {output_path}")
+    
+    # Build lookup for top sub-ROI coordinates
+    top_coords_lookup = {}
+    for parent_roi, sub_roi_list in sub_roi_coords.items():
+        for sub_roi_info in sub_roi_list:
+            top_coords_lookup[sub_roi_info["name"]] = (sub_roi_info, parent_roi)
+    
+    # Color palette for ROI types (BGR format for OpenCV)
+    roi_colors = {
+        'forehead': (255, 0, 0),        # Blue in BGR
+        'left_cheek': (0, 255, 0),      # Green
+        'right_cheek': (0, 0, 255),     # Red
+        'chin': (0, 255, 255),          # Yellow
+        'random_baseline': (255, 0, 255) # Magenta
+    }
+    
+    frame_idx = 0
+    while frame_idx < num_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Convert to BGR if needed for display
+        if frame.dtype != np.uint8:
+            frame_display = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            if frame_display.ndim == 2:
+                frame_display = cv2.cvtColor(frame_display, cv2.COLOR_GRAY2BGR)
+        else:
+            if frame.ndim == 2:
+                frame_display = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            else:
+                frame_display = frame.copy()
+        
+        # Draw only top sub-ROIs overall (in thick lines)
+        for roi_idx, (sub_roi_name, amplitude, freq) in enumerate(top_sub_rois):
+            if sub_roi_name in top_coords_lookup:
+                sub_roi_info, parent_roi = top_coords_lookup[sub_roi_name]
+                x_start = sub_roi_info["x_start"]
+                y_start = sub_roi_info["y_start"]
+                x_end = sub_roi_info["x_end"]
+                y_end = sub_roi_info["y_end"]
+                
+                color = roi_colors.get(parent_roi, (128, 128, 128))
+                # Draw thick rectangle for overall top ROIs
+                cv2.rectangle(frame_display, (x_start, y_start), (x_end, y_end), color, 1)
+                # Add rank label
+                #cv2.putText(frame_display, f"T{roi_idx+1}", (x_start, y_start - 5),
+                #           cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 1)
+        
+        # Draw top sub-ROIs per parent ROI (in thinner lines)
+        """
+        for parent_roi_name, top_sub_rois_per_roi in roi_top_sub_rois.items():
+            color = roi_colors.get(parent_roi_name, (128, 128, 128))
+            
+            for sub_roi_idx, roi_info in enumerate(top_sub_rois_per_roi):
+                sub_roi_name = roi_info['name']
+                
+                if sub_roi_name in top_coords_lookup:
+                    sub_roi_info, _ = top_coords_lookup[sub_roi_name]
+                    x_start = sub_roi_info["x_start"]
+                    y_start = sub_roi_info["y_start"]
+                    x_end = sub_roi_info["x_end"]
+                    y_end = sub_roi_info["y_end"]
+                    
+                    # Draw thinner rectangle for per-ROI top ROIs
+                    cv2.rectangle(frame_display, (x_start, y_start), (x_end, y_end), color, 1)
+        """
+        # Write frame to video
+        out.write(frame_display)
+        frame_idx += 1
+        
+        if frame_idx % 20 == 0:
+            print(f"  Processed {frame_idx}/{num_frames} frames")
+    
+    cap.release()
+    out.release()
+    
+    print(f"  Sub-ROI video saved successfully")
+
+
 if __name__ == "__main__":
     path_video_original = "data/temp/19012026_thermal_cut.mp4"
     fps_original = 8.767687772484802
@@ -980,6 +1462,7 @@ if __name__ == "__main__":
 
     path_ground_truth = "data/ground_truth/opensignals/extracted_npy_files/19012026/opensignals_0007800F80FA_2026-01-19_13-53-34.npz"
 
+    freq_range_for_analysis_subrois = (1, 2)
 
     ##########
     # Get ROI data
@@ -995,8 +1478,10 @@ if __name__ == "__main__":
     roi_pixel_data = add_random_baseline_roi(roi_pixel_data=roi_pixel_data, roi_size=(50, 50), seed=42, amplitude_scale=0.5)
 
     plot_roi_mean_signals(roi_pixel_data=roi_pixel_data, fps=fps_to_get_values_from, plot_in_secs=True)
+    
     ##########
     # Get ground truth signal
+    ##########
     ground_truth_signal, gt_fs, gt_units = load_ground_truth_signal_and_fs(path_ground_truth)
 
     # Apply timespan filter to ground truth if configured
@@ -1011,6 +1496,10 @@ if __name__ == "__main__":
     gt_end_sample = int(gt_end_time * gt_fs)
     ground_truth_signal = ground_truth_signal[gt_start_sample:gt_end_sample]
     print(f"Applied GT timespan filter: {gt_start_time:.2f}s to {gt_end_time:.2f}s (samples {gt_start_sample} to {gt_end_sample})")
+
+    # Invert ground truth signal for better peak detection (ECG valleys become peaks)
+    ground_truth_signal = -ground_truth_signal
+    print("Inverted ground truth signal for peak detection")
 
     # Calculate actual duration and correct FPS if needed
     num_signal_frames = len(roi_pixel_data)
@@ -1052,7 +1541,10 @@ if __name__ == "__main__":
         plot_in_secs=True
     )
     
-    # Subdivide ROIs into 8x8 pixel sub-ROIs
+    ##########
+    # Subdivide ROIs and analyze frequency ranges
+    ##########
+    # Subdivide ROIs into nxn pixel sub-ROIs
     sub_roi_data, sub_roi_names, sub_roi_coords = subdivide_roi_into_sub_rois(
         roi_pixel_data=roi_pixel_data,
         video_path=path_video_to_get_values_from,
@@ -1079,9 +1571,42 @@ if __name__ == "__main__":
         visualize=True,
         ground_truth_signal=ground_truth_signal,
         gt_fs=gt_fs
-    ) 
+    )
+    
+    # Analyze sub-ROI frequency spectra and plot top 5 in wanted range (overall)
+    top_sub_rois = analyze_and_plot_top_sub_rois_by_frequency(
+        sub_roi_data=sub_roi_data,
+        sub_roi_names=sub_roi_names,
+        fps=fps_to_use,
+        freq_range=freq_range_for_analysis_subrois,
+        top_n=5,
+        ground_truth_signal=ground_truth_signal,
+        gt_fs=gt_fs
+    )
+    
+    # Analyze and plot top 5 sub-ROIs for each parent ROI separately
+    roi_top_sub_rois = analyze_and_plot_top_sub_rois_per_roi(
+        sub_roi_data=sub_roi_data,
+        sub_roi_names=sub_roi_names,
+        fps=fps_to_use,
+        freq_range=freq_range_for_analysis_subrois,
+        top_n=5,
+        ground_truth_signal=ground_truth_signal,
+        gt_fs=gt_fs
+    )
+    
+    # Save video with only top sub-ROIs overlaid
+    save_video_with_top_sub_rois_only(
+        video_path=path_video_to_get_values_from,
+        sub_roi_coords=sub_roi_coords,
+        top_sub_rois=top_sub_rois,
+        roi_top_sub_rois=roi_top_sub_rois,
+        fps=fps_to_use,
+        output_path="data/recorded_videos/new_approach/color_amplification/sub_rois_top_only.mp4"
+    )
 
-# todo add maybe bandpass filter
+
+
 
 
 """
