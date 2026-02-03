@@ -29,8 +29,11 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
         plot_signal(title="Ground Truth ECG Signal", signal=ground_truth_signal, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
     
     # Apply bandpass filter to ground truth signal
-    ground_truth_signal_denoised = apply_butterworth_bandpass_filter(signal=ground_truth_signal, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=gt_fs, order=configs.bandpass_order)
-    
+    #ground_truth_signal_denoised = apply_butterworth_bandpass_filter(signal=ground_truth_signal, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=gt_fs, order=configs.bandpass_order)
+    print("[Warning ground truth] No bandpass filtering applied to ground truth ECG signal and flipped ground truth.")
+    ground_truth_signal_denoised = ground_truth_signal  # No additional filtering for ECG
+    ground_truth_signal_denoised = -ground_truth_signal_denoised  # Flip ECG signal for correct orientation
+
     if configs.plot_steps:
         plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
 
@@ -84,7 +87,7 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
 
     # Compute HR series for ground truth
     gt_hr_times, gt_hr_bpm, gt_peak_times, gt_peaks = compute_hr_series_from_peaks(
-        ground_truth_signal_denoised, gt_fs, min_distance_s=0.3, prominence=None, configs=configs
+        ground_truth_signal_denoised, gt_fs, min_distance_s=0.5, prominence=0.5, configs=configs
     )
 
     # Compute HR per ROI
