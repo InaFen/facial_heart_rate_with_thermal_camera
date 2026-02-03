@@ -3,7 +3,14 @@ from typing import Dict, List
 import os
 import numpy as np
 from src.approaches.new_approach.classes.user_input import Config
-from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_temperature_means
+from src.approaches.new_approach.utils.utils_landmark_detection import (
+    apply_facemesh_to_thermal_video,
+    apply_roi_masks_to_video,
+    plot_roi_mean_signals,
+    apply_roi_masks_to_gray_frames,
+    plot_roi_temperature_means,
+    create_manual_roi_mask_log_from_gray_frames,
+)
 
 def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_files = False) -> tuple:
     """
@@ -15,13 +22,40 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         - roi_pixel_log: The detected pixel locations per ROI per frame
     """
     
-    # Detect face
-    if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
-        roi_pixel_log = apply_facemesh_to_thermal_video(input_path=configs.path_video, output_path=configs.path_video_facemesh, roi_landmarks=configs.roi_landmarks_subgrid_face, fps = configs.fps, use_ema = configs.use_ema, ema_alpha = configs.ema_alpha)
-        os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
-        np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
+    # Detect face or use manual ROI
+    if configs.manual_roi_enabled:
+        if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
+            frame_index = 0
+            if configs.timespan_signal_to_look_at is not None:
+                start_time, _ = configs.timespan_signal_to_look_at
+                frame_index = int(start_time * configs.fps)
+
+            roi_pixel_log = create_manual_roi_mask_log_from_gray_frames(
+                gray_dir=configs.path_gray_frames,
+                roi_name=configs.manual_roi_name,
+                mode=configs.manual_roi_mode,
+                frame_index=frame_index,
+                mask_load_path=configs.manual_roi_mask_load_path,
+                mask_save_path=configs.manual_roi_mask_save_path,
+            )
+            os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
+            np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
+        else:
+            roi_pixel_log = np.load(configs.path_pixels_log, allow_pickle=True)
     else:
-        roi_pixel_log = np.load(configs.path_pixels_log, allow_pickle=True)
+        if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
+            roi_pixel_log = apply_facemesh_to_thermal_video(
+                input_path=configs.path_video,
+                output_path=configs.path_video_facemesh,
+                roi_landmarks=configs.roi_landmarks_subgrid_face,
+                fps=configs.fps,
+                use_ema=configs.use_ema,
+                ema_alpha=configs.ema_alpha,
+            )
+            os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
+            np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
+        else:
+            roi_pixel_log = np.load(configs.path_pixels_log, allow_pickle=True)
 
     # Extract ROI pixel data
     if extract_from_video_instead_of_gray_files:

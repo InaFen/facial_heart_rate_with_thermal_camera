@@ -1,14 +1,14 @@
 {
   "paths": {
-    "gray_frames": "data/lepton/processed_lepton_data/19012026_interpolated/",
-    "video": "data/recorded_videos/thermal_video_from_y16_frames/19012026.mp4",
+    "gray_frames": "data/lepton/processed_lepton_data/03022026_3_interpolated/",
+    "video": "data/recorded_videos/thermal_video_from_y16_frames/03022026_3.mp4",
     "video_tracked_face": "data/recorded_videos/new_approach/output_tracked_video.mp4",
     "video_thresholded_pixel": "data/recorded_videos/new_approach/output_thresholded_video.mp4",
     "video_facemesh": "data/recorded_videos/new_approach/output_facemesh_video.mp4",
     "pixels_log": "data/saved_data/new_approach/roi_pixel_log.npy",
     "video_thermal_with_roi_masks": "data/recorded_videos/new_approach/output_video_with_roi_masks.mp4",
     "roi_pixel_data": "data/saved_data/new_approach/roi_pixel_data.npy",
-    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/19012026/opensignals_0007800F80FA_2026-01-19_13-53-34.npz"
+    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/03022026/0302_3/opensignals_0007800F80FA_2026-02-03_12-07-12.npz"
   },
   "processing": {
     "overwrite_existing_files": true,
@@ -18,15 +18,20 @@
     "bandpass_highcut": 1.667,
     "bandpass_order": 2,
     "use_ema": true,
-    "ema_alpha": 0.15
+    "ema_alpha": 0.15,
+    "manual_roi_enabled": true,
+    "manual_roi_name": "manual_roi",
+    "manual_roi_mode": "polygon",
+    "manual_roi_mask_load_path": null,
+    "manual_roi_mask_save_path": "data/saved_data/new_approach/manual_roi_mask.npy"
   },
   "timing": {
-    "time_first_frame_signal": 10.3,
+    "time_first_frame_signal": 26.5,
     "time_first_frame_ecg": 0.0,
-    "timespan_signal_to_look_at": [21,30],
+    "timespan_signal_to_look_at": [171,215],
     "notes": {
-      "time_first_frame_signal_expected": "17:00:00",
-      "time_first_frame_ecg_expected": "16:49:70"
+      "time_first_frame_signal_expected": null,
+      "time_first_frame_ecg_expected": null
     }
   },
   "roi_landmarks": {

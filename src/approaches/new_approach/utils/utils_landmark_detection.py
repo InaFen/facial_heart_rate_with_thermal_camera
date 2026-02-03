@@ -307,6 +307,106 @@ def load_gray_frame(filepath: str, width: int = 160, height: int = 122, drop_tel
     return frame
 
 
+def create_manual_roi_mask_log_from_gray_frames(
+    gray_dir: str,
+    roi_name: str = "manual_roi",
+    display_title: str = "Draw ROI (press ENTER to confirm)",
+    mode: str = "rectangle",
+    frame_index: int = 0,
+    mask_load_path: str = None,
+    mask_save_path: str = None,
+) -> List[Dict[str, np.ndarray]]:
+    """Create a fixed ROI mask by manually drawing on the first gray frame.
+
+    Returns:
+        roi_mask_log: list of per-frame ROI masks (same mask reused for all frames)
+    """
+    _, gray_files = sort_grayfiles_with_interpolations(gray_dir)
+    if not gray_files:
+        raise ValueError(f"No .gray files found in {gray_dir}")
+
+    if mask_load_path:
+        loaded_mask = np.load(mask_load_path)
+        if loaded_mask.ndim != 2:
+            raise ValueError(f"Loaded mask must be 2D, got shape {loaded_mask.shape}")
+        mask = loaded_mask.astype(np.uint8)
+        roi_mask_log = [{roi_name: mask} for _ in range(len(gray_files))]
+        return roi_mask_log
+
+    frame_index = max(0, min(frame_index, len(gray_files) - 1))
+    first_frame_path = os.path.join(gray_dir, gray_files[frame_index])
+    first_frame = load_gray_frame(first_frame_path)
+
+    vmin, vmax = np.percentile(first_frame, [1, 99])
+    frame_clipped = np.clip(first_frame, vmin, vmax)
+    frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    frame_display = cv2.applyColorMap(frame_norm, cv2.COLORMAP_TURBO)
+
+    mask = np.zeros(first_frame.shape, dtype=np.uint8)
+
+    if mode == "rectangle":
+        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
+        roi_rect = cv2.selectROI(display_title, frame_display, fromCenter=False, showCrosshair=True)
+        cv2.destroyWindow(display_title)
+
+        x, y, w, h = roi_rect
+        if w <= 0 or h <= 0:
+            raise ValueError("No ROI selected. Please draw a rectangle ROI and press ENTER.")
+
+        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, thickness=-1)
+    elif mode == "polygon":
+        points = []
+        display = frame_display.copy()
+
+        instructions = "Left click: add point | Right click: undo | ENTER: finish | c: clear"
+
+        def draw_overlay(img, pts):
+            canvas = img.copy()
+            if pts:
+                cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, (0, 255, 255), 1)
+                for p in pts:
+                    cv2.circle(canvas, p, 2, (0, 255, 255), -1)
+            cv2.putText(canvas, instructions, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            return canvas
+
+        def on_mouse(event, x, y, flags, param):
+            nonlocal points
+            if event == cv2.EVENT_LBUTTONDOWN:
+                points.append((x, y))
+            elif event == cv2.EVENT_RBUTTONDOWN and points:
+                points.pop()
+
+        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(display_title, on_mouse)
+
+        while True:
+            canvas = draw_overlay(display, points)
+            cv2.imshow(display_title, canvas)
+            key = cv2.waitKey(20) & 0xFF
+
+            if key == 13:  # Enter
+                break
+            if key == ord('c'):
+                points = []
+
+        cv2.destroyWindow(display_title)
+
+        if len(points) < 3:
+            raise ValueError("Polygon ROI needs at least 3 points. Please try again.")
+
+        poly = np.array(points, dtype=np.int32)
+        cv2.fillPoly(mask, [poly], 255)
+    else:
+        raise ValueError(f"Unknown manual ROI mode: {mode}")
+
+    if mask_save_path:
+        os.makedirs(os.path.dirname(mask_save_path), exist_ok=True)
+        np.save(mask_save_path, mask)
+
+    roi_mask_log = [{roi_name: mask} for _ in range(len(gray_files))]
+    return roi_mask_log
+
+
 def apply_roi_masks_to_gray_frames(
     gray_dir: str,
     roi_mask_log: List[Dict[str, np.ndarray]],

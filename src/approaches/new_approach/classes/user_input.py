@@ -58,6 +58,11 @@ class Config:
     bandpass_order: int
     use_ema: bool 
     ema_alpha: float 
+    manual_roi_enabled: bool = False
+    manual_roi_name: str = "manual_roi"
+    manual_roi_mode: str = "rectangle"
+    manual_roi_mask_load_path: Optional[str] = None
+    manual_roi_mask_save_path: Optional[str] = None
     
     # Timing
     time_first_frame_signal: Optional[str] = None
@@ -115,6 +120,11 @@ class Config:
             bandpass_order=processing_data['bandpass_order'],
             use_ema=processing_data['use_ema'],
             ema_alpha=processing_data['ema_alpha'],
+            manual_roi_enabled=processing_data.get('manual_roi_enabled', False),
+            manual_roi_name=processing_data.get('manual_roi_name', "manual_roi"),
+            manual_roi_mode=processing_data.get('manual_roi_mode', "rectangle"),
+            manual_roi_mask_load_path=processing_data.get('manual_roi_mask_load_path', None),
+            manual_roi_mask_save_path=processing_data.get('manual_roi_mask_save_path', None),
             
             # Timing
             time_first_frame_signal=timing_data['time_first_frame_signal'],
