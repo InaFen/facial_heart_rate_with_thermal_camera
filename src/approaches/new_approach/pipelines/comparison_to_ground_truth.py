@@ -25,8 +25,8 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
         ground_truth_signal = ground_truth_signal[gt_start_sample:gt_end_sample]
         print(f"Applied GT timespan filter: {gt_start_time:.2f}s to {gt_end_time:.2f}s (samples {gt_start_sample} to {gt_end_sample})")
 
-    if configs.plot_steps:
-        plot_signal(title="Ground Truth ECG Signal", signal=ground_truth_signal, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
+    #if configs.plot_steps:
+    #    plot_signal(title="Ground Truth ECG Signal", signal=ground_truth_signal, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
     
     # Apply bandpass filter to ground truth signal
     #ground_truth_signal_denoised = apply_butterworth_bandpass_filter(signal=ground_truth_signal, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=gt_fs, order=configs.bandpass_order)
@@ -34,8 +34,8 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
     ground_truth_signal_denoised = ground_truth_signal  # No additional filtering for ECG
     ground_truth_signal_denoised = -ground_truth_signal_denoised  # Flip ECG signal for correct orientation
 
-    if configs.plot_steps:
-        plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
+    #if configs.plot_steps:
+    #    plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
 
     # Determine effective start times (accounting for timespan filter)
     effective_signal_start_time = configs.time_first_frame_signal
@@ -57,7 +57,8 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
     print("Per-ROI peak correlations:", peak_corrs)
     print(f"Selected ROI for alignment (max peak corr): {roi_names[best_roi_idx]} (idx {best_roi_idx})")
 
-    # Plot signals roughly aligned using configured start times (manual alignment)
+    # Plot signals roughly aligned using configured start times 
+    """
     plot_denoised_with_ground_truth_offset(
         denoised_signal_unflat=bandpassed_signal_each_roi_seperate,
         roi_names=roi_names,
@@ -67,6 +68,7 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
         gt_start_time=effective_gt_start_time,
         signal_start_time=effective_signal_start_time
     )
+    """
 
     # --- Peak-based HR estimation and comparison ---
     def compute_hr_series_from_peaks(sig: np.ndarray, fs: float, min_distance_s: float , prominence: float, configs):

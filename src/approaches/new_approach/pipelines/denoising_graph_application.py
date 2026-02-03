@@ -31,8 +31,8 @@ def apply_denoising_graph_pipeline(roi_pixel_data, configs: Config):
 
     signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
 
-    if configs.plot_steps:
-        plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising")
+    #if configs.plot_steps:
+    #    plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising")
 
     # Remove NaNs to be able to apply Laplacian denoising
     # compute mean ignoring NaNs
@@ -40,8 +40,8 @@ def apply_denoising_graph_pipeline(roi_pixel_data, configs: Config):
     # replace NaNs
     signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
 
-    if configs.plot_steps:
-        plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
+    #if configs.plot_steps:
+    #    plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
 
     # Denoise signal via laplacian
     #denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, L=laplacian)
@@ -50,5 +50,5 @@ def apply_denoising_graph_pipeline(roi_pixel_data, configs: Config):
     #    plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
     #    plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
 
-    print("[WARNING Graph Application]: Currently graph not applied.")
+    print("[WARNING Graph Application]: Currently graph not applied and not all plots shown.")
     return signal_all_rois_without_nans, signal_each_roi_seperate, roi_names
