@@ -27,7 +27,7 @@ def apply_denoising_graph_pipeline(roi_pixel_data, configs: Config):
 
     # plot each ROI signal, all in one plot
     if configs.plot_steps:
-        plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names, title = "Before Denoising - Each ROI Signal")
+        plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names, title = "Before Denoising - Each ROI Signal", fps = configs.fps, show_seconds=True)
 
     signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
 

@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from src.approaches.yang_et_al.utils_post_processing import transform_flatten_signal_to_original_shape
 
-def plot_signal_each_roi_seperately(block_features, roi_names, title):
+def plot_signal_each_roi_seperately(block_features, roi_names, title, fps, show_seconds=False):
     """
     Plot the mean signal of each ROI on a single plot over time.
 
@@ -16,6 +16,12 @@ def plot_signal_each_roi_seperately(block_features, roi_names, title):
     
     roi_names : list of str
         Names of the ROIs corresponding to the blocks.
+    
+    fps : float
+        Frames per second.
+    
+    show_seconds : bool, optional
+        If True, x-axis will be in seconds instead of frames. Default is False.
     """
     T = len(block_features)
     N = block_features[0].shape[0]
@@ -23,12 +29,20 @@ def plot_signal_each_roi_seperately(block_features, roi_names, title):
     # Collect signals for each ROI
     signals = [np.array([block_features[t][n, 0] for t in range(T)]) for n in range(N)]
 
+    # Create time axis
+    if show_seconds:
+        x_axis = np.arange(T) / fps
+        x_label = 'Time (seconds)'
+    else:
+        x_axis = np.arange(T)
+        x_label = 'Frame'
+
     # Plot all ROI signals on a single plot
     plt.figure(figsize=(12, 6))
     for n in range(N):
-        plt.plot(signals[n], label=f'ROI: {roi_names[n]}')
+        plt.plot(x_axis, signals[n], label=f'ROI: {roi_names[n]}')
     
-    plt.xlabel('Frame')
+    plt.xlabel(x_label)
     plt.ylabel('Mean Pixel Value')
     plt.title(title)
     plt.legend()
@@ -112,7 +126,7 @@ def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, 
     plt.show(block=True) 
 
 
-def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names, title ="Denoised Signal per ROI"):
+def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names, title, fps, show_seconds=False):
     """
     Plot denoised signals per ROI in one figure.
 
@@ -122,19 +136,28 @@ def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names, title ="Denoi
         Denoised signal in unflattened form.
     roi_names : list of str
         Names of ROIs
+    fps : float
+        Frames per second.
+    show_seconds : bool, optional
+        If True, x-axis will be in seconds instead of frames. Default is False.
     """
 
     N = denoised_signal_unflat.shape[1]
 
     plt.figure(figsize=(12, 6))
 
-    fps = 8.7  
-    time_seconds = np.arange(denoised_signal_unflat.shape[0]) / fps
+    # Create time axis
+    if show_seconds:
+        x_axis = np.arange(denoised_signal_unflat.shape[0]) / fps
+        x_label = "Time (seconds)"
+    else:
+        x_axis = np.arange(denoised_signal_unflat.shape[0])
+        x_label = "Frame"
 
     for n in range(N):
-        plt.plot(time_seconds, denoised_signal_unflat[:, n], label=f'{roi_names[n]} - Denoised', alpha=0.9)
+        plt.plot(x_axis, denoised_signal_unflat[:, n], label=f'{roi_names[n]} - Denoised', alpha=0.9)
 
-    plt.xlabel("Seconds")
+    plt.xlabel(x_label)
     plt.ylabel("Signal Value")
     plt.title(title)
     plt.legend()
