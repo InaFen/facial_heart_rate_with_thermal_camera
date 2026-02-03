@@ -3,7 +3,7 @@ from typing import Dict, List
 import os
 import numpy as np
 from src.approaches.new_approach.classes.user_input import Config
-from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_adc_means
+from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_temperature_means
 
 def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_files = False) -> tuple:
     """
@@ -45,6 +45,6 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
         plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) 
     elif configs.plot_steps and not extract_from_video_instead_of_gray_files:
-        plot_roi_adc_means(roi_pixel_data=roi_pixel_data)
+        plot_roi_temperature_means(roi_pixel_data=roi_pixel_data)
 
     return roi_pixel_data, roi_pixel_log

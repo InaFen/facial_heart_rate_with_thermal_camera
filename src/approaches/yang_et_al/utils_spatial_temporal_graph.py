@@ -127,7 +127,7 @@ def build_block_features_from_roi_pixel_data(roi_pixel_data):
         feats_t = []
         for name in roi_names:
             info = roi_pixel_data[t][name]
-            meanv = info['mean_adc'] if info['mean_adc'] is not None else np.nan
+            meanv = info['mean_kelvin_multiplied_100'] if info['mean_kelvin_multiplied_100'] is not None else np.nan
             centroid = compute_centroid(info['coords'])  # returns (cx, cy) or None
             if centroid is None:
                 cx, cy = np.nan, np.nan

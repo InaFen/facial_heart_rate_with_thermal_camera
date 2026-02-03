@@ -350,7 +350,7 @@ def apply_roi_masks_to_gray_frames(
             frame_data[roi_name] = {
                 "coords": coords,
                 "adc_values": values.tolist(),
-                "mean_adc": float(np.mean(values)) if values.size > 0 else float('nan'),
+                "mean_kelvin_multiplied_100": float(np.mean(values)) if values.size > 0 else float('nan'),
             }
 
         roi_pixel_data.append(frame_data)
@@ -366,8 +366,8 @@ def apply_roi_masks_to_gray_frames(
     return roi_pixel_data
 
 
-def plot_roi_adc_means(roi_pixel_data: List[Dict[str, Dict[str, object]]], fps: float = None) -> None:
-    """Plot adc mean values for each ROI across frames.
+def plot_roi_temperature_means(roi_pixel_data: List[Dict[str, Dict[str, object]]], fps: float = None) -> None:
+    """Plot temperature mean values for each ROI across frames.
 
     Parameters:
         roi_pixel_data: output from apply_roi_masks_to_gray_frames
@@ -380,12 +380,12 @@ def plot_roi_adc_means(roi_pixel_data: List[Dict[str, Dict[str, object]]], fps: 
 
     plt.figure(figsize=(12, 6))
     for roi in roi_names:
-        means = [frame.get(roi, {}).get("mean_adc", np.nan) for frame in roi_pixel_data]
+        means = [frame.get(roi, {}).get("mean_kelvin_multiplied_100", np.nan) for frame in roi_pixel_data]
         plt.plot(t, means, label=roi)
 
     plt.xlabel("Frames" if fps is None else "Time (s)")
-    plt.ylabel("Mean ADC (raw units)")
-    plt.title("ROI Mean ADC Over Time")
+    plt.ylabel("Mean Kelvin * 100")  # adc values are in 0.01 Kelvin
+    plt.title("ROI Mean Temperature Over Time")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
