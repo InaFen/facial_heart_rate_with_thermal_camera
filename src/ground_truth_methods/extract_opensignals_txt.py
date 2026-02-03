@@ -114,9 +114,9 @@ def save_signal_to_npz(target_path: str, filename: str, signal: npt.NDArray[np.f
 
 
 if __name__ == "__main__":
-    signal_path = "data/ground_truth/opensignals/original_signal/19012026/opensignals_0007800F80FA_2026-01-19_13-53-34.txt"
-    npz_filename = "opensignals_0007800F80FA_2026-01-19_13-53-34.npz"
-    npz_path = "data/ground_truth/opensignals/extracted_npy_files/19012026/"
+    signal_path = "data/ground_truth/opensignals/original_signal/03022026/0302_3/opensignals_0007800F80FA_2026-02-03_12-07-12.txt"
+    npz_filename = "opensignals_0007800F80FA_2026-02-03_12-07-12.npz"
+    npz_path = "data/ground_truth/opensignals/extracted_npy_files/03022026/0302_3/"
     
     # Read signal
     record_data, fs = read_opensignals_txt(signal_path)
