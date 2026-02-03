@@ -63,6 +63,7 @@ class Config:
     manual_roi_mode: str = "rectangle"
     manual_roi_mask_load_path: Optional[str] = None
     manual_roi_mask_save_path: Optional[str] = None
+    manual_roi_selection_colormap: bool = True
     
     # Timing
     time_first_frame_signal: Optional[str] = None
@@ -125,6 +126,7 @@ class Config:
             manual_roi_mode=processing_data.get('manual_roi_mode', "rectangle"),
             manual_roi_mask_load_path=processing_data.get('manual_roi_mask_load_path', None),
             manual_roi_mask_save_path=processing_data.get('manual_roi_mask_save_path', None),
+            manual_roi_selection_colormap=processing_data.get('manual_roi_selection_colormap', True),
             
             # Timing
             time_first_frame_signal=timing_data['time_first_frame_signal'],

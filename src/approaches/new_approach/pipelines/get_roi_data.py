@@ -37,6 +37,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
                 frame_index=frame_index,
                 mask_load_path=configs.manual_roi_mask_load_path,
                 mask_save_path=configs.manual_roi_mask_save_path,
+                use_colormap=configs.manual_roi_selection_colormap,
             )
             os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
             np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
@@ -74,6 +75,20 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             np.save(configs.path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
         else:
             roi_pixel_data = np.load(configs.path_roi_pixel_data, allow_pickle=True)
+
+    if configs.manual_roi_enabled and configs.timespan_signal_to_look_at is not None:
+        start_time, end_time = configs.timespan_signal_to_look_at
+        start_frame = int(start_time * configs.fps)
+        end_frame = int(end_time * configs.fps)
+        os.makedirs(os.path.dirname(configs.path_video_tracked_face), exist_ok=True)
+        apply_roi_masks_to_video(
+            video_path=configs.path_video,
+            roi_mask_log=roi_pixel_log,
+            output_path=configs.path_video_tracked_face,
+            fps=configs.fps,
+            start_frame=start_frame,
+            end_frame=end_frame,
+        )
 
     # Plot
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
