@@ -4,6 +4,9 @@
 e.g. 
 s. description in file
 
+to see what is recorded while the recording:
+after file above is started, start live_thermal_viewer.py
+
 ## Second step: Interpolate if needed to get consistent FPS
 src/video_processing_methods/get_consistent_fps_for_gray_images.py
 
