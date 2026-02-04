@@ -17,6 +17,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+PROJECT_ROOT = "/home/arbeit/Dokumente/master_thesis/"
+sys.path.insert(0, PROJECT_ROOT)
+
+from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+
+
 
 def load_gray_frame(filepath, width=160, height=122, drop_telemetry=True):
     """
@@ -107,7 +113,9 @@ def create_thermal_video(input_dir, output_file, fps=9, width=160, height=120):
         height: frame height without telemetry (default 120)
     """
     # Find all .gray files sorted by name (which includes timestamp)
-    gray_files = sorted(glob.glob(os.path.join(input_dir, "*.gray")))
+    _, gray_files_filename_only = sort_grayfiles_with_interpolations(input_dir)
+    gray_files = [os.path.join(input_dir, f) for f in gray_files_filename_only]
+
     
     if not gray_files:
         print(f"Error: No .gray files found in {input_dir}", file=sys.stderr)
@@ -154,7 +162,7 @@ def main():
 
     input_dir = "data/lepton/processed_lepton_data/03022026_3_interpolated"
     output = "data/recorded_videos/thermal_video_from_y16_frames/03022026_3.mp4"
-    fps = 8.767717191929298 # based on findings in get_consistent_fps_for_gray_images.py
+    fps =8.767704384613774 # based on findings in get_consistent_fps_for_gray_images.py
     width = 160
     height = 120
 
