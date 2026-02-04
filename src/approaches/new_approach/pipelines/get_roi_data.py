@@ -77,11 +77,12 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             roi_pixel_data = np.load(configs.path_roi_pixel_data, allow_pickle=True)
 
     if configs.manual_roi_enabled and configs.timespan_signal_to_look_at is not None:
+        # Save ROI masked video for the selected timespan for verification
         start_time, end_time = configs.timespan_signal_to_look_at
         start_frame = int(start_time * configs.fps)
         end_frame = int(end_time * configs.fps)
         os.makedirs(os.path.dirname(configs.path_video_tracked_face), exist_ok=True)
-        apply_roi_masks_to_video(
+        _ = apply_roi_masks_to_video(
             video_path=configs.path_video,
             roi_mask_log=roi_pixel_log,
             output_path=configs.path_video_tracked_face,

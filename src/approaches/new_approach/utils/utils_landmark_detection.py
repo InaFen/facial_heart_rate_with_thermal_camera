@@ -331,6 +331,10 @@ def create_manual_roi_mask_log_from_gray_frames(
         loaded_mask = np.load(mask_load_path)
         if loaded_mask.ndim != 2:
             raise ValueError(f"Loaded mask must be 2D, got shape {loaded_mask.shape}")
+        # Load first frame to verify mask dimensions match
+        first_frame_check = load_gray_frame(os.path.join(gray_dir, gray_files[0]))
+        if loaded_mask.shape != first_frame_check.shape:
+            raise ValueError(f"Loaded mask shape {loaded_mask.shape} does not match frame shape {first_frame_check.shape}")
         mask = loaded_mask.astype(np.uint8)
         roi_mask_log = [{roi_name: mask} for _ in range(len(gray_files))]
         return roi_mask_log
@@ -338,6 +342,11 @@ def create_manual_roi_mask_log_from_gray_frames(
     frame_index = max(0, min(frame_index, len(gray_files) - 1))
     first_frame_path = os.path.join(gray_dir, gray_files[frame_index])
     first_frame = load_gray_frame(first_frame_path)
+    
+    # Flip the frame vertically to match video orientation
+    # Gray frames are stored upside-down relative to the video
+    print("[Warning]: Flipping frame vertically for ROI selection to match video orientation.")
+    first_frame = cv2.flip(first_frame, 0)
 
     vmin, vmax = np.percentile(first_frame, [1, 99])
     frame_clipped = np.clip(first_frame, vmin, vmax)
@@ -347,6 +356,8 @@ def create_manual_roi_mask_log_from_gray_frames(
     else:
         frame_display = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
 
+    # Get frame dimensions
+    height, width = first_frame.shape
     mask = np.zeros(first_frame.shape, dtype=np.uint8)
 
     if mode == "rectangle":
@@ -358,6 +369,7 @@ def create_manual_roi_mask_log_from_gray_frames(
         if w <= 0 or h <= 0:
             raise ValueError("No ROI selected. Please draw a rectangle ROI and press ENTER.")
 
+        # Draw filled rectangle directly - no coordinate transformation needed
         cv2.rectangle(mask, (x, y), (x + w, y + h), 255, thickness=-1)
     elif mode == "polygon":
         points = []
@@ -371,7 +383,7 @@ def create_manual_roi_mask_log_from_gray_frames(
                 cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, (0, 255, 255), 1)
                 for p in pts:
                     cv2.circle(canvas, p, 2, (0, 255, 255), -1)
-            cv2.putText(canvas, instructions, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(canvas, instructions, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.1, (255, 255, 255), 1)
             return canvas
 
         def on_mouse(event, x, y, flags, param):
@@ -399,13 +411,19 @@ def create_manual_roi_mask_log_from_gray_frames(
         if len(points) < 3:
             raise ValueError("Polygon ROI needs at least 3 points. Please try again.")
 
+        # Draw polygon directly - no coordinate transformation needed
         poly = np.array(points, dtype=np.int32)
         cv2.fillPoly(mask, [poly], 255)
     else:
         raise ValueError(f"Unknown manual ROI mode: {mode}")
 
+    # Mask is now in the flipped (video) orientation - no need to flip back
+    # It will be applied correctly to the video
+
     if mask_save_path:
-        os.makedirs(os.path.dirname(mask_save_path), exist_ok=True)
+        save_dir = os.path.dirname(mask_save_path)
+        if save_dir:  # Only create directory if path contains one
+            os.makedirs(save_dir, exist_ok=True)
         np.save(mask_save_path, mask)
 
     roi_mask_log = [{roi_name: mask} for _ in range(len(gray_files))]
