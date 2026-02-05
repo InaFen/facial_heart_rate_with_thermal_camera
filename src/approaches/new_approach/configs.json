@@ -13,9 +13,9 @@
   "processing": {
     "overwrite_existing_files": true,
     "plot_steps": true,
-    "fps": 8.767687772484802,
-    "bandpass_lowcut": 0.5,
-    "bandpass_highcut": 4.0,
+    "fps": 8.767704384613774,
+    "bandpass_lowcut": 0.667,
+    "bandpass_highcut": 1.667,
     "bandpass_order": 4,
     "use_ema": true,
     "ema_alpha": 0.15,
@@ -24,12 +24,19 @@
     "manual_roi_mode": "polygon",
     "manual_roi_mask_load_path": null,
     "manual_roi_mask_save_path": "data/saved_data/new_approach/manual_roi_mask.npy",
+    "manual_roi_names": ["roi_signal", "roi_noise"],
+    "manual_roi_modes": ["polygon", "polygon"],
+    "manual_roi_mask_load_paths": [null, null],
+    "manual_roi_mask_save_paths": [
+      "data/saved_data/new_approach/manual_roi_mask_signal.npy",
+      "data/saved_data/new_approach/manual_roi_mask_noise.npy"
+    ],
     "manual_roi_selection_colormap": false
   },
   "timing": {
     "time_first_frame_signal": 26.5,
     "time_first_frame_ecg": 0.0,
-    "timespan_signal_to_look_at": [171,215],
+    "timespan_signal_to_look_at": [442, 450],
     "notes": {
       "time_first_frame_signal_expected": null,
       "time_first_frame_ecg_expected": null

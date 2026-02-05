@@ -35,7 +35,21 @@ def main():
     denoised_signal_all_rois, signal_each_roi_seperate, roi_names = apply_denoising_graph_pipeline(roi_pixel_data=roi_pixel_data, configs=configs)
 
     denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
-    
+
+    # Dual ROI subtraction if two manual ROIs are selected
+    if configs.manual_roi_enabled and len(configs.manual_roi_names) == 2:
+        # Find indices for the two manual ROIs
+        roi1_name, roi2_name = configs.manual_roi_names
+        try:
+            idx1 = roi_names.index(roi1_name)
+            idx2 = roi_names.index(roi2_name)
+        except ValueError:
+            raise ValueError(f"Manual ROI names {roi1_name} and/or {roi2_name} not found in roi_names: {roi_names}")
+        # Subtract mean signal of ROI 1 from ROI 2
+        dual_roi_signal = denoised_signal_each_roi_seperate[:, idx2] - denoised_signal_each_roi_seperate[:, idx1]
+        denoised_signal_each_roi_seperate = dual_roi_signal[:, None]  # shape (T, 1)
+        roi_names = [f"{roi2_name} - {roi1_name}"]
+
     # Add random baseline ROI to denoised signal (control signal for validation)
     denoised_signal_each_roi_seperate, baseline_names = add_random_baseline_signal(
         denoised_signal_each_roi_seperate, seed=42, amplitude_scale=0.2
@@ -44,19 +58,18 @@ def main():
 
     # Remove mean (remove DC component - constant offset)
     denoised_signal_each_roi_seperate = detrend_signal(denoised_signal_each_roi_seperate, roi_names, plot =configs.plot_steps)
-    
+
     #if configs.plot_steps:
     #    plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
 
     # Get frequencies over time using STFT and CWT
     #get_frequencies_over_time_spectrogram(denoised_signal_each_roi_seperate, fps=configs.fps, window_seconds=5.0, roi_names=roi_names, save_path=None, plot=True)
-    
+
     #get_frequencies_over_time_cwt(denoised_signal_each_roi_seperate, fps=configs.fps, roi_names=roi_names, save_path=None, plot=True)
 
-
     # Apply bandpass filter
-    #bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
-    bandpassed_signal_each_roi_seperate = denoised_signal_each_roi_seperate  # No additional filtering for now
+    bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
+    #bandpassed_signal_each_roi_seperate = denoised_signal_each_roi_seperate  # No additional filtering for now
 
     if configs.plot_steps:
         plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names, title="Bandpassed Denoised Signal per ROI", fps=configs.fps, show_seconds=True)

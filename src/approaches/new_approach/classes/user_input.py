@@ -59,10 +59,10 @@ class Config:
     use_ema: bool 
     ema_alpha: float 
     manual_roi_enabled: bool = False
-    manual_roi_name: str = "manual_roi"
-    manual_roi_mode: str = "rectangle"
-    manual_roi_mask_load_path: Optional[str] = None
-    manual_roi_mask_save_path: Optional[str] = None
+    manual_roi_names: List[str] = field(default_factory=lambda: ["manual_roi"])
+    manual_roi_modes: List[str] = field(default_factory=lambda: ["rectangle"])
+    manual_roi_mask_load_paths: Optional[List[str]] = field(default_factory=lambda: [None])
+    manual_roi_mask_save_paths: Optional[List[str]] = field(default_factory=lambda: [None])
     manual_roi_selection_colormap: bool = True
     
     # Timing
@@ -111,7 +111,7 @@ class Config:
             path_video_thermal_with_roi_masks=paths_data['video_thermal_with_roi_masks'],
             path_roi_pixel_data=paths_data['roi_pixel_data'],
             path_ground_truth=paths_data['ground_truth'],
-            
+
             # Processing
             overwrite_existing_files=processing_data['overwrite_existing_files'],
             plot_steps=processing_data['plot_steps'],
@@ -122,21 +122,21 @@ class Config:
             use_ema=processing_data['use_ema'],
             ema_alpha=processing_data['ema_alpha'],
             manual_roi_enabled=processing_data.get('manual_roi_enabled', False),
-            manual_roi_name=processing_data.get('manual_roi_name', "manual_roi"),
-            manual_roi_mode=processing_data.get('manual_roi_mode', "rectangle"),
-            manual_roi_mask_load_path=processing_data.get('manual_roi_mask_load_path', None),
-            manual_roi_mask_save_path=processing_data.get('manual_roi_mask_save_path', None),
+            manual_roi_names=processing_data.get('manual_roi_names', [processing_data.get('manual_roi_name', "manual_roi")]),
+            manual_roi_modes=processing_data.get('manual_roi_modes', [processing_data.get('manual_roi_mode', "rectangle")]),
+            manual_roi_mask_load_paths=processing_data.get('manual_roi_mask_load_paths', [processing_data.get('manual_roi_mask_load_path', None)]),
+            manual_roi_mask_save_paths=processing_data.get('manual_roi_mask_save_paths', [processing_data.get('manual_roi_mask_save_path', None)]),
             manual_roi_selection_colormap=processing_data.get('manual_roi_selection_colormap', True),
-            
+
             # Timing
             time_first_frame_signal=timing_data['time_first_frame_signal'],
             time_first_frame_ecg=timing_data['time_first_frame_ecg'],
             timespan_signal_to_look_at=timing_data.get('timespan_signal_to_look_at', None),
-            
+
             # ROI Landmarks
             whole_face=roi_data['whole_face'],
             roi_landmarks_subgrid_face=data['roi_landmarks_subgrid_face'],
-            
+
             # Config path
             config_path=config_path
         )
