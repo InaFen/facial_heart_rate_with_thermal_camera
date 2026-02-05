@@ -15,6 +15,7 @@ from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.utils.utils_denoised_baseline import add_random_baseline_signal
 from src.approaches.new_approach.utils.utils_stft import get_frequencies_over_time_spectrogram, get_frequencies_over_time_cwt
 from src.approaches.new_approach.utils.utils_detrend import detrend_signal
+from src.approaches.new_approach.utils.utils_fft import plot_fft_each_roi, get_dominant_frequency_per_roi, print_dominant_frequencies
 
 def main():
     configs = Config.from_json(CONFIGS_PATH)
@@ -52,15 +53,23 @@ def main():
     
     #get_frequencies_over_time_cwt(denoised_signal_each_roi_seperate, fps=configs.fps, roi_names=roi_names, save_path=None, plot=True)
 
+
     # Apply bandpass filter
-    bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
-    
+    #bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
+    bandpassed_signal_each_roi_seperate = denoised_signal_each_roi_seperate  # No additional filtering for now
+
     if configs.plot_steps:
         plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names, title="Bandpassed Denoised Signal per ROI", fps=configs.fps, show_seconds=True)
 
-    # Comparison with ground truth
-    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=bandpassed_signal_each_roi_seperate, roi_names=roi_names, timespan_filter=configs.timespan_signal_to_look_at)
+    # Plot FFT for each ROI
+    plot_fft_each_roi(bandpassed_signal_each_roi_seperate, roi_names, fps=configs.fps, show_peaks=True)
+    
+    # Get and print dominant frequencies and heart rate estimates
+    dominant_frequencies, heart_rates = get_dominant_frequency_per_roi(bandpassed_signal_each_roi_seperate, roi_names, fps=configs.fps)
+    print_dominant_frequencies(dominant_frequencies, heart_rates)
 
+    # Compare to ground truth signal
+    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=bandpassed_signal_each_roi_seperate, roi_names=roi_names, timespan_filter=configs.timespan_signal_to_look_at)
 
 
 """
