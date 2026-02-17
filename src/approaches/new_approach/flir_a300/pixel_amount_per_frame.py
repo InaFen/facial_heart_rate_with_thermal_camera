@@ -35,27 +35,33 @@ def extract_pixel_count(lines: Iterable[str], file_path: Path) -> int:
 	raise ValueError(f"Could not find pixel count in file: {file_path}")
 
 
-
-def extract_mean_temperature_from_csv(frame_number: int, folder: Path) -> float:
-	# Find the corresponding CSV file for the frame
-	# Example: Rec-temp-000007_515.csv for frame 515
-	csv_file = folder / f"Rec-temp-000007_{frame_number}.csv"
+def extract_mean_temperature_from_csv(frame_number: int, folder: Path, threshold: float | None = None) -> float:
+	"""
+	Find the mean temperature for a frame, keeping only pixels above a given threshold (if provided).
+	If threshold is None, use all pixels.
+	"""
+	csv_file = folder / f"Rec-temp-000005_{frame_number}.csv"
 	if not csv_file.exists():
 		raise FileNotFoundError(f"CSV file not found for frame {frame_number}: {csv_file}")
 	pixel_values = []
 	with csv_file.open("r", encoding="utf-8") as f:
 		for line in f:
-			# Skip header/meta lines
 			if line.strip() == "" or "=" in line:
 				continue
-			# Split by comma and convert to float
 			pixel_values.extend([float(val) for val in line.strip().split(",") if val])
 	if not pixel_values:
 		raise ValueError(f"No pixel values found in {csv_file}")
+	if threshold is not None:
+		pixel_values = [val for val in pixel_values if val > threshold]
+		print(frame_number, len(pixel_values))
+
+	if not pixel_values:
+		raise ValueError(f"No pixel values above threshold {threshold} in {csv_file}")
+    
 	return sum(pixel_values) / len(pixel_values)
 
 
-def collect_frame_pixel_stats(folder_path: str | Path) -> List[FramePixelStats]:
+def collect_frame_pixel_stats(folder_path: str | Path, threshold: float | None = None) -> List[FramePixelStats]:
 	folder = Path(folder_path)
 	if not folder.exists() or not folder.is_dir():
 		raise FileNotFoundError(f"Folder does not exist or is not a directory: {folder}")
@@ -68,7 +74,7 @@ def collect_frame_pixel_stats(folder_path: str | Path) -> List[FramePixelStats]:
 		with stats_file.open("r", encoding="utf-8", errors="replace") as handle:
 			lines = list(handle)
 			pixel_count = extract_pixel_count(lines, stats_file)
-		mean_temperature = extract_mean_temperature_from_csv(frame_number, folder)
+		mean_temperature = extract_mean_temperature_from_csv(frame_number, folder, threshold=threshold)
 		results.append(
 			FramePixelStats(
 				frame_number=frame_number,
@@ -157,15 +163,88 @@ def plot_pixel_counts_and_mean(
 	fig.tight_layout()
 	plt.show()
 
+def create_mean_temperature_colormap_video(
+	folder: Path,
+	output_video_path: Path,
+	threshold: float,
+	width: int = 320,
+	height: int = 240,
+	fps: float = 8.58811,
+	codec: str = "mp4v",
+	colormap: int = 2  # cv2.COLORMAP_JET
+) -> None:
+	"""
+	For each frame in the folder, create a color-mapped image based on temperature values.
+	Pixels below threshold can be dimmed or set to a background color.
+	"""
+	import cv2
+	import numpy as np
+	stats_files = sorted(folder.glob("* - Stats.txt"))
+	# Pair each frame path with its frame number for sorting
+	frame_paths_with_numbers = []
+	for f in stats_files:
+		frame_number = extract_frame_number(f)
+		csv_path = folder / f"Rec-temp-000005_{frame_number}.csv"
+		frame_paths_with_numbers.append((frame_number, csv_path))
+	# Sort by frame number
+	frame_paths_with_numbers.sort(key=lambda x: x[0])
+	frame_paths = [csv_path for _, csv_path in frame_paths_with_numbers]
+	fourcc = cv2.VideoWriter_fourcc(*codec)
+	out = cv2.VideoWriter(str(output_video_path), fourcc, fps, (width, height), isColor=True)
+	vmin, vmax = None, None
+	# First pass: find min/max temperature for normalization
+	for csv_file in frame_paths:
+		if not csv_file.exists():
+			continue
+		pixel_values = []
+		with csv_file.open("r", encoding="utf-8") as f:
+			for line in f:
+				if line.strip() == "" or "=" in line:
+					continue
+				pixel_values.extend([float(val) for val in line.strip().split(",") if val])
+		if len(pixel_values) != width * height:
+			continue
+		arr = np.array(pixel_values, dtype=float)
+		arr_masked = arr[arr > threshold]
+		if arr_masked.size > 0:
+			arr_min, arr_max = arr_masked.min(), arr_masked.max()
+			vmin = arr_min if vmin is None else min(vmin, arr_min)
+			vmax = arr_max if vmax is None else max(vmax, arr_max)
+	if vmin is None or vmax is None or vmin == vmax:
+		vmin, vmax = 20.0, 40.0  # fallback
+	# Second pass: write video
+	for csv_file in frame_paths:
+		if not csv_file.exists():
+			continue
+		pixel_values = []
+		with csv_file.open("r", encoding="utf-8") as f:
+			for line in f:
+				if line.strip() == "" or "=" in line:
+					continue
+				pixel_values.extend([float(val) for val in line.strip().split(",") if val])
+		if len(pixel_values) != width * height:
+			continue
+		arr = np.array(pixel_values, dtype=float).reshape((height, width))
+		norm = np.clip((arr - vmin) / (vmax - vmin), 0, 1)
+		norm_uint8 = (norm * 255).astype(np.uint8)
+		color_img = cv2.applyColorMap(norm_uint8, colormap)
+		# Optionally dim or gray out pixels below threshold
+		below = arr <= threshold
+		color_img[below] = [40, 40, 40]  # dark gray for not-used pixels
+		out.write(color_img)
+	out.release()
+	print(f"Video saved to {output_video_path}")
 
 def main() -> None:
 	input_folder = Path(
-		"/home/arbeit/Dokumente/master_thesis/data/flir_a300/Rec-temp-000007"
+		"/home/arbeit/Dokumente/master_thesis/data/flir_a300/Rec-temp-0000005"
 	)
-	output_csv: Path | None = "data/flir_a300/experiments/pixel_amount_per_frame_Rec-temp-000007.csv"
-	frames_per_second = 8.5882
+	output_csv: Path | None = "data/flir_a300/experiments/pixel_amount_per_frame_Rec-temp-0000005.csv"
+	frames_per_second = 8.58811
 
-	stats = collect_frame_pixel_stats(input_folder)
+	# Set threshold to a float value to keep only pixels above this value for mean calculation, or None to use all pixels
+	threshold = 0.0  # e.g., 30.0
+	stats = collect_frame_pixel_stats(input_folder, threshold=threshold)
 	stats.sort(key=lambda item: item.frame_number)
 
 	if output_csv:
@@ -180,6 +259,19 @@ def main() -> None:
 			return
 
 	plot_pixel_counts_and_mean(stats, frames_per_second)
+
+	# Create a color video showing which pixels are used for mean temperature calculation
+	output_video_path = Path("data/flir_a300/experiments/mean_temperature_colormap_video.mp4")
+	create_mean_temperature_colormap_video(
+		input_folder,
+		output_video_path,
+		threshold=threshold,
+		width=320,
+		height=240,
+		fps=frames_per_second,
+		codec="mp4v",
+		colormap=2  # cv2.COLORMAP_JET
+	)
 
 
 if __name__ == "__main__":
