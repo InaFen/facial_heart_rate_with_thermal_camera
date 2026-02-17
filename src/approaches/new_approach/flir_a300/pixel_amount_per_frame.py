@@ -39,30 +39,32 @@ def extract_pixel_count_from_csv(file_path: Path) -> int:
 	return count
 
 
-def extract_mean_temperature_from_csv(frame_number: int, folder: Path, threshold: float | None = None) -> float:
-	"""
-	Find the mean temperature for a frame, keeping only pixels above a given threshold (if provided).
-	If threshold is None, use all pixels.
-	"""
-	csv_file = folder / f"Rec-temp-000005_{frame_number}.csv"
-	if not csv_file.exists():
-		raise FileNotFoundError(f"CSV file not found for frame {frame_number}: {csv_file}")
-	pixel_values = []
-	with csv_file.open("r", encoding="utf-8") as f:
-		for line in f:
-			if line.strip() == "" or "=" in line:
-				continue
-			pixel_values.extend([float(val) for val in line.strip().split(",") if val])
-	if not pixel_values:
-		raise ValueError(f"No pixel values found in {csv_file}")
-	if threshold is not None:
-		pixel_values = [val for val in pixel_values if val > threshold]
-		print(frame_number, len(pixel_values))
+def extract_mean_temperature_and_pixel_count_from_csv(frame_number: int, folder: Path, threshold: float | None = None) -> float:
+    """
+    Find the mean temperature for a frame, keeping only pixels above a given threshold (if provided).
+    If threshold is None, use all pixels.
+    """
+    csv_file = folder / f"Rec-temp-000005_{frame_number}.csv"
+    if not csv_file.exists():
+        raise FileNotFoundError(f"CSV file not found for frame {frame_number}: {csv_file}")
+    pixel_values = []
+    with csv_file.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip() == "" or "=" in line:
+                continue
+            pixel_values.extend([float(val) for val in line.strip().split(",") if val])
+    if not pixel_values:
+        raise ValueError(f"No pixel values found in {csv_file}")
+    if threshold is not None:
+        pixel_values = [val for val in pixel_values if val > threshold]
+        print(frame_number, len(pixel_values))
 
-	if not pixel_values:
-		raise ValueError(f"No pixel values above threshold {threshold} in {csv_file}")
+    if not pixel_values:
+        raise ValueError(f"No pixel values above threshold {threshold} in {csv_file}")
     
-	return sum(pixel_values) / len(pixel_values)
+    mean = sum(pixel_values) / len(pixel_values)
+
+    return mean, len(pixel_values)
 
 
 def collect_frame_pixel_stats(folder_path: str | Path, threshold: float | None = None) -> List[FramePixelStats]:
@@ -75,8 +77,7 @@ def collect_frame_pixel_stats(folder_path: str | Path, threshold: float | None =
 
 	for csv_file in csv_files:
 		frame_number = extract_frame_number_from_csv(csv_file)
-		pixel_count = extract_pixel_count_from_csv(csv_file)
-		mean_temperature = extract_mean_temperature_from_csv(frame_number, folder, threshold=threshold)
+		mean_temperature, pixel_count = extract_mean_temperature_and_pixel_count_from_csv(frame_number, folder, threshold=threshold)
 		results.append(
 			FramePixelStats(
 				frame_number=frame_number,
