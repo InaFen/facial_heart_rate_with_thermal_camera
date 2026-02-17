@@ -35,12 +35,24 @@ def extract_pixel_count(lines: Iterable[str], file_path: Path) -> int:
 	raise ValueError(f"Could not find pixel count in file: {file_path}")
 
 
-def extract_mean_temperature(lines: Iterable[str], file_path: Path) -> float:
-	for line in lines:
-		match = MEAN_TEMPERATURE_PATTERN.search(line)
-		if match:
-			return float(match.group(1))
-	raise ValueError(f"Could not find mean temperature in file: {file_path}")
+
+def extract_mean_temperature_from_csv(frame_number: int, folder: Path) -> float:
+	# Find the corresponding CSV file for the frame
+	# Example: Rec-temp-000007_515.csv for frame 515
+	csv_file = folder / f"Rec-temp-000007_{frame_number}.csv"
+	if not csv_file.exists():
+		raise FileNotFoundError(f"CSV file not found for frame {frame_number}: {csv_file}")
+	pixel_values = []
+	with csv_file.open("r", encoding="utf-8") as f:
+		for line in f:
+			# Skip header/meta lines
+			if line.strip() == "" or "=" in line:
+				continue
+			# Split by comma and convert to float
+			pixel_values.extend([float(val) for val in line.strip().split(",") if val])
+	if not pixel_values:
+		raise ValueError(f"No pixel values found in {csv_file}")
+	return sum(pixel_values) / len(pixel_values)
 
 
 def collect_frame_pixel_stats(folder_path: str | Path) -> List[FramePixelStats]:
@@ -56,7 +68,7 @@ def collect_frame_pixel_stats(folder_path: str | Path) -> List[FramePixelStats]:
 		with stats_file.open("r", encoding="utf-8", errors="replace") as handle:
 			lines = list(handle)
 			pixel_count = extract_pixel_count(lines, stats_file)
-			mean_temperature = extract_mean_temperature(lines, stats_file)
+		mean_temperature = extract_mean_temperature_from_csv(frame_number, folder)
 		results.append(
 			FramePixelStats(
 				frame_number=frame_number,
