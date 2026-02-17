@@ -15,24 +15,28 @@ class FramePixelStats:
 	file_path: Path
 
 
-FRAME_NUMBER_PATTERN = re.compile(r"_(\d+)\s+-\s+Stats\.txt$", re.IGNORECASE)
-PIXEL_COUNT_PATTERN = re.compile(r"Number of Pixels\s+(\d+)")
-MEAN_TEMPERATURE_PATTERN = re.compile(r"Mean \[C\]\s+([0-9]+\.?[0-9]*)")
 
 
-def extract_frame_number(file_path: Path) -> int:
-	match = FRAME_NUMBER_PATTERN.search(file_path.name)
+
+
+def extract_frame_number_from_csv(file_path: Path) -> int:
+	# Assumes filename like Rec-temp-000005_<frame_number>.csv
+	match = re.search(r"_(\d+)\.csv$", file_path.name)
 	if not match:
 		raise ValueError(f"Could not extract frame number from filename: {file_path.name}")
 	return int(match.group(1))
 
 
-def extract_pixel_count(lines: Iterable[str], file_path: Path) -> int:
-	for line in lines:
-		match = PIXEL_COUNT_PATTERN.search(line)
-		if match:
-			return int(match.group(1))
-	raise ValueError(f"Could not find pixel count in file: {file_path}")
+
+def extract_pixel_count_from_csv(file_path: Path) -> int:
+	# Count the number of values in the CSV file
+	count = 0
+	with file_path.open("r", encoding="utf-8") as f:
+		for line in f:
+			if line.strip() == "" or "=" in line:
+				continue
+			count += len([val for val in line.strip().split(",") if val])
+	return count
 
 
 def extract_mean_temperature_from_csv(frame_number: int, folder: Path, threshold: float | None = None) -> float:
@@ -66,21 +70,19 @@ def collect_frame_pixel_stats(folder_path: str | Path, threshold: float | None =
 	if not folder.exists() or not folder.is_dir():
 		raise FileNotFoundError(f"Folder does not exist or is not a directory: {folder}")
 
-	stats_files = sorted(folder.glob("* - Stats.txt"))
+	csv_files = sorted(folder.glob("Rec-temp-000005_*.csv"), key=extract_frame_number_from_csv)
 	results: List[FramePixelStats] = []
 
-	for stats_file in stats_files:
-		frame_number = extract_frame_number(stats_file)
-		with stats_file.open("r", encoding="utf-8", errors="replace") as handle:
-			lines = list(handle)
-			pixel_count = extract_pixel_count(lines, stats_file)
+	for csv_file in csv_files:
+		frame_number = extract_frame_number_from_csv(csv_file)
+		pixel_count = extract_pixel_count_from_csv(csv_file)
 		mean_temperature = extract_mean_temperature_from_csv(frame_number, folder, threshold=threshold)
 		results.append(
 			FramePixelStats(
 				frame_number=frame_number,
 				pixel_count=pixel_count,
 				mean_temperature=mean_temperature,
-				file_path=stats_file,
+				file_path=csv_file,
 			)
 		)
 
@@ -124,12 +126,14 @@ def plot_pixel_counts_and_mean(
 	counts = [item.pixel_count for item in stats]
 	means = [item.mean_temperature for item in stats]
 
-	fig = plt.figure(figsize=(10, 10))
-	grid = fig.add_gridspec(4, 1, height_ratios=[1, 1, 1, 1])
+	fig = plt.figure(figsize=(10, 12))
+	grid = fig.add_gridspec(5, 1, height_ratios=[1, 1, 1, 1, 1])
 	axis_top = fig.add_subplot(grid[0, 0])
 	axis_bottom = fig.add_subplot(grid[1, 0], sharex=axis_top)
-	axis_fft_counts = fig.add_subplot(grid[2, 0])
-	axis_fft_means = fig.add_subplot(grid[3, 0], sharex=axis_fft_counts)
+	axis_diff = fig.add_subplot(grid[2, 0], sharex=axis_top)
+	axis_fft_counts = fig.add_subplot(grid[3, 0])
+	axis_fft_means = fig.add_subplot(grid[4, 0], sharex=axis_fft_counts)
+
 	axis_top.plot(times, counts, marker="o", linewidth=1)
 	axis_top.set_ylabel("Number of Pixels")
 	axis_top.set_title("Pixel Amount per Frame")
@@ -140,6 +144,14 @@ def plot_pixel_counts_and_mean(
 	axis_bottom.set_ylabel("Mean Temperature (C)")
 	axis_bottom.set_title("Mean Temperature per Frame")
 	axis_bottom.grid(True, alpha=0.3)
+
+	# Plot difference in mean temperature to previous frame
+	mean_diffs = [0] + [means[i] - means[i-1] for i in range(1, len(means))]
+	axis_diff.plot(times, mean_diffs, color="tab:blue", marker="o", linewidth=1)
+	axis_diff.set_xlabel("Time (s)")
+	axis_diff.set_ylabel("Δ Mean Temp (C)")
+	axis_diff.set_title("Difference in Mean Temperature to Previous Frame")
+	axis_diff.grid(True, alpha=0.3)
 
 	mean_centered = np.array(means, dtype=float) - float(np.mean(means))
 	counts_centered = np.array(counts, dtype=float) - float(np.mean(counts))
@@ -179,21 +191,12 @@ def create_mean_temperature_colormap_video(
 	"""
 	import cv2
 	import numpy as np
-	stats_files = sorted(folder.glob("* - Stats.txt"))
-	# Pair each frame path with its frame number for sorting
-	frame_paths_with_numbers = []
-	for f in stats_files:
-		frame_number = extract_frame_number(f)
-		csv_path = folder / f"Rec-temp-000005_{frame_number}.csv"
-		frame_paths_with_numbers.append((frame_number, csv_path))
-	# Sort by frame number
-	frame_paths_with_numbers.sort(key=lambda x: x[0])
-	frame_paths = [csv_path for _, csv_path in frame_paths_with_numbers]
+	csv_files = sorted(folder.glob("Rec-temp-000005_*.csv"), key=extract_frame_number_from_csv)
 	fourcc = cv2.VideoWriter_fourcc(*codec)
 	out = cv2.VideoWriter(str(output_video_path), fourcc, fps, (width, height), isColor=True)
 	vmin, vmax = None, None
 	# First pass: find min/max temperature for normalization
-	for csv_file in frame_paths:
+	for csv_file in csv_files:
 		if not csv_file.exists():
 			continue
 		pixel_values = []
@@ -213,7 +216,7 @@ def create_mean_temperature_colormap_video(
 	if vmin is None or vmax is None or vmin == vmax:
 		vmin, vmax = 20.0, 40.0  # fallback
 	# Second pass: write video
-	for csv_file in frame_paths:
+	for csv_file in csv_files:
 		if not csv_file.exists():
 			continue
 		pixel_values = []
@@ -243,7 +246,7 @@ def main() -> None:
 	frames_per_second = 8.58811
 
 	# Set threshold to a float value to keep only pixels above this value for mean calculation, or None to use all pixels
-	threshold = 0.0  # e.g., 30.0
+	threshold = 36.1  # in Celsius
 	stats = collect_frame_pixel_stats(input_folder, threshold=threshold)
 	stats.sort(key=lambda item: item.frame_number)
 
