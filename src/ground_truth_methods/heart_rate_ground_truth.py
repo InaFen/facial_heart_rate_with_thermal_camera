@@ -1,10 +1,11 @@
+from scipy.signal import butter, filtfilt
 import numpy as np
 from scipy.signal import find_peaks, detrend
 import matplotlib.pyplot as plt
 
 
 def get_signal_and_heart_rate_from_opensignals_npz(
-    file_name: str, plot_fft: bool = False, start_sec: float = None, end_sec: float = None
+    file_name: str, plot_fft: bool = False, start_sec: float = None, end_sec: float = None, bandpass: bool = False, bp_low: float = 0.5, bp_high: float = 40.0
 ):
     """
     Load OpenSignals npz file and extract signal with heart rate.
@@ -27,6 +28,15 @@ def get_signal_and_heart_rate_from_opensignals_npz(
         fs = int(data['fs'].item())
         units = str(data['units'].item())
     
+    # Optionally apply bandpass filter
+    bandpass_info = ""
+    if bandpass:
+        nyq = 0.5 * fs
+        low = bp_low / nyq
+        high = bp_high / nyq
+        b, a = butter(2, [low, high], btype='band')
+        signal = filtfilt(b, a, signal)
+        bandpass_info = f" (Bandpassed {bp_low}-{bp_high} Hz)"
 
     # Restrict to time window if specified
     if start_sec is not None or end_sec is not None:
@@ -77,29 +87,36 @@ def get_signal_and_heart_rate_from_opensignals_npz(
         heart_rates = np.array([])
         mean_hr = 0.0
     
-    # Plot signal and heart rate
-    fig, axes = plt.subplots(2, 1, figsize=(14, 8))
-    
-    # Top plot: Signal with detected peaks
-    axes[0].plot(t, signal, 'b-', linewidth=0.5, alpha=0.7, label='Raw Signal')
-    axes[0].plot(t, signal_detrended, 'g-', linewidth=0.8, label='Detrended (flipped)')
-    axes[0].plot(peak_times, signal_detrended[peaks], 'ro', markersize=4, label=f'Peaks (n={len(peaks)})')
+    # Plot original, detrended, and heart rate in separate subplots
+    fig, axes = plt.subplots(3, 1, figsize=(14, 12))
+
+    # Top plot: Raw signal
+    axes[0].plot(t, signal, 'b-', linewidth=0.5, alpha=0.7, label='Raw Signal' + bandpass_info)
     axes[0].set_xlabel('Time (s)')
     axes[0].set_ylabel(f'Amplitude ({units})')
-    axes[0].set_title('ECG Signal with Detected Peaks')
+    axes[0].set_title('Original ECG Signal' + bandpass_info)
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
-    
+
+    # Middle plot: Detrended (flipped) signal with detected peaks
+    axes[1].plot(t, signal_detrended, 'g-', linewidth=0.8, label='Detrended (flipped)' + bandpass_info)
+    axes[1].plot(peak_times, signal_detrended[peaks], 'ro', markersize=4, label=f'Peaks (n={len(peaks)})')
+    axes[1].set_xlabel('Time (s)')
+    axes[1].set_ylabel(f'Amplitude ({units})')
+    axes[1].set_title('Detrended ECG Signal with Detected Peaks' + bandpass_info)
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
     # Bottom plot: Heart rate over time
     if len(heart_rates) > 0:
-        axes[1].plot(peak_times, heart_rates, 'r.-', linewidth=1.5, markersize=6, label='Heart Rate')
-        axes[1].axhline(mean_hr, color='k', linestyle='--', linewidth=1, label=f'Mean HR: {mean_hr:.1f} BPM')
-        axes[1].set_xlabel('Time (s)')
-        axes[1].set_ylabel('Heart Rate (BPM)')
-        axes[1].set_title('Heart Rate Over Time')
-        axes[1].legend()
-        axes[1].grid(True, alpha=0.3)
-    
+        axes[2].plot(peak_times, heart_rates, 'r.-', linewidth=1.5, markersize=6, label='Heart Rate')
+        axes[2].axhline(mean_hr, color='k', linestyle='--', linewidth=1, label=f'Mean HR: {mean_hr:.1f} BPM')
+        axes[2].set_xlabel('Time (s)')
+        axes[2].set_ylabel('Heart Rate (BPM)')
+        axes[2].set_title('Heart Rate Over Time' + bandpass_info)
+        axes[2].legend()
+        axes[2].grid(True, alpha=0.3)
+
     plt.tight_layout()
     plt.show()
 
@@ -139,8 +156,13 @@ if __name__ == "__main__":
         enable_fft_plot = True
         start_sec = 17.0  # e.g., 10.0
         end_sec = 81.0   # e.g., 60.0
+    # Set bandpass options here
+    apply_bandpass = False
+    bp_low = 0.6  # Hz
+    bp_high = 2.0  # Hz
     result = get_signal_and_heart_rate_from_opensignals_npz(
-        file_path, plot_fft=enable_fft_plot, start_sec=start_sec, end_sec=end_sec
+        file_path, plot_fft=enable_fft_plot, start_sec=start_sec, end_sec=end_sec,
+        bandpass=apply_bandpass, bp_low=bp_low, bp_high=bp_high
     )
     print(f"Sampling Frequency: {result['fs']} Hz")
     print(f"Signal Units: {result['units']}")
