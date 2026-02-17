@@ -51,7 +51,7 @@ def get_signal_and_heart_rate_from_opensignals_npz(
 
     min_peak_distance = int(0.5 * fs)  # Minimum 0.5s between peaks
     signal_std = float(np.std(signal_detrended))
-    prominence = max(0.1 * signal_std, 0.001)
+    prominence = max(0.2 * signal_std, 0.001)
 
     peaks, _ = find_peaks(signal_detrended, distance=min_peak_distance, prominence=prominence)
 
@@ -129,8 +129,8 @@ def get_signal_and_heart_rate_from_opensignals_npz(
 if __name__ == "__main__":
     file_path = "data/ground_truth/opensignals/extracted_npy_files/12022026/flir_a300_rec_000007/opensignals_0007800F80FA_2026-02-12_15-37-52.npz"
     enable_fft_plot = True
-    start_sec = 5.0  # e.g., 10.0
-    end_sec = 10.0   # e.g., 60.0
+    start_sec = 19.0  # e.g., 10.0
+    end_sec = 29.0   # e.g., 60.0
     result = get_signal_and_heart_rate_from_opensignals_npz(
         file_path, plot_fft=enable_fft_plot, start_sec=start_sec, end_sec=end_sec
     )
