@@ -42,14 +42,14 @@ def extract_video_in_specific_timespan(start_seconds, end_seconds, input_path, o
     cap.release()
     out.release()
 
-input_video_path = "data/recorded_videos/thermal_video_from_y16_frames/19012026.mp4"
-output_video_path = "data/temp/19012026_thermal_cut.mp4"
-start_time = 21.0  # Start time in seconds
-end_time = 30.0    # End time in seconds
+input_video_path = "data/recorded_videos/thermal_video_from_y16_frames/03022026_3.mp4"
+output_video_path = "data/temp/03022026_3_thermal_cut.mp4"
+start_time = 180.0  # Start time in seconds
+end_time = 210.0    # End time in seconds
 
 fps_yuvu = 11.323650645773151
 fps_mjpg = 18.564911881141693
-fps_thermal = 8.767717191929298
+fps_thermal = 8.767704384613774
 
 fps = fps_thermal
 
