@@ -127,10 +127,18 @@ def get_signal_and_heart_rate_from_opensignals_npz(
     }
     
 if __name__ == "__main__":
-    file_path = "data/ground_truth/opensignals/extracted_npy_files/12022026/flir_a300_rec_000007/opensignals_0007800F80FA_2026-02-12_15-37-52.npz"
-    enable_fft_plot = True
-    start_sec = 19.0  # e.g., 10.0
-    end_sec = 29.0   # e.g., 60.0
+    # Run pipeline with real or artificial ECG
+    use_artificial = False  # Set to True to use artificial ECG
+    if use_artificial:
+        file_path = "/home/arbeit/Dokumente/master_thesis/data/ground_truth/opensignals/extracted_npy_files/artificial_ecg_qrs.npz"
+        enable_fft_plot = True
+        start_sec = 0.0
+        end_sec = 60.0
+    else:
+        file_path = "data/ground_truth/opensignals/extracted_npy_files/12022026/flir_a300_rec_000007/opensignals_0007800F80FA_2026-02-12_15-37-52.npz"
+        enable_fft_plot = True
+        start_sec = 17.0  # e.g., 10.0
+        end_sec = 81.0   # e.g., 60.0
     result = get_signal_and_heart_rate_from_opensignals_npz(
         file_path, plot_fft=enable_fft_plot, start_sec=start_sec, end_sec=end_sec
     )
