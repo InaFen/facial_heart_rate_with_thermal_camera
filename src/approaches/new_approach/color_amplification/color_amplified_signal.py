@@ -4,12 +4,13 @@ import matplotlib
 matplotlib.use('TkAgg')  # Force interactive backend
 import matplotlib.pyplot as plt
 import sys
+import os
 from scipy import signal as scipy_signal
 from scipy.signal import find_peaks
 
 PROJECT_ROOT = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, PROJECT_ROOT)
-from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_adc_means
+from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_temperature_means
 from src.approaches.new_approach.utils.utils_detrend import detrend_signal
 from src.approaches.new_approach.utils.utils_add_ground_truth import estimate_signal_offset_via_xcorr, load_ground_truth_signal_and_fs, plot_denoised_with_ground_truth_offset
 
@@ -1041,7 +1042,7 @@ def analyze_and_plot_top_sub_rois_by_frequency(sub_roi_data, sub_roi_names, fps,
     gt_hr_times, gt_hr_bpm, gt_peak_times, gt_peaks = None, None, None, None
     if ground_truth_signal is not None and gt_fs is not None:
         gt_hr_times, gt_hr_bpm, gt_peak_times, gt_peaks = compute_hr_from_peaks(
-            ground_truth_signal, gt_fs, min_distance_s=0.3, prominence=None
+            ground_truth_signal, gt_fs, min_distance_s=0.5, prominence=0.5
         )
     
     # Create visualization with 3 columns: time domain with peaks, frequency, HR comparison
@@ -1312,9 +1313,132 @@ def analyze_and_plot_top_sub_rois_per_roi(sub_roi_data, sub_roi_names, fps, freq
     return roi_top_sub_rois
 
 
-def save_video_with_top_sub_rois_only(video_path, sub_roi_coords, top_sub_rois, roi_top_sub_rois, fps, output_path="sub_rois_top_only.mp4"):
+def create_manual_roi_from_video(
+    video_path: str,
+    frame_index: int = 0,
+    roi_name: str = "manual_roi",
+    mode: str = "polygon",
+    use_colormap: bool = False,
+    mask_save_path: str = None,
+) -> list:
     """
-    Save a video showing only the top sub-ROIs (overall and per ROI) overlaid on frames.
+    Create a manual ROI mask by selecting a region on a video frame.
+    
+    Args:
+        video_path: Path to the video file
+        frame_index: Index of frame to display for ROI selection
+        roi_name: Name of the ROI
+        mode: Selection mode - "rectangle" or "polygon"
+        use_colormap: If True, apply colormap to the frame for display
+        mask_save_path: Optional path to save the mask
+        
+    Returns:
+        roi_mask_log: List of masks (same mask repeated for all frames)
+    """
+    # Open video and read frame
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video: {video_path}")
+    
+    # Navigate to the requested frame
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+    ret, frame = cap.read()
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    
+    if not ret:
+        raise ValueError(f"Cannot read frame {frame_index} from video: {video_path}")
+    
+    # Convert frame to grayscale
+    if frame.ndim == 3 and frame.shape[2] == 3:
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    else:
+        frame_gray = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # Normalize for display
+    height, width = frame_gray.shape
+    vmin, vmax = np.percentile(frame_gray, [1, 99])
+    frame_clipped = np.clip(frame_gray, vmin, vmax)
+    frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    
+    if use_colormap:
+        frame_display = cv2.applyColorMap(frame_norm, cv2.COLORMAP_TURBO)
+    else:
+        frame_display = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+    
+    # Create mask
+    mask = np.zeros((height, width), dtype=np.uint8)
+    
+    if mode == "rectangle":
+        cv2.namedWindow("Draw ROI (press ENTER to confirm)", cv2.WINDOW_NORMAL)
+        roi_rect = cv2.selectROI("Draw ROI (press ENTER to confirm)", frame_display, fromCenter=False, showCrosshair=True)
+        cv2.destroyWindow("Draw ROI (press ENTER to confirm)")
+        
+        x, y, w, h = roi_rect
+        if w <= 0 or h <= 0:
+            raise ValueError("No ROI selected. Please draw a rectangle ROI and press ENTER.")
+        
+        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, thickness=-1)
+    
+    elif mode == "polygon":
+        points = []
+        display = frame_display.copy()
+        instructions = "Left click: add point | Right click: undo | ENTER: finish | c: clear"
+        
+        def draw_overlay(img, pts):
+            canvas = img.copy()
+            if pts:
+                cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, (0, 255, 255), 1)
+                for p in pts:
+                    cv2.circle(canvas, p, 2, (0, 255, 255), -1)
+            cv2.putText(canvas, instructions, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.1, (255, 255, 255), 1)
+            return canvas
+        
+        def on_mouse(event, x, y, flags, param):
+            nonlocal points
+            if event == cv2.EVENT_LBUTTONDOWN:
+                points.append((x, y))
+            elif event == cv2.EVENT_RBUTTONDOWN and points:
+                points.pop()
+        
+        cv2.namedWindow("Draw ROI (press ENTER to confirm)", cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback("Draw ROI (press ENTER to confirm)", on_mouse)
+        
+        while True:
+            canvas = draw_overlay(display, points)
+            cv2.imshow("Draw ROI (press ENTER to confirm)", canvas)
+            key = cv2.waitKey(20) & 0xFF
+            
+            if key == 13:  # Enter
+                break
+            if key == ord('c'):
+                points = []
+        
+        cv2.destroyWindow("Draw ROI (press ENTER to confirm)")
+        
+        if len(points) < 3:
+            raise ValueError("Polygon ROI needs at least 3 points. Please try again.")
+        
+        poly = np.array(points, dtype=np.int32)
+        cv2.fillPoly(mask, [poly], 255)
+    else:
+        raise ValueError(f"Unknown manual ROI mode: {mode}")
+    
+    # Save mask if path provided
+    if mask_save_path:
+        os.makedirs(os.path.dirname(mask_save_path), exist_ok=True)
+        np.save(mask_save_path, mask)
+        print(f"Saved manual ROI mask to: {mask_save_path}")
+    
+    # Create mask log for all frames (same mask for each frame)
+    roi_mask_log = [{roi_name: mask} for _ in range(num_frames)]
+    
+    return roi_mask_log
+
+
+def save_video_with_top_sub_rois_only(video_path, sub_roi_coords, top_sub_rois, roi_top_sub_rois, fps, output_path):
+    """
+    Save a video showing only the top sub-ROIs (overall top 5) overlaid on frames.
     Draws rectangles for top sub-ROIs only, not all sub-ROIs.
     
     Args:
@@ -1371,7 +1495,7 @@ def save_video_with_top_sub_rois_only(video_path, sub_roi_coords, top_sub_rois, 
             else:
                 frame_display = frame.copy()
         
-        # Draw only top sub-ROIs overall (in thick lines)
+        # Draw only top sub-ROIs overall (with rank labels)
         for roi_idx, (sub_roi_name, amplitude, freq) in enumerate(top_sub_rois):
             if sub_roi_name in top_coords_lookup:
                 sub_roi_info, parent_roi = top_coords_lookup[sub_roi_name]
@@ -1381,30 +1505,23 @@ def save_video_with_top_sub_rois_only(video_path, sub_roi_coords, top_sub_rois, 
                 y_end = sub_roi_info["y_end"]
                 
                 color = roi_colors.get(parent_roi, (128, 128, 128))
-                # Draw thick rectangle for overall top ROIs
+                # Draw rectangle for top ROIs
                 cv2.rectangle(frame_display, (x_start, y_start), (x_end, y_end), color, 1)
-                # Add rank label
-                #cv2.putText(frame_display, f"T{roi_idx+1}", (x_start, y_start - 5),
-                #           cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 1)
+                # Add small rank label
+                rank_text = f"{roi_idx+1}"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.3
+                thickness = 1
+                text_size = cv2.getTextSize(rank_text, font, font_scale, thickness)[0]
+                # Draw background rectangle for text
+                cv2.rectangle(frame_display, 
+                            (x_start, y_start - text_size[1] - 2),
+                            (x_start + text_size[0] + 2, y_start),
+                            color, -1)
+                # Draw text
+                cv2.putText(frame_display, rank_text, (x_start + 1, y_start - 1),
+                           font, font_scale, (255, 255, 255), thickness)
         
-        # Draw top sub-ROIs per parent ROI (in thinner lines)
-        """
-        for parent_roi_name, top_sub_rois_per_roi in roi_top_sub_rois.items():
-            color = roi_colors.get(parent_roi_name, (128, 128, 128))
-            
-            for sub_roi_idx, roi_info in enumerate(top_sub_rois_per_roi):
-                sub_roi_name = roi_info['name']
-                
-                if sub_roi_name in top_coords_lookup:
-                    sub_roi_info, _ = top_coords_lookup[sub_roi_name]
-                    x_start = sub_roi_info["x_start"]
-                    y_start = sub_roi_info["y_start"]
-                    x_end = sub_roi_info["x_end"]
-                    y_end = sub_roi_info["y_end"]
-                    
-                    # Draw thinner rectangle for per-ROI top ROIs
-                    cv2.rectangle(frame_display, (x_start, y_start), (x_end, y_end), color, 1)
-        """
         # Write frame to video
         out.write(frame_display)
         frame_idx += 1
@@ -1415,15 +1532,15 @@ def save_video_with_top_sub_rois_only(video_path, sub_roi_coords, top_sub_rois, 
     cap.release()
     out.release()
     
-    print(f"  Sub-ROI video saved successfully")
+    print(f"  Top sub-ROI video saved successfully")
 
 
 if __name__ == "__main__":
-    path_video_original = "data/temp/19012026_thermal_cut.mp4"
-    fps_original = 8.767687772484802
+    path_video_original = "data/temp/03022026_3_thermal_cut.mp4"
+    fps_original = 8.767704384613774
 
-    path_video_color_magnification = "data/recorded_videos/new_approach/0_7_1_7_Hz_100amp.mp4"
-    fps_color_magnification = 9
+    path_video_color_magnification = path_video_original #"data/recorded_videos/new_approach/color_amplification/03022026_3__1_2_Hz_80amp.mp4"
+    fps_color_magnification = fps_original#9
 
     ######
     path_video = path_video_original
@@ -1435,6 +1552,14 @@ if __name__ == "__main__":
     path_pixels_log = "data/saved_data/new_approach/roi_pixel_log.npy"
     path_video_facemesh = "data/recorded_videos/new_approach/color_amplification/facemesh_overlay.mp4"
     path_video_thermal_with_roi_masks = "data/recorded_videos/new_approach/color_amplification/video_thermal_with_roi_masks.mp4"
+
+    # Manual ROI configuration (set to True to use manual ROI instead of automatic detection)
+    manual_roi_enabled = True
+    manual_roi_name = "manual_roi"
+    manual_roi_mode = "polygon"  # "rectangle" or "polygon"
+    manual_roi_frame_index = 0  # Frame index in the video to use for manual ROI selection
+    manual_roi_mask_save_path = "data/saved_data/new_approach/manual_roi_mask_color_amp.npy"
+    manual_roi_selection_colormap = False
 
     roi_landmarks_subgrid_face = {
     "forehead": [
@@ -1457,21 +1582,30 @@ if __name__ == "__main__":
     ema_alpha = 0.15
 
     #######
-    timespan_signal = [21,30]
-    offset_seconds = 10.3  
+    timespan_signal = [180,210]
+    offset_seconds = 26.5 
 
-    path_ground_truth = "data/ground_truth/opensignals/extracted_npy_files/19012026/opensignals_0007800F80FA_2026-01-19_13-53-34.npz"
+    path_ground_truth = "data/ground_truth/opensignals/extracted_npy_files/03022026/0302_3/opensignals_0007800F80FA_2026-02-03_12-07-12.npz"
 
     freq_range_for_analysis_subrois = (1, 2)
+    sub_roi_size = 8
 
     ##########
     # Get ROI data
     ##########
-    # Detect face
-    roi_pixel_log = apply_facemesh_to_thermal_video(input_path=path_video, output_path=path_video_facemesh, roi_landmarks=roi_landmarks_subgrid_face, fps = fps, use_ema = use_ema, ema_alpha = ema_alpha)
-    #os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
-    #np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
-
+    # Detect face or use manual ROI
+    if manual_roi_enabled:
+        roi_pixel_log = create_manual_roi_from_video(
+            video_path=path_video_to_get_values_from,
+            frame_index=manual_roi_frame_index,
+            roi_name=manual_roi_name,
+            mode=manual_roi_mode,
+            use_colormap=manual_roi_selection_colormap,
+            mask_save_path=manual_roi_mask_save_path
+        )
+    else:
+        roi_pixel_log = apply_facemesh_to_thermal_video(input_path=path_video, output_path=path_video_facemesh, roi_landmarks=roi_landmarks_subgrid_face, fps = fps, use_ema = use_ema, ema_alpha = ema_alpha)
+    
     roi_pixel_data = apply_roi_masks_to_video(video_path=path_video_to_get_values_from, roi_mask_log=roi_pixel_log, output_path=path_video_thermal_with_roi_masks, fps = fps_to_get_values_from)
 
     # Add random baseline ROI for comparison (pure Gaussian noise, independent of video content)
@@ -1498,8 +1632,8 @@ if __name__ == "__main__":
     print(f"Applied GT timespan filter: {gt_start_time:.2f}s to {gt_end_time:.2f}s (samples {gt_start_sample} to {gt_end_sample})")
 
     # Invert ground truth signal for better peak detection (ECG valleys become peaks)
-    ground_truth_signal = -ground_truth_signal
-    print("Inverted ground truth signal for peak detection")
+    #ground_truth_signal = -ground_truth_signal
+    #print("Inverted ground truth signal for peak detection")
 
     # Calculate actual duration and correct FPS if needed
     num_signal_frames = len(roi_pixel_data)
@@ -1550,7 +1684,7 @@ if __name__ == "__main__":
         video_path=path_video_to_get_values_from,
         roi_mask_log=roi_pixel_log,
         fps=fps_to_use,
-        sub_roi_size=2
+        sub_roi_size=sub_roi_size
     )
     
     # Save video visualization of sub-ROIs
@@ -1579,7 +1713,7 @@ if __name__ == "__main__":
         sub_roi_names=sub_roi_names,
         fps=fps_to_use,
         freq_range=freq_range_for_analysis_subrois,
-        top_n=5,
+        top_n=30,
         ground_truth_signal=ground_truth_signal,
         gt_fs=gt_fs
     )
