@@ -22,7 +22,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         - roi_pixel_log: The detected pixel locations per ROI per frame
     """
     
-    # Detect face or use manual ROI
+    # Detect face or use manual ROI (support dual ROI selection)
     if configs.manual_roi_enabled:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
             frame_index = 0
@@ -30,15 +30,25 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
                 start_time, _ = configs.timespan_signal_to_look_at
                 frame_index = int(start_time * configs.fps)
 
-            roi_pixel_log = create_manual_roi_mask_log_from_gray_frames(
-                gray_dir=configs.path_gray_frames,
-                roi_name=configs.manual_roi_name,
-                mode=configs.manual_roi_mode,
-                frame_index=frame_index,
-                mask_load_path=configs.manual_roi_mask_load_path,
-                mask_save_path=configs.manual_roi_mask_save_path,
-                use_colormap=configs.manual_roi_selection_colormap,
-            )
+            roi_mask_logs = []
+            for i, roi_name in enumerate(configs.manual_roi_names):
+                roi_mask_logs.append(create_manual_roi_mask_log_from_gray_frames(
+                    gray_dir=configs.path_gray_frames,
+                    roi_name=roi_name,
+                    display_title=f"Draw ROI '{roi_name}' (press ENTER to confirm)",
+                    mode=configs.manual_roi_modes[i] if i < len(configs.manual_roi_modes) else configs.manual_roi_modes[0],
+                    frame_index=frame_index,
+                    mask_load_path=configs.manual_roi_mask_load_paths[i] if i < len(configs.manual_roi_mask_load_paths) else None,
+                    mask_save_path=configs.manual_roi_mask_save_paths[i] if i < len(configs.manual_roi_mask_save_paths) else None,
+                    use_colormap=configs.manual_roi_selection_colormap,
+                ))
+            # Merge masks for each frame into a single dict per frame
+            roi_pixel_log = []
+            for frame_idx in range(len(roi_mask_logs[0])):
+                frame_dict = {}
+                for roi_idx, roi_name in enumerate(configs.manual_roi_names):
+                    frame_dict[roi_name] = roi_mask_logs[roi_idx][frame_idx][roi_name]
+                roi_pixel_log.append(frame_dict)
             os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
             np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
         else:
