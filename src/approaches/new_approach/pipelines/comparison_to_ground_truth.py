@@ -1,6 +1,7 @@
 from src.approaches.new_approach.utils.utils_add_ground_truth import estimate_signal_offset_via_xcorr, load_ground_truth_signal_and_fs, plot_denoised_with_ground_truth_offset
 from src.ground_truth_methods.extract_edf import plot_signal
 from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
+from src.approaches.new_approach.utils.utils_stft import get_frequencies_over_time_cwt
 import numpy as np
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
@@ -32,7 +33,18 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
     #ground_truth_signal_denoised = apply_butterworth_bandpass_filter(signal=ground_truth_signal, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=gt_fs, order=configs.bandpass_order)
     print("[Warning ground truth] No bandpass filtering applied to ground truth ECG signal and flipped ground truth.")
     ground_truth_signal_denoised = ground_truth_signal  # No additional filtering for ECG
-    ground_truth_signal_denoised = -ground_truth_signal_denoised  # Flip ECG signal for correct orientation
+    #ground_truth_signal_denoised = -ground_truth_signal_denoised  # Flip ECG signal for correct orientation
+    #ground_truth_signal_denoised = apply_butterworth_bandpass_filter(signal=ground_truth_signal_denoised, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
+
+
+    #gt_signal_for_cwt = ground_truth_signal_denoised.reshape(-1, 1)
+    #get_frequencies_over_time_cwt(
+    #    gt_signal_for_cwt,
+    #    fps=gt_fs,
+    #    roi_names=["Ground Truth ECG"],
+    #    save_path=None,
+    #       plot=True
+    #)
 
     #if configs.plot_steps:
     #    plot_signal(title="Denoised Ground Truth ECG Signal", signal=ground_truth_signal_denoised, xlabel="Samples", ylabel=f"Amplitude ({gt_units})")
