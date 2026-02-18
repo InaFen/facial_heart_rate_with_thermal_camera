@@ -152,7 +152,7 @@ if __name__ == "__main__":
         start_sec = 0.0
         end_sec = 60.0
     else:
-        file_path = "data/ground_truth/opensignals/extracted_npy_files/12022026/flir_a300_rec_000007/opensignals_0007800F80FA_2026-02-12_15-37-52.npz"
+        file_path = "data/ground_truth/opensignals/extracted_npy_files/12022026/flir_a300_rec_000005/opensignals_0007800F80FA_2026-02-12_15-29-40.npz"
         enable_fft_plot = True
         start_sec = 17.0  # e.g., 10.0
         end_sec = 81.0   # e.g., 60.0
