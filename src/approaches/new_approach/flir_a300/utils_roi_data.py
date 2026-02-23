@@ -7,7 +7,7 @@ from typing import List, Tuple
 
 from utils_data_extraction import extract_frame_number_from_csv, read_thermal_csv
 
-def plot_roi_mean_temperature(frame_numbers: list, mean_temperatures: list, fps: float, ecg_signal: np.ndarray = None, ecg_fs: float = None, ecg_units: str = None, offset: float = 6.6) -> None:
+def plot_roi_mean_temperature(frame_numbers: list, mean_temperatures: list, fps: float, ecg_signal: np.ndarray = None, ecg_fs: float = None, ecg_units: str = None, offset: float = None) -> None:
     """
     Plot the mean temperature of ROI pixels over time with optional ground truth ECG data.
     

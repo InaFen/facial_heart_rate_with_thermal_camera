@@ -69,6 +69,7 @@ def generate_subroi_bounds_multi(
             width = max(3, int(round(roi_width * frac)))
             height = max(3, int(round(roi_height * frac)))
             sizes.append((min(width, roi_width), min(height, roi_height)))
+        sizes = expand_sizes_with_half_double(sizes, roi_bounds)
 
     unique_sizes = sorted(set(sizes))
     all_bounds = []
@@ -83,6 +84,27 @@ def generate_subroi_bounds_multi(
             )
         )
     return all_bounds
+
+
+def expand_sizes_with_half_double(
+    sizes: list[tuple[int, int]],
+    roi_bounds: tuple[int, int, int, int],
+) -> list[tuple[int, int]]:
+    x_min, x_max, y_min, y_max = roi_bounds
+    roi_width = x_max - x_min + 1
+    roi_height = y_max - y_min + 1
+
+    expanded = []
+    for width, height in sizes:
+        candidates = [
+            (width, height),
+            (max(3, width // 2), max(3, height // 2)),
+            (min(roi_width, width * 2), min(roi_height, height * 2)),
+        ]
+        expanded.extend(candidates)
+
+    unique_sizes = sorted(set(expanded))
+    return unique_sizes
 
 
 def compute_mean_temperatures_for_roi_bounds(

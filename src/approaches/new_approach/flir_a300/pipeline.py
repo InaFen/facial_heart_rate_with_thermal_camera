@@ -15,6 +15,7 @@ from utils_subrois import (
     select_subroi_by_frequency_power,
     roi_pixels_from_bounds,
     save_subroi_candidate_previews,
+    expand_sizes_with_half_double,
 )
 
 PROJECT_ROOT = "/home/arbeit/Dokumente/master_thesis/"
@@ -36,6 +37,7 @@ def pipeline(
     path_ground_truth,
     start_seconds: float,
     duration_seconds: float,
+    offset_gt: float,
     use_subroi_selection: bool = True,
     subroi_width: int | None = None,
     subroi_height: int | None = None,
@@ -43,7 +45,7 @@ def pipeline(
     subroi_size_fractions: list[float] | None = None,
     subroi_step_x: int | None = None,
     subroi_step_y: int | None = None,
-    target_frequency: float = 1.2,
+    target_frequency: float = 1.95,
 ):
     start_frame = int(round(start_seconds * fps))
     end_frame = start_frame + int(round(duration_seconds * fps))
@@ -65,6 +67,17 @@ def pipeline(
                 roi_bounds,
                 sizes=subroi_sizes,
                 size_fractions=subroi_size_fractions,
+                step_x=subroi_step_x,
+                step_y=subroi_step_y,
+            )
+        elif subroi_width is not None and subroi_height is not None:
+            expanded_sizes = expand_sizes_with_half_double(
+                [(subroi_width, subroi_height)],
+                roi_bounds=roi_bounds,
+            )
+            subroi_bounds_list = generate_subroi_bounds_multi(
+                roi_bounds,
+                sizes=expanded_sizes,
                 step_x=subroi_step_x,
                 step_y=subroi_step_y,
             )
@@ -115,7 +128,7 @@ def pipeline(
 
     ground_truth_signal, fps_gt, gt_units = load_ground_truth_signal_and_fs(file_path=path_ground_truth)
     start_sample_gt = int(round(start_seconds * fps_gt))
-    end_sample_gt = start_sample_gt + int(round(duration_seconds * fps_gt))
+    end_sample_gt = start_sample_gt + int(round(duration_seconds * fps_gt)) + int(round(offset_gt * fps_gt))
     end_sample_gt = min(end_sample_gt, len(ground_truth_signal))
     ground_truth_signal = ground_truth_signal[start_sample_gt:end_sample_gt]
 
@@ -132,7 +145,7 @@ def pipeline(
         ecg_signal=ground_truth_signal,
         ecg_fs=fps_gt,
         ecg_units=gt_units,
-        offset=0.0,
+        offset=offset_gt,
     )
 
 if __name__ == "__main__":
@@ -144,7 +157,7 @@ if __name__ == "__main__":
     duration_seconds= 10.0
 
     groud_truth = "data/ground_truth/opensignals/extracted_npy_files/18022026/flir_a300_rec_000009/opensignals_0007800F80FA_2026-02-18_13-32-40.npz"
+    offset_gt_seconds = 6.6
 
 
-
-    pipeline(file_for_roi, fps, groud_truth, start_seconds, duration_seconds)
+    pipeline(file_for_roi, fps, groud_truth, start_seconds, duration_seconds, offset_gt=offset_gt_seconds)
