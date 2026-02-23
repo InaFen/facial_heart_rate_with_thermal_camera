@@ -313,7 +313,15 @@ def read_all_thermal_frames(
     return frames
 
 
-def create_roi_video(frames: list, roi_bounds: tuple, output_dir: str | Path, base_name: str, fps: float) -> Path:
+def create_roi_video(
+    frames: list,
+    roi_bounds: tuple,
+    output_dir: str | Path,
+    base_name: str,
+    fps: float,
+    subroi_bounds: tuple | None = None,
+    suffix: str = "roi_visualization",
+) -> Path:
     """
     Create a video showing ROI rectangle overlay on all thermal frames.
     
@@ -339,7 +347,7 @@ def create_roi_video(frames: list, roi_bounds: tuple, output_dir: str | Path, ba
     
     # Define video properties
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # MP4 codec
-    output_path = output_dir / f"{base_name}_roi_visualization.mp4"
+    output_path = output_dir / f"{base_name}_{suffix}.mp4"
     
     # Create video writer
     out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
@@ -360,6 +368,10 @@ def create_roi_video(frames: list, roi_bounds: tuple, output_dir: str | Path, ba
         
         # Draw ROI rectangle in cyan
         cv2.rectangle(frame_bgr, (x_min, y_min), (x_max, y_max), (255, 255, 0), 2)
+
+        if subroi_bounds is not None:
+            sub_x_min, sub_x_max, sub_y_min, sub_y_max = subroi_bounds
+            cv2.rectangle(frame_bgr, (sub_x_min, sub_y_min), (sub_x_max, sub_y_max), (255, 0, 255), 2)
         
         # Add frame number text
         cv2.putText(frame_bgr, f"Frame: {frame_idx + 1}/{len(frames)}", 
