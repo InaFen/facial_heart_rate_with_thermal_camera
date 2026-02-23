@@ -29,7 +29,9 @@ def plot_roi_mean_temperature(frame_numbers: list, mean_temperatures: list, fps:
     if ecg_signal is not None and ecg_fs is not None:
         cut_samples = int(ecg_fs * offset)
         ecg_signal = ecg_signal[cut_samples:]
-        ecg_times = np.arange(len(ecg_signal)) / ecg_fs #+ offset
+
+        start_point = times[0]
+        ecg_times = np.arange(len(ecg_signal)) / ecg_fs + start_point
         num_subplots = 4
     else:
         ecg_times = None
@@ -109,13 +111,20 @@ def plot_roi_mean_temperature(frame_numbers: list, mean_temperatures: list, fps:
     plt.show()
 
 
-def compute_roi_mean_temperature_all_frames(frame_dir: str | Path, roi_pixels: list) -> tuple:
+def compute_roi_mean_temperature_all_frames(
+    frame_dir: str | Path,
+    roi_pixels: list,
+    start_frame: int | None = None,
+    end_frame: int | None = None,
+) -> tuple:
     """
     Compute the mean temperature for ROI pixels across all frames in a directory.
     
     Args:
         frame_dir: Directory containing thermal CSV files
         roi_pixels: List of (x, y) pixel coordinates within the ROI
+        start_frame: Optional first frame number to include (inclusive)
+        end_frame: Optional last frame number to include (exclusive)
         
     Returns:
         Tuple of (frame_numbers, mean_temperatures) where:
@@ -137,6 +146,11 @@ def compute_roi_mean_temperature_all_frames(frame_dir: str | Path, roi_pixels: l
         try:
             # Extract frame number
             frame_num = extract_frame_number_from_csv(csv_file)
+
+            if start_frame is not None and frame_num < start_frame:
+                continue
+            if end_frame is not None and frame_num >= end_frame:
+                continue
             
             # Read frame data
             frame_data = read_thermal_csv(csv_file)

@@ -21,7 +21,15 @@ def extract_frame_number_from_csv(file_path: Path) -> int:
     return int(match.group(1))
 
 
-def define_roi_pixel_from_first_frame(csv_file_path: str | Path, fps: float, roi_width: int | None = None, roi_height: int | None = None, output_video_dir: str | Path | None = None) -> dict:
+def define_roi_pixel_from_first_frame(
+    csv_file_path: str | Path,
+    fps: float,
+    roi_width: int | None = None,
+    roi_height: int | None = None,
+    output_video_dir: str | Path | None = None,
+    start_frame: int | None = None,
+    end_frame: int | None = None,
+) -> dict:
     """
     Read a thermal CSV file and allow manual ROI selection on the first frame.
     If roi_width and roi_height are specified, the ROI will have fixed dimensions.
@@ -34,6 +42,8 @@ def define_roi_pixel_from_first_frame(csv_file_path: str | Path, fps: float, roi
         roi_width: Optional fixed width of the ROI in pixels. If None, user can select any width.
         roi_height: Optional fixed height of the ROI in pixels. If None, user can select any height.
         output_video_dir: Directory to save the output video. If None, saves to the same directory as the CSV file.
+        start_frame: Optional first frame number to include in ROI video (inclusive)
+        end_frame: Optional last frame number to include in ROI video (exclusive)
         
     Returns:
         A dictionary containing:
@@ -51,7 +61,7 @@ def define_roi_pixel_from_first_frame(csv_file_path: str | Path, fps: float, roi
     
     # Read all frames from the directory
     frame_dir = csv_file_path.parent
-    all_frames = read_all_thermal_frames(frame_dir)
+    all_frames = read_all_thermal_frames(frame_dir, start_frame=start_frame, end_frame=end_frame)
     
     # Set output directory
     if output_video_dir is None:
@@ -262,12 +272,18 @@ def visualize_and_select_roi(temperature_data: np.ndarray, roi_width: int | None
     return (x_min, x_max, y_min, y_max), roi_pixels
 
 
-def read_all_thermal_frames(frame_dir: str | Path) -> list:
+def read_all_thermal_frames(
+    frame_dir: str | Path,
+    start_frame: int | None = None,
+    end_frame: int | None = None,
+) -> list:
     """
     Read all thermal CSV files from a directory and return list of temperature data arrays.
     
     Args:
         frame_dir: Directory containing thermal CSV files
+        start_frame: Optional first frame number to include (inclusive)
+        end_frame: Optional last frame number to include (exclusive)
         
     Returns:
         List of 2D numpy arrays, one for each frame
@@ -278,6 +294,11 @@ def read_all_thermal_frames(frame_dir: str | Path) -> list:
     frames = []
     for csv_file in csv_files:
         try:
+            frame_num = extract_frame_number_from_csv(csv_file)
+            if start_frame is not None and frame_num < start_frame:
+                continue
+            if end_frame is not None and frame_num >= end_frame:
+                continue
             frame_data = read_thermal_csv(csv_file)
             if frame_data.size > 0:  # Only add non-empty frames
                 frames.append(frame_data)

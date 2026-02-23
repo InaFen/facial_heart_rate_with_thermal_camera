@@ -1,4 +1,4 @@
-from utils_data_extraction import define_roi_pixel_from_first_frame
+from utils_data_extraction import define_roi_pixel_from_first_frame, extract_frame_number_from_csv
 from pathlib import Path
 import sys 
 
@@ -9,23 +9,60 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from src.approaches.new_approach.utils.utils_add_ground_truth import load_ground_truth_signal_and_fs
 
-def pipeline(file_for_roi, fps, path_ground_truth):
-    roi_info = define_roi_pixel_from_first_frame(csv_file_path=file_for_roi, fps=fps, output_video_dir="data/flir_a300/experiments")
+
+def select_roi_frame_csv(file_for_roi: Path, start_frame_index: int) -> Path:
+    csv_files = sorted(file_for_roi.parent.glob("*.csv"), key=extract_frame_number_from_csv)
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV frames found in {file_for_roi.parent}")
+    clamped_index = min(max(start_frame_index, 0), len(csv_files) - 1)
+    return csv_files[clamped_index]
+
+def pipeline(file_for_roi, fps, path_ground_truth, start_seconds: float, duration_seconds: float):
+    start_frame = int(round(start_seconds * fps))
+    end_frame = start_frame + int(round(duration_seconds * fps))
+
+    roi_csv = select_roi_frame_csv(file_for_roi, start_frame)
+    roi_info = define_roi_pixel_from_first_frame(
+        csv_file_path=roi_csv,
+        fps=fps,
+        output_video_dir="data/flir_a300/experiments",
+        start_frame=start_frame,
+        end_frame=end_frame,
+    )
     roi_pixels = roi_info["roi_pixels"]
 
-    ground_truth_signal, fps_gt, _ = load_ground_truth_signal_and_fs(file_path=path_ground_truth)
+    ground_truth_signal, fps_gt, gt_units = load_ground_truth_signal_and_fs(file_path=path_ground_truth)
+    start_sample_gt = int(round(start_seconds * fps_gt))
+    end_sample_gt = start_sample_gt + int(round(duration_seconds * fps_gt))
+    end_sample_gt = min(end_sample_gt, len(ground_truth_signal))
+    ground_truth_signal = ground_truth_signal[start_sample_gt:end_sample_gt]
 
-    frame_numbers, mean_temperatures = compute_roi_mean_temperature_all_frames(frame_dir=file_for_roi.parent, roi_pixels=roi_pixels)
-    plot_roi_mean_temperature(frame_numbers, mean_temperatures, fps, ecg_signal=ground_truth_signal, ecg_fs=fps_gt)
+    frame_numbers, mean_temperatures = compute_roi_mean_temperature_all_frames(
+        frame_dir=file_for_roi.parent,
+        roi_pixels=roi_pixels,
+        start_frame=start_frame,
+        end_frame=end_frame,
+    )
+    plot_roi_mean_temperature(
+        frame_numbers,
+        mean_temperatures,
+        fps,
+        ecg_signal=ground_truth_signal,
+        ecg_fs=fps_gt,
+        ecg_units=gt_units,
+        offset=0.0,
+    )
 
 if __name__ == "__main__":
     input_folder = Path("data/flir_a300/18022026/Rec-temp-000009")
     output_csv: Path | None = "data/flir_a300/experiments/pixel_amount_per_frame_Rec-temp-000009.csv"
     fps = 8.582353
     file_for_roi = input_folder / "Rec-temp-000009_1.csv"
+    start_seconds = 20.0
+    duration_seconds= 10.0
 
     groud_truth = "data/ground_truth/opensignals/extracted_npy_files/18022026/flir_a300_rec_000009/opensignals_0007800F80FA_2026-02-18_13-32-40.npz"
 
 
 
-    pipeline(file_for_roi, fps, groud_truth)
+    pipeline(file_for_roi, fps, groud_truth, start_seconds, duration_seconds)
