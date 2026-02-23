@@ -21,7 +21,7 @@ def extract_frame_number_from_csv(file_path: Path) -> int:
     return int(match.group(1))
 
 
-def define_roi_pixel_from_first_frame(csv_file_path: str | Path, fps: float, roi_width: int | None = 10, roi_height: int | None = 10, output_video_dir: str | Path | None = None) -> dict:
+def define_roi_pixel_from_first_frame(csv_file_path: str | Path, fps: float, roi_width: int | None = None, roi_height: int | None = None, output_video_dir: str | Path | None = None) -> dict:
     """
     Read a thermal CSV file and allow manual ROI selection on the first frame.
     If roi_width and roi_height are specified, the ROI will have fixed dimensions.
