@@ -154,8 +154,8 @@ if __name__ == "__main__":
     else:
         file_path = "data/ground_truth/opensignals/extracted_npy_files/18022026/flir_a300_rec_000009/opensignals_0007800F80FA_2026-02-18_13-32-40.npz"
         enable_fft_plot = True
-        start_sec = 17.0  # e.g., 10.0
-        end_sec = 81.0   # e.g., 60.0
+        start_sec = 26.6  # e.g., 10.0
+        end_sec = 36.6   # e.g., 60.0
     # Set bandpass options here
     apply_bandpass = False
     bp_low = 0.6  # Hz
