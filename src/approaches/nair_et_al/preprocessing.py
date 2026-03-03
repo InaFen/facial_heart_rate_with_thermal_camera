@@ -1,8 +1,16 @@
 from utils import *
+import numpy as np
 
-def preprocessing_pipeline(video_path, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, fps, edges_bandpass_filter):
+def preprocessing_pipeline(video_path, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, fps, edges_bandpass_filter, frames_dir):
+    
+    get_signal_from_video = True
+
+    if get_signal_from_video:
         # Load video and get raw signal
-    raw_signal_matrix = get_raw_signal(video_path)
+        raw_signal_matrix = get_raw_signal(video_path)
+    else:
+        frames_pixel_data = extract_pixel_data_from_gray_frames(gray_dir = frames_dir)
+        raw_signal_matrix = np.array([frame_data['adc_values'] for frame_data in frames_pixel_data])
 
     x_visualization = 60
     y_visualization = 80

@@ -12,7 +12,15 @@ import argparse
 import time
 import dlib
 import cv2
+import sys
 import os
+from typing import List, Dict
+
+PROJECT_ROOT = "/home/arbeit/Dokumente/master_thesis/"
+sys.path.insert(0, PROJECT_ROOT)
+
+from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+from src.approaches.new_approach.utils.utils_landmark_detection import load_gray_frame
 
 def play_recorded_video(video_path: str):
     """
@@ -122,6 +130,64 @@ def plot_multiple_1d_signals(signals: list[np.ndarray], labels: list[str] | None
     plt.grid()
     plt.legend()
     plt.show()
+
+
+def extract_pixel_data_from_gray_frames(
+    gray_dir: str,
+    output_npz: str = None,
+) -> List[Dict[str, object]]:
+    """Extract all pixel data from each .gray frame (no ROI).
+
+    Parameters:
+        gray_dir: directory containing .gray frames
+        output_npz: optional path to save extracted data as npz
+        always stores per-pixel (x, y) coordinates
+
+    Returns:
+        frame_pixel_data: list (per frame) of dicts
+            {
+                "adc_values": 2D array as nested lists,
+                "shape": (height, width),
+                "coords": list of (x, y) tuples
+            }
+    """
+    # Collect and sort frame filenames (with any interpolations)
+    _, gray_files = sort_grayfiles_with_interpolations(gray_dir)
+    if not gray_files:
+        raise ValueError(f"No .gray files found in {gray_dir}")
+
+    frame_pixel_data: List[Dict[str, object]] = []
+
+    for idx, fname in enumerate(gray_files):
+        # Load raw 16-bit frame from disk
+        frame_path = os.path.join(gray_dir, fname)
+        frame = load_gray_frame(frame_path)
+
+        # Store full-frame data and summary stats for this frame
+        data_entry: Dict[str, object] = {
+            "adc_values": frame.astype(np.float64).tolist(),
+            "shape": frame.shape,
+        }
+
+        # Build full coordinate list (x, y) for the frame
+        height, width = frame.shape
+        ys, xs = np.indices((height, width))
+        coords = list(zip(xs.ravel().tolist(), ys.ravel().tolist()))
+        data_entry["coords"] = coords
+
+        frame_pixel_data.append(data_entry)
+
+        # Progress logging for long sequences
+        if (idx + 1) % 100 == 0 or idx == len(gray_files) - 1:
+            print(f"Processed {idx+1}/{len(gray_files)} frames")
+
+    if output_npz:
+        # Persist results if requested
+        os.makedirs(os.path.dirname(output_npz), exist_ok=True)
+        np.savez(output_npz, frame_pixel_data=frame_pixel_data)
+        print(f"Saved full-frame pixel data to {output_npz}")
+
+    return frame_pixel_data
 
 
 def bandpass_filter(data: np.ndarray, edges: list[float], sample_rate: float, poles: int = 5):

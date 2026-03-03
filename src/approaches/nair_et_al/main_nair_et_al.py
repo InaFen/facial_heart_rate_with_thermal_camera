@@ -5,9 +5,8 @@ import os
 from scipy.signal import stft
 from preprocessing import preprocessing_pipeline
 
-
 edges_bandpass_filter = [0.1, 4.4]  # in Hz
-video_path = 'recorded_videos/thermal_video_12_03.avi'  # Path to the recorded thermal video
+video_path = 'data/recorded_videos/thermal_video_from_y16_frames/19012026.mp4'  # Path to the recorded thermal video
 filtered_signal_matrix_path = f'saved_data/filtered_signal_matrix_{edges_bandpass_filter[0]}_{edges_bandpass_filter[1]}.npy'
 normalized_signal_matrix_path = 'saved_data/normalized_signal_matrix.npy'
 first_derivative_matrix_path = 'saved_data/first_derivative_matrix.npy'
@@ -15,14 +14,16 @@ second_derivative_matrix_path = 'saved_data/second_derivative_matrix.npy'
 mean_of_subregions_path = 'saved_data/mean_values_subregions.npy'
 fps = 9.0
 
+frames_dir = "data/lepton/processed_lepton_data/19012026_interpolated"
+
 path_save_video_with_landmarks = 'recorded_videos/video_with_landmarks.avi'  # Path to Dlib landmark model
 filtered_mean_values_subregions_matrix_path = f'saved_data/filtered_mean_values_subregions.npy'
 
 #############
-# Preprocessing TODO apply after landmark detection/ apply face detection on this
+# Preprocessing 
 #############
 
-preprocessing_pipeline(video_path, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, fps, edges_bandpass_filter)
+preprocessing_pipeline(video_path, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, fps, edges_bandpass_filter, frames_dir=frames_dir)
 
 ############
 # Landmark detection & denoising 
