@@ -86,8 +86,8 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(video_path: str, path_
     and calculates mean values for each subregion per frame.
     """
     # Load detector and predictor
-    detector = dlib.simple_object_detector("external_library/thermal-facial-landmarks-detection/models/dlib_face_detector.svm")
-    predictor = dlib.shape_predictor("external_library/thermal-facial-landmarks-detection/models/dlib_landmark_predictor.dat")
+    detector = dlib.simple_object_detector("external/thermal-facial-landmarks-detection/models/dlib_face_detector.svm")
+    predictor = dlib.shape_predictor("external/thermal-facial-landmarks-detection/models/dlib_landmark_predictor.dat")
 
     vs = cv2.VideoCapture(video_path)
     input_fps = vs.get(cv2.CAP_PROP_FPS)

@@ -183,6 +183,7 @@ def extract_pixel_data_from_gray_frames(
 
     if output_npz:
         # Persist results if requested
+        print(f"Saving extracted pixel data to {output_npz}...")
         os.makedirs(os.path.dirname(output_npz), exist_ok=True)
         np.savez(output_npz, frame_pixel_data=frame_pixel_data)
         print(f"Saved full-frame pixel data to {output_npz}")
@@ -230,6 +231,128 @@ def calculate_first_second_derivative(signal: np.ndarray) -> tuple[np.ndarray, n
     first_derivative = np.gradient(signal)
     second_derivative = np.gradient(first_derivative)
     return first_derivative, second_derivative
+
+
+def detect_ppg_features(
+    ppg: np.ndarray,
+    ppg_first: np.ndarray,
+    ppg_second: np.ndarray,
+    fs: float,
+    max_hr: float = 180.0,
+    prominence: float = 0.05,
+):
+    """
+    Detects systolic peaks, valley points, slope extrema and dicrotic notch candidates.
+
+    Returns a dict with feature indices and per-cycle summaries.
+    The algorithm follows a peak/valley segmentation of PPG and uses
+    gradient extrema to capture slope-related features.
+    """
+    if ppg.ndim != 1 or ppg_first.ndim != 1 or ppg_second.ndim != 1:
+        raise ValueError("PPG inputs must be 1D arrays")
+    if not (len(ppg) == len(ppg_first) == len(ppg_second)):
+        raise ValueError("PPG inputs must have the same length")
+
+    # Enforce a minimum distance between peaks based on max heart rate.
+    min_distance = max(1, int(fs * 60.0 / max_hr))
+    systolic_peaks, _ = scipy.signal.find_peaks(ppg, distance=min_distance, prominence=prominence)
+
+    # Valley points are the minimum between consecutive systolic peaks.
+    valleys = []
+    for i in range(len(systolic_peaks) - 1):
+        start = systolic_peaks[i]
+        end = systolic_peaks[i + 1]
+        if end <= start + 1:
+            continue
+        local_min = np.argmin(ppg[start:end + 1]) + start
+        valleys.append(local_min)
+
+    valleys = np.array(valleys, dtype=int)
+    # Gradients to find maximum/minimum slope points.
+    grad_ppg = np.gradient(ppg)
+    grad_ppg_first = np.gradient(ppg_first)
+
+    cycles = []
+    for i in range(len(valleys) - 1):
+        v_start = valleys[i]
+        v_end = valleys[i + 1]
+        if v_end <= v_start + 2:
+            continue
+
+        # Select the systolic peak inside the current valley-to-valley cycle.
+        cycle_peaks = systolic_peaks[(systolic_peaks > v_start) & (systolic_peaks < v_end)]
+        if len(cycle_peaks) == 0:
+            systolic_peak = None
+        else:
+            systolic_peak = int(cycle_peaks[np.argmax(ppg[cycle_peaks])])
+
+        # Slope extrema on PPG and its first derivative.
+        ppg_seg = grad_ppg[v_start:v_end + 1]
+        ppg_first_seg = grad_ppg_first[v_start:v_end + 1]
+        max_slope_ppg = int(np.argmax(ppg_seg) + v_start)
+        min_slope_ppg = int(np.argmin(ppg_seg) + v_start)
+        max_slope_ppg_first = int(np.argmax(ppg_first_seg) + v_start)
+        min_slope_ppg_first = int(np.argmin(ppg_first_seg) + v_start)
+
+        # Dicrotic notch candidate from PPG'' peaks after the systolic peak.
+        dicrotic_notch = None
+        if systolic_peak is not None and systolic_peak < v_end:
+            seg_start = systolic_peak
+            seg_end = v_end
+            second_seg = ppg_second[seg_start:seg_end + 1]
+            peaks_second, _ = scipy.signal.find_peaks(second_seg)
+            if len(peaks_second) > 0:
+                best = peaks_second[np.argmax(second_seg[peaks_second])]
+                dicrotic_notch = int(best + seg_start)
+
+        cycles.append(
+            {
+                "valley_start": int(v_start),
+                "valley_end": int(v_end),
+                "systolic_peak": None if systolic_peak is None else int(systolic_peak),
+                "max_slope_ppg": int(max_slope_ppg),
+                "min_slope_ppg": int(min_slope_ppg),
+                "max_slope_ppg_first": int(max_slope_ppg_first),
+                "min_slope_ppg_first": int(min_slope_ppg_first),
+                "dicrotic_notch": None if dicrotic_notch is None else int(dicrotic_notch),
+            }
+        )
+
+    return {
+        "systolic_peaks": systolic_peaks,
+        "valleys": valleys,
+        "cycles": cycles,
+    }
+
+
+def remove_irregular_cycles(
+    cycles: list[dict],
+    fs: float,
+    min_hr: float = 40.0,
+    max_hr: float = 180.0,
+):
+    """
+    Removes irregular cycles based on duration and missing essential features.
+    Returns a list of retained cycles and a boolean mask.
+    """
+    retained_cycles = []
+    mask = []
+
+    for cycle in cycles:
+        v_start = cycle["valley_start"]
+        v_end = cycle["valley_end"]
+        duration = (v_end - v_start) / fs if fs > 0 else 0
+        hr = 60.0 / duration if duration > 0 else 0
+
+        has_peak = cycle["systolic_peak"] is not None
+        valid_hr = min_hr <= hr <= max_hr
+
+        keep = has_peak and valid_hr
+        mask.append(keep)
+        if keep:
+            retained_cycles.append(cycle)
+
+    return retained_cycles, np.array(mask, dtype=bool)
 
 def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: str, upsample: int, resize: bool):
     """
@@ -329,34 +452,67 @@ def get_facial_dlib_landmarks(video_path: str, path_save_video_with_landmarks: s
     writer.release()
 
 
-def show_preprocessed_signal_as_video(signal_matrix: np.ndarray, fps: float, apply_colormap: bool = False):
+def show_preprocessed_signal_as_video(
+    signal_matrix: np.ndarray,
+    fps: float,
+    output_dir: str,
+    output_filename: str = "preprocessed_signal.avi",
+    apply_colormap: bool = False,
+    show: bool = False,
+):
     """
-    Displays the preprocessed signal matrix as a video.
+    Saves the preprocessed signal matrix as a video (optional preview).
 
     :param signal_matrix: 3D numpy array of shape (num_frames, height, width).
     :param fps: Frames per second for video playback.
+    :param output_dir: Directory where the video will be saved.
+    :param output_filename: Output video filename.
+    :param apply_colormap: Apply a colormap to frames before saving.
+    :param show: If True, display the video while writing.
     """
-    num_frames, _, _ = signal_matrix.shape
-    delay = int(1000 / fps)
+    if signal_matrix.ndim != 3:
+        raise ValueError("signal_matrix must be a 3D array (num_frames, height, width)")
+
+    num_frames, height, width = signal_matrix.shape
+    delay = int(1000 / fps) if fps > 0 else 1
+
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, output_filename)
+
+    if signal_matrix.dtype != np.uint8:
+        min_val = np.min(signal_matrix)
+        max_val = np.max(signal_matrix)
+        if max_val > min_val:
+            frame_uint8_all = ((signal_matrix - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+        else:
+            frame_uint8_all = np.zeros_like(signal_matrix, dtype=np.uint8)
+    else:
+        frame_uint8_all = signal_matrix
+
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")
+    is_color = apply_colormap
+    writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height), is_color)
 
     for i in range(num_frames):
-        frame = signal_matrix[i]
+        frame_uint8 = frame_uint8_all[i]
 
-        # Convert to 8-bit
-        frame_uint8 = frame#(frame * 255).astype(np.uint8)
-
-        # Apply color map if requested
         if apply_colormap:
             frame_display = cv2.applyColorMap(frame_uint8, cv2.COLORMAP_JET)
         else:
             frame_display = frame_uint8
 
-        cv2.imshow("Thermal Video", frame_display)
-        key = cv2.waitKey(delay) & 0xFF
-        if key == ord('q'):
-            break
+        writer.write(frame_display)
 
-    cv2.destroyAllWindows()
+        if show:
+            cv2.imshow("Thermal Video", frame_display)
+            key = cv2.waitKey(delay) & 0xFF
+            if key == ord('q'):
+                break
+
+    writer.release()
+
+    if show:
+        cv2.destroyAllWindows()
 
 
 def plot_Vh_components(Vh: np.ndarray, num_components: int):
