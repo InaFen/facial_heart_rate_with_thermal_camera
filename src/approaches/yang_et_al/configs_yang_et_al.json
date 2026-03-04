@@ -11,7 +11,7 @@
     "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/19012026/1901_3/opensignals_0007800F80FA_2026-01-19_12-07-12.npz"
   },
   "processing": {
-    "overwrite_existing_files": false,
+    "overwrite_existing_files": true,
     "plot_steps": true,
     "fps": 8.767704384613774,
     "bandpass_lowcut": 0.667,
@@ -36,7 +36,7 @@
   "timing": {
     "time_first_frame_signal": 0.0,
     "time_first_frame_ecg": 0.0,
-    "timespan_signal_to_look_at": null,
+    "timespan_signal_to_look_at": [70, 80],
     "notes": {
       "time_first_frame_signal_expected": null,
       "time_first_frame_ecg_expected": null
@@ -50,14 +50,77 @@
     ]
   },
   "roi_landmarks_subgrid_face": {
-    "above_eyebrow_left_in_image": [
-      66,107,108,69
+    "left_forehead_block_1": [
+      103, 104, 67
     ],
-    "above_eyebrow_right_in_image": [
-      336,296,299,337
+    "left_forehead_block_2": [
+      104, 67, 69
     ],
-    "middle_forehead":[
-      9, 337, 151, 108
+    "left_forehead_block_3": [
+      104, 105, 69
+    ],
+    "left_forehead_block_4": [
+      105, 66, 69
+    ],
+    "left_forehead_block_5": [
+      67, 69, 108
+    ],
+    "left_forehead_block_6": [
+      67, 109, 108
+    ],
+    "left_forehead_block_7": [
+      107, 108, 69
+    ],
+    "left_forehead_block_8": [
+      107, 66, 69
+    ],
+    "left_forehead_block_9": [
+      107, 108, 9
+    ],
+    "left_forehead_block_10": [
+      108, 151, 9
+    ],
+    "left_forehead_block_11": [
+      108, 109, 151
+    ],
+    "left_forehead_block_12": [
+      109, 151, 10
+    ],
+    "right_forehead_block_1": [
+      333, 332, 297
+    ],
+    "right_forehead_block_2": [
+      333, 297, 299
+    ],
+    "right_forehead_block_3": [
+      333, 334, 299
+    ],
+    "right_forehead_block_4": [
+      334, 299, 296
+    ],
+    "right_forehead_block_5": [
+      299, 296, 336
+    ],
+    "right_forehead_block_6": [
+      299, 336, 337
+    ],
+    "right_forehead_block_7": [ 
+      337, 297, 299
+    ],
+    "right_forehead_block_8": [
+      337, 338, 297
+    ],
+    "right_forehead_block_9": [
+      337, 336, 9
+    ], 
+    "right_forehead_block_10": [
+      337, 9, 151
+    ],
+    "right_forehead_block_11": [
+      337, 338, 151
+    ],
+    "right_forehead_block_12": [
+      338, 151, 10
     ]
   },
   "currently_unused":{
@@ -75,6 +138,15 @@
     "chin": [
       202, 210, 169, 170, 140, 171, 175, 262, 432, 422, 424, 418, 421, 200, 
       201, 194, 204
+    ],
+    "above_eyebrow_left_in_image": [
+      66,107,108,69
+    ],
+    "above_eyebrow_right_in_image": [
+      336,296,299,337
+    ],
+    "middle_forehead":[
+      9, 337, 151, 108
     ]
   }
 }
