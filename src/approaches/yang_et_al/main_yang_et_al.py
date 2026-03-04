@@ -1,6 +1,8 @@
 import sys
 import os
 import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
 
 project_root = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, project_root)
@@ -11,6 +13,12 @@ from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_f
 from src.approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
 from src.approaches.yang_et_al.utils_plotting import plot_signal_each_roi_seperately, plot_flattened_signal_each_roi, plot_denoised_signal_unflat, plot_original_vs_denoised, plot_principal_components_in_seperate_plots, plot_chosen_component
 from src.approaches.yang_et_al.utils_post_processing import pca, apply_butterworth_bandpass_filter, transform_flatten_signal_to_original_shape, find_most_periodic_pca_component
+from src.approaches.yang_et_al.utils_ground_truth import (
+	load_ground_truth_signal,
+	get_ground_truth_segment,
+	detect_peaks_in_signal,
+	mean_hr_from_peak_times,
+)
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 
@@ -41,48 +49,115 @@ adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_
 
 signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
 # plot each ROI signal seperately
-plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names, fps=configs.fps, title="Mean Pixel Value of Each ROI Over Time", show_seconds=True)
+#plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names, fps=configs.fps, title="Mean Pixel Value of Each ROI Over Time", show_seconds=True)
 
 signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
-plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
+#plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
 
 # compute mean ignoring NaNs
 mean_val = np.nanmean(signal_all_rois)
 # replace NaNs
 signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
-plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
+#plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
 
 
 # Denoise signal via laplacian
 denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, L=laplacian)
 #plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
-plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
+#plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
 
 # Bandpass filter
 denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
 #plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
 
 bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=0.667, highcut=1.667, fs=configs.fps, order=2)
-plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names, fps = configs.fps, title="Denoised and Bandpassed Signals per ROI")
+#plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names, fps = configs.fps, title="Denoised and Bandpassed Signals per ROI")
 
 
 # PCA 
 prinicpal_components = pca(data=bandpassed_signal_each_roi_seperate, num_components=4)
-plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
+#plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
 
 # Find most periodic component
 selected_pca_component = find_most_periodic_pca_component(principal_components=prinicpal_components)
-plot_chosen_component(chosen_component=selected_pca_component, fps = configs.fps)
+#plot_chosen_component(chosen_component=selected_pca_component, fps = configs.fps)
 
-# Apply FFT to the selected PCA component
-fft_selected = np.abs(np.fft.fft(selected_pca_component, n=502))
+if configs.plot_steps and configs.timespan_signal_to_look_at is not None:
+	start_time, end_time = configs.timespan_signal_to_look_at
+	signal_offset = float(configs.time_first_frame_signal or 0.0)
+	ecg_offset = float(configs.time_first_frame_ecg or 0.0)
+	ground_truth_signal, ground_truth_fs = load_ground_truth_signal(
+		configs.path_ground_truth,
+		flip=True,
+	)
+	ground_truth_segment, ground_truth_time = get_ground_truth_segment(
+		ground_truth_signal,
+		ground_truth_fs,
+		start_time,
+		end_time,
+		signal_offset=signal_offset,
+		ecg_offset=ecg_offset,
+	)
 
-# Calculate the frequencies corresponding to the FFT bins
-frequencies = np.fft.fftfreq(502, d=1/configs.fps)
+	signal_time = np.arange(len(selected_pca_component)) / configs.fps + start_time
+
+	min_distance_signal = int(0.3 * configs.fps)
+	signal_peaks, _ = find_peaks(selected_pca_component, distance=max(1, min_distance_signal))
+	signal_peak_times = signal_time[signal_peaks]
+
+	ground_truth_peaks, ground_truth_peak_times = detect_peaks_in_signal(
+		ground_truth_segment,
+		ground_truth_fs,
+		min_distance_s=0.5,
+		prominence=1.0,
+	)
+	ground_truth_peak_times = ground_truth_peak_times + start_time
+
+	gt_hr_mean = mean_hr_from_peak_times(ground_truth_peak_times)
+	if gt_hr_mean is not None:
+		print(f"Ground truth mean HR in timespan: {gt_hr_mean:.2f} bpm")
+	else:
+		print("Ground truth mean HR in timespan: insufficient peaks")
+
+	plt.figure(figsize=(10, 5))
+	plt.plot(signal_time, selected_pca_component, label="Selected PCA component")
+	plt.plot(ground_truth_time, ground_truth_segment, label="Ground truth", alpha=0.7)
+	plt.scatter(signal_peak_times, selected_pca_component[signal_peaks], label="Signal peaks", s=25)
+	plt.scatter(ground_truth_peak_times, ground_truth_segment[ground_truth_peaks], label="Ground truth peaks", s=25)
+	plt.xlabel("Time (s)")
+	plt.ylabel("Amplitude")
+	plt.title("Selected PCA Component vs Ground Truth")
+	plt.legend()
+	plt.tight_layout()
+	plt.show()
+
+
+
+# Apply FFT to the selected PCA component (positive frequencies only)
+fft_selected = np.abs(np.fft.rfft(selected_pca_component, n=502))
+
+# Calculate the frequencies corresponding to the FFT bins (non-negative)
+frequencies = np.fft.rfftfreq(502, d=1/configs.fps)
 
 # Find the dominant frequency
 dominant_frequency_index = np.argmax(fft_selected)
 dominant_frequency = frequencies[dominant_frequency_index]
+
+if configs.plot_steps:
+	plt.figure(figsize=(10, 5))
+	plt.plot(frequencies, fft_selected, label="FFT magnitude")
+	plt.axvline(
+		dominant_frequency,
+		color="red",
+		linestyle="--",
+		label=f"Dominant: {dominant_frequency:.3f} Hz",
+	)
+	plt.xlabel("Frequency (Hz)")
+	plt.ylabel("Magnitude")
+	plt.title("FFT of Selected PCA Component")
+	plt.legend()
+	plt.tight_layout()
+	plt.show()
 
 # Estimate heart rate
 heart_rate_estimate = dominant_frequency * 60
