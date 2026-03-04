@@ -1,0 +1,81 @@
+{
+  "paths": {
+    "gray_frames": "data/lepton/processed_lepton_data/19012026_interpolated",
+    "video": "data/recorded_videos/thermal_video_from_y16_frames/19012026.mp4",
+    "video_tracked_face": "data/recorded_videos/yang_et_al/output_tracked_video.mp4",
+    "video_thresholded_pixel": "data/recorded_videos/yang_et_al/output_thresholded_video.mp4",
+    "video_facemesh": "data/recorded_videos/yang_et_al/output_facemesh_video.mp4",
+    "pixels_log": "data/saved_data/yang_et_al/roi_pixel_log.npy",
+    "video_thermal_with_roi_masks": "data/recorded_videos/yang_et_al/output_video_with_roi_masks.mp4",
+    "roi_pixel_data": "data/saved_data/yang_et_al/roi_pixel_data.npy",
+    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/19012026/1901_3/opensignals_0007800F80FA_2026-01-19_12-07-12.npz"
+  },
+  "processing": {
+    "overwrite_existing_files": false,
+    "plot_steps": true,
+    "fps": 8.767704384613774,
+    "bandpass_lowcut": 0.667,
+    "bandpass_highcut": 1.667,
+    "bandpass_order": 4,
+    "use_ema": true,
+    "ema_alpha": 0.15,
+    "manual_roi_enabled": false,
+    "manual_roi_name": "manual_roi",
+    "manual_roi_mode": "polygon",
+    "manual_roi_mask_load_path": null,
+    "manual_roi_mask_save_path": "data/saved_data/new_approach/manual_roi_mask.npy",
+    "manual_roi_names": ["roi_signal", "roi_noise"],
+    "manual_roi_modes": ["polygon", "polygon"],
+    "manual_roi_mask_load_paths": [null, null],
+    "manual_roi_mask_save_paths": [
+      "data/saved_data/new_approach/manual_roi_mask_signal.npy",
+      "data/saved_data/new_approach/manual_roi_mask_noise.npy"
+    ],
+    "manual_roi_selection_colormap": false
+  },
+  "timing": {
+    "time_first_frame_signal": 0.0,
+    "time_first_frame_ecg": 0.0,
+    "timespan_signal_to_look_at": null,
+    "notes": {
+      "time_first_frame_signal_expected": null,
+      "time_first_frame_ecg_expected": null
+    }
+  },
+  "roi_landmarks": {
+    "whole_face": [
+      10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
+      379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234,
+      127, 162, 21, 54, 103, 67, 109
+    ]
+  },
+  "roi_landmarks_subgrid_face": {
+    "above_eyebrow_left_in_image": [
+      66,107,108,69
+    ],
+    "above_eyebrow_right_in_image": [
+      336,296,299,337
+    ],
+    "middle_forehead":[
+      9, 337, 151, 108
+    ]
+  },
+  "currently_unused":{
+    "forehead": [
+      10, 338, 297, 332, 284, 251, 389, 368, 300, 293, 334, 296, 336, 9, 
+      107, 66, 105, 63, 71, 162, 21, 54, 103, 67, 109
+    ],
+    "left_cheek": [
+      245, 233, 232, 231, 230, 229, 228, 31, 111, 116, 123, 147, 187, 205, 
+      36, 142, 126, 217, 174, 188
+    ],
+    "right_cheek": [
+      453, 357, 343, 420, 360, 266, 280, 352, 345, 449, 451
+    ],
+    "chin": [
+      202, 210, 169, 170, 140, 171, 175, 262, 432, 422, 424, 418, 421, 200, 
+      201, 194, 204
+    ]
+  }
+}
+
