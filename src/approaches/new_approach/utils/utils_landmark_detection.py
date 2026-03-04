@@ -29,6 +29,7 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         return
 
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     # Optional video writer
     if output_path is not None:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
