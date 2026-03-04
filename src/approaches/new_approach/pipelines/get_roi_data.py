@@ -86,7 +86,9 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         else:
             roi_pixel_data = np.load(configs.path_roi_pixel_data, allow_pickle=True)
 
-    if configs.manual_roi_enabled and configs.timespan_signal_to_look_at is not None:
+    roi_pixel_data_for_return = roi_pixel_data
+
+    if configs.timespan_signal_to_look_at is not None:
         # Save ROI masked video for the selected timespan for verification
         start_time, end_time = configs.timespan_signal_to_look_at
         start_frame = int(start_time * configs.fps)
@@ -100,11 +102,12 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             start_frame=start_frame,
             end_frame=end_frame,
         )
+        roi_pixel_data_for_return = roi_pixel_data[start_frame:end_frame]
 
     # Plot
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
-        plot_roi_mean_signals(roi_pixel_data=roi_pixel_data) 
-    #elif configs.plot_steps and not extract_from_video_instead_of_gray_files:
-    #    plot_roi_temperature_means(roi_pixel_data=roi_pixel_data)
+        plot_roi_mean_signals(roi_pixel_data=roi_pixel_data_for_return) 
+    elif configs.plot_steps and not extract_from_video_instead_of_gray_files:
+        plot_roi_temperature_means(roi_pixel_data=roi_pixel_data_for_return)
 
-    return roi_pixel_data, roi_pixel_log
+    return roi_pixel_data_for_return, roi_pixel_log
