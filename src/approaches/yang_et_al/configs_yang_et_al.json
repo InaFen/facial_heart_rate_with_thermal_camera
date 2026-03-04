@@ -8,10 +8,10 @@
     "pixels_log": "data/saved_data/yang_et_al/roi_pixel_log.npy",
     "video_thermal_with_roi_masks": "data/recorded_videos/yang_et_al/output_video_with_roi_masks.mp4",
     "roi_pixel_data": "data/saved_data/yang_et_al/roi_pixel_data.npy",
-    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/19012026/1901_3/opensignals_0007800F80FA_2026-01-19_12-07-12.npz"
+    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/19012026/opensignals_0007800F80FA_2026-01-19_13-53-34.npz"
   },
   "processing": {
-    "overwrite_existing_files": true,
+    "overwrite_existing_files": false,
     "plot_steps": true,
     "fps": 8.767704384613774,
     "bandpass_lowcut": 0.667,
@@ -24,17 +24,17 @@
     "manual_roi_mode": "polygon",
     "manual_roi_mask_load_path": null,
     "manual_roi_mask_save_path": "data/saved_data/new_approach/manual_roi_mask.npy",
-    "manual_roi_names": ["roi_signal", "roi_noise"],
+    "manual_roi_names": ["roi_signal_left_forehead", "roi_signal_right_forehead"],
     "manual_roi_modes": ["polygon", "polygon"],
     "manual_roi_mask_load_paths": [null, null],
     "manual_roi_mask_save_paths": [
-      "data/saved_data/new_approach/manual_roi_mask_signal.npy",
-      "data/saved_data/new_approach/manual_roi_mask_noise.npy"
+      "data/saved_data/new_approach/manual_roi_mask_left_forehead.npy",
+      "data/saved_data/new_approach/manual_roi_mask_right_forehead.npy"
     ],
     "manual_roi_selection_colormap": false
   },
   "timing": {
-    "time_first_frame_signal": 0.0,
+    "time_first_frame_signal": 20.4,
     "time_first_frame_ecg": 0.0,
     "timespan_signal_to_look_at": [70, 80],
     "notes": {
