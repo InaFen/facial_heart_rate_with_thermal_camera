@@ -84,6 +84,10 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
 
             pts = pts.astype(np.float32)
 
+            if smoothed_pts is None:
+                smoothed_pts = pts.copy()
+            else:
+                smoothed_pts = alpha * pts + (1 - alpha) * smoothed_pts
 
             pts_smooth = smoothed_pts.astype(np.int32)
 
