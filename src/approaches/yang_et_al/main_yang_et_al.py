@@ -26,6 +26,9 @@ CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.json"
 
 configs = Config.from_json(CONFIGS_PATH)
 
+run_random_parallel = True
+random_seed = 42
+
 #IMPORTANT: Each ROI represents one building block in the graph
 
 # original pipeline for face detection
@@ -66,6 +69,61 @@ denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans,
 #plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
 #plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
 
+random_selected_pca_component = None
+if run_random_parallel:
+	rng = np.random.default_rng(random_seed)
+	random_signal_all_rois = rng.standard_normal(signal_all_rois_without_nans.shape)
+	original_scale = float(np.std(signal_all_rois_without_nans))
+	random_scale = float(np.std(random_signal_all_rois))
+	if random_scale > 0:
+		random_signal_all_rois = random_signal_all_rois * (original_scale / random_scale)
+	random_denoised_signal_all_rois = denoise_via_laplacian(Y=random_signal_all_rois, L=laplacian)
+	if configs.plot_steps:
+		plot_flattened_signal_each_roi(
+			signal_flattened=random_signal_all_rois,
+			block_features=signal_each_roi_seperate,
+			roi_names=roi_names,
+			title_info="Random: Before denoising",
+		)
+		plot_original_vs_denoised(
+			signal_flattened_orig=random_signal_all_rois,
+			signal_flattened_denoised=random_denoised_signal_all_rois,
+			block_features=signal_each_roi_seperate,
+			roi_names=roi_names,
+			title_info="Random: Original vs Denoised Signals per ROI",
+		)
+	random_denoised_each_roi = transform_flatten_signal_to_original_shape(
+		block_features=signal_each_roi_seperate,
+		flattened_signal=random_denoised_signal_all_rois,
+	)
+	random_bandpassed_each_roi = apply_butterworth_bandpass_filter(
+		signal=random_denoised_each_roi,
+		lowcut=0.667,
+		highcut=1.667,
+		fs=configs.fps,
+		order=2,
+	)
+	if configs.plot_steps:
+		plot_denoised_signal_unflat(
+			denoised_signal_unflat=random_bandpassed_each_roi,
+			roi_names=roi_names,
+			fps=configs.fps,
+			title="Random: Denoised and Bandpassed Signals per ROI",
+		)
+	random_principal_components = pca(data=random_bandpassed_each_roi, num_components=4)
+	if configs.plot_steps:
+		plot_principal_components_in_seperate_plots(
+			principal_components=random_principal_components
+		)
+	random_selected_pca_component = find_most_periodic_pca_component(
+		principal_components=random_principal_components
+	)
+	if configs.plot_steps:
+		plot_chosen_component(
+			chosen_component=random_selected_pca_component,
+			fps=configs.fps,
+		)
+
 # Bandpass filter
 denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
 #plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
@@ -80,6 +138,12 @@ prinicpal_components = pca(data=bandpassed_signal_each_roi_seperate, num_compone
 
 # Find most periodic component
 selected_pca_component = find_most_periodic_pca_component(principal_components=prinicpal_components)
+
+if random_selected_pca_component is not None:
+	selected_scale = float(np.std(selected_pca_component))
+	random_selected_scale = float(np.std(random_selected_pca_component))
+	if random_selected_scale > 0:
+		random_selected_pca_component = random_selected_pca_component * (selected_scale / random_selected_scale)
 #plot_chosen_component(chosen_component=selected_pca_component, fps = configs.fps)
 
 if configs.plot_steps and configs.timespan_signal_to_look_at is not None:
@@ -122,6 +186,27 @@ if configs.plot_steps and configs.timespan_signal_to_look_at is not None:
 	plt.figure(figsize=(10, 5))
 	plt.plot(signal_time, selected_pca_component, label="Selected PCA component")
 	plt.plot(ground_truth_time, ground_truth_segment, label="Ground truth", alpha=0.7)
+	if random_selected_pca_component is not None:
+		random_time = np.arange(len(random_selected_pca_component)) / configs.fps + start_time
+		plt.plot(random_time, random_selected_pca_component, label="Random pipeline component", alpha=0.7)
+		min_distance_random = int(0.3 * configs.fps)
+		random_peaks, _ = find_peaks(
+			random_selected_pca_component,
+			distance=max(1, min_distance_random),
+		)
+		random_peak_times = random_time[random_peaks]
+		plt.scatter(
+			random_peak_times,
+			random_selected_pca_component[random_peaks],
+			label="Random peaks",
+			s=25,
+		)
+
+		random_hr_mean = mean_hr_from_peak_times(random_peak_times)
+		if random_hr_mean is not None:
+			print(f"Random mean HR in timespan: {random_hr_mean:.2f} bpm")
+		else:
+			print("Random mean HR in timespan: insufficient peaks")
 	plt.scatter(signal_peak_times, selected_pca_component[signal_peaks], label="Signal peaks", s=25)
 	plt.scatter(ground_truth_peak_times, ground_truth_segment[ground_truth_peaks], label="Ground truth peaks", s=25)
 	plt.xlabel("Time (s)")
