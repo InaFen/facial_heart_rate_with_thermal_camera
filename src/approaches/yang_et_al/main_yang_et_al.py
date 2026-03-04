@@ -5,18 +5,20 @@ import numpy as np
 project_root = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, project_root)
 
-from src.approaches.new_approach.utils.utils_landmark_detection import *
+from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_temperature_means
 from src.approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold
-from src.approaches.yang_et_al.utils_spatial_temporal_graph import *
+from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph_2, add_centroids_to_roi_data, denoise_via_laplacian
 from src.approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
-from src.approaches.yang_et_al.utils_plotting import *
-from src.approaches.yang_et_al.utils_post_processing import *
+from src.approaches.yang_et_al.utils_plotting import plot_signal_each_roi_seperately, plot_flattened_signal_each_roi, plot_denoised_signal_unflat, plot_original_vs_denoised, plot_principal_components_in_seperate_plots, plot_chosen_component
+from src.approaches.yang_et_al.utils_post_processing import pca, apply_butterworth_bandpass_filter, transform_flatten_signal_to_original_shape, find_most_periodic_pca_component
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 
 CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.json"
 
 configs = Config.from_json(CONFIGS_PATH)
+
+#IMPORTANT: Each ROI represents one building block in the graph
 
 # original pipeline for face detection
 #track_face(in_path= path_video, out_path=path_video_tracked_face)
