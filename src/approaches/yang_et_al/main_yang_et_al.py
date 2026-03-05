@@ -143,11 +143,11 @@ if configs.plot_steps and configs.timespan_signal_to_look_at is not None:
 		print("Ground truth mean HR in timespan: insufficient peaks")
 
 	plt.figure(figsize=(10, 5))
-	plt.plot(signal_time, selected_pca_component, label="Selected PCA component")
-	plt.plot(ground_truth_time, ground_truth_segment, label="Ground truth", alpha=0.7)
+	signal_line, = plt.plot(signal_time, selected_pca_component, label="Selected PCA component")
+	ground_truth_line, = plt.plot(ground_truth_time, ground_truth_segment, label="Ground truth", alpha=0.7)
 	if random_selected_pca_component is not None:
 		random_time = np.arange(len(random_selected_pca_component)) / configs.fps + start_time
-		plt.plot(random_time, random_selected_pca_component, label="Random pipeline component", alpha=0.7)
+		random_line, = plt.plot(random_time, random_selected_pca_component, label="Random pipeline component", alpha=0.7)
 		min_distance_random = int(0.3 * configs.fps)
 		random_peaks, _ = find_peaks(
 			random_selected_pca_component,
@@ -157,8 +157,9 @@ if configs.plot_steps and configs.timespan_signal_to_look_at is not None:
 		plt.scatter(
 			random_peak_times,
 			random_selected_pca_component[random_peaks],
-			label="Random peaks",
+			label="_nolegend_",
 			s=25,
+			color=random_line.get_color(),
 		)
 
 		random_hr_mean = mean_hr_from_peak_times(random_peak_times)
@@ -166,8 +167,20 @@ if configs.plot_steps and configs.timespan_signal_to_look_at is not None:
 			print(f"Random mean HR in timespan: {random_hr_mean:.2f} bpm")
 		else:
 			print("Random mean HR in timespan: insufficient peaks")
-	plt.scatter(signal_peak_times, selected_pca_component[signal_peaks], label="Signal peaks", s=25)
-	plt.scatter(ground_truth_peak_times, ground_truth_segment[ground_truth_peaks], label="Ground truth peaks", s=25)
+	plt.scatter(
+		signal_peak_times,
+		selected_pca_component[signal_peaks],
+		label="_nolegend_",
+		s=25,
+		color=signal_line.get_color(),
+	)
+	plt.scatter(
+		ground_truth_peak_times,
+		ground_truth_segment[ground_truth_peaks],
+		label="_nolegend_",
+		s=25,
+		color=ground_truth_line.get_color(),
+	)
 	plt.xlabel("Time (s)")
 	plt.ylabel("Amplitude")
 	plt.title("Selected PCA Component vs Ground Truth")
