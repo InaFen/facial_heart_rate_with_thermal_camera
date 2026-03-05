@@ -97,7 +97,7 @@ def pca(data, num_components):
 
     return transformed_data
 
-def find_most_periodic_pca_component(principal_components):
+def find_most_periodic_pca_component(principal_components, num_harmonics=3):
     """
     Identify the PCA component with the most periodic behavior using FFT.
 
@@ -105,23 +105,48 @@ def find_most_periodic_pca_component(principal_components):
     ----------
     principal_components : array, shape (T, num_components)
         The principal components to analyze.
+    num_harmonics : int, optional
+        Number of harmonics (including the dominant frequency) to use when
+        computing the proportion p.
     
     Returns
     -------
     selected_pca_component : array, shape (T,)
         The PCA component with the most periodic behavior.
     """
-    # Apply FFT to each PCA component
-    fft_components = np.abs(np.fft.fft(principal_components, axis=0))
+    if num_harmonics < 1:
+        raise ValueError("num_harmonics must be >= 1.")
 
-    # Calculate the power spectrum
-    power_spectrum = fft_components**2
+    # Use real FFT to obtain the single-sided spectrum (non-negative frequencies)
+    # for every PCA component. This matches the paper's single-sided power use.
+    fft_components = np.fft.rfft(principal_components, axis=0)
+    power_spectrum = np.abs(fft_components) ** 2
 
-    # Calculate the proportion of power for each component
-    p = power_spectrum[1:, :] / power_spectrum[0, :]
+    # Exclude the DC bin (index 0) when searching for the dominant frequency.
+    # The dominant frequency is the largest peak among non-zero frequencies.
+    if power_spectrum.shape[0] < 2:
+        raise ValueError("Signal length too short for FFT-based periodicity.")
 
-    # Find the index of the PCA component with the largest proportion of power
-    dominant_component_index = np.argmax(np.max(p, axis=0))
+    p_values = []
+    for comp_idx in range(power_spectrum.shape[1]):
+        # Extract the power spectrum for one PCA component
+        spectrum = power_spectrum[:, comp_idx]
+        # Dominant frequency index (largest non-DC power)
+        dominant_index = np.argmax(spectrum[1:]) + 1
+        # Collect indices for the dominant frequency and its first harmonics
+        harmonic_indices = [dominant_index * i for i in range(1, num_harmonics + 1)]
+        # Keep only harmonics that are within the FFT spectrum
+        harmonic_indices = [idx for idx in harmonic_indices if idx < spectrum.shape[0]]
+
+        # P1 is the dominant-frequency power; harmonic_sum is P1 + higher harmonics
+        p1 = spectrum[dominant_index]
+        harmonic_sum = np.sum(spectrum[harmonic_indices])
+        # p in [0, 1]; higher values indicate stronger periodicity at harmonics
+        p = p1 / harmonic_sum if harmonic_sum > 0 else 0.0
+        p_values.append(p)
+
+    # Select the PCA component with the largest proportion p
+    dominant_component_index = int(np.argmax(p_values))
 
     # Extract the most periodic PCA component
     selected_pca_component = principal_components[:, dominant_component_index]
