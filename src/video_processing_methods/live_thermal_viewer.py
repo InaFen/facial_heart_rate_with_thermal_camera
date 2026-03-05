@@ -3,7 +3,7 @@
 Live thermal viewer - displays .gray frames as they are captured.
 
 Usage:
-    ython src/video_processing_methods/live_thermal_viewer.py /home/arbeit/Dokumente/master_thesis/data/lepton/raw_lepton_data/03022026/
+    python src/video_processing_methods/live_thermal_viewer.py /home/arbeit/Dokumente/master_thesis/data/lepton/raw_lepton_data/03022026/
 
 This will monitor the directory for new .gray files and display them in real-time.
 Press 'q' to quit, 's' to save a screenshot of the current frame.
@@ -115,25 +115,25 @@ def main():
                 # Apply colormap for better visualization
                 frame_colored = cv2.applyColorMap(frame_normalized, cv2.COLORMAP_JET)
                 
-                # Add temperature info overlay
+                frame_display = cv2.flip(frame_colored, 0)
+
+                # Add temperature info overlay (kept upright)
                 min_temp = np.min(image_area)
                 max_temp = np.max(image_area)
                 mean_temp = np.mean(image_area)
                 
                 info_text = [
                     f"File: {latest_file.name}",
-                    f"Min: {min_temp:.1f}C  Max: {max_temp:.1f}C  Mean: {mean_temp:.1f}C",
-                    f"Range: {temp_min:.1f}C - {temp_max:.1f}C {'(auto)' if auto_range else '(fixed)'}"
+                    f"Range: {temp_min:.1f}C - {temp_max:.1f}C "#{'(auto)' if auto_range else '(fixed)'}"
                 ]
                 
                 y_offset = 15
                 for text in info_text:
-                    cv2.putText(frame_colored, text, (5, y_offset), 
+                    cv2.putText(frame_display, text, (5, y_offset), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
                     y_offset += 12
-                
-                cv2.imshow('Thermal Viewer', frame_colored)
-                last_frame_display = frame_colored
+                cv2.imshow('Thermal Viewer', frame_display)
+                last_frame_display = frame_display
         
         # Handle keyboard input
         key = cv2.waitKey(50) & 0xFF  # 50ms refresh rate
