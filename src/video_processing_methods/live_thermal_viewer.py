@@ -124,6 +124,18 @@ def main():
                 center_row = image_area.shape[0] // 2
                 center_col = image_area.shape[1] // 2
                 center_temp = image_area[center_row, center_col]
+
+                display_center_row = frame_display.shape[0] - 1 - center_row
+                display_center_col = center_col
+                cv2.drawMarker(
+                    frame_display,
+                    (display_center_col, display_center_row),
+                    (255, 255, 255),
+                    markerType=cv2.MARKER_CROSS,
+                    markerSize=10,
+                    thickness=1,
+                    line_type=cv2.LINE_AA,
+                )
                 
                 info_text = [
                     f"File: {latest_file.name}",
