@@ -112,10 +112,8 @@ def main():
                 # Normalize for display
                 frame_normalized = normalize_for_display(frame_celsius, temp_min, temp_max)
                 
-                # Apply colormap for better visualization
-                frame_colored = cv2.applyColorMap(frame_normalized, cv2.COLORMAP_JET)
-                
-                frame_display = cv2.flip(frame_colored, 0)
+                # Display in grayscale for better detail visibility
+                frame_display = cv2.flip(frame_normalized, 0)
 
                 # Add temperature info overlay (kept upright)
                 min_temp = np.min(image_area)
