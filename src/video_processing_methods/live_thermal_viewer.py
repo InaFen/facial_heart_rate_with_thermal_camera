@@ -121,10 +121,14 @@ def main():
                 min_temp = np.min(image_area)
                 max_temp = np.max(image_area)
                 mean_temp = np.mean(image_area)
+                center_row = image_area.shape[0] // 2
+                center_col = image_area.shape[1] // 2
+                center_temp = image_area[center_row, center_col]
                 
                 info_text = [
                     f"File: {latest_file.name}",
-                    f"Range: {temp_min:.1f}C - {temp_max:.1f}C "#{'(auto)' if auto_range else '(fixed)'}"
+                    f"Center: {center_temp:.2f}C",
+                    f"Range: {temp_min:.1f}C - {temp_max:.1f}C"
                 ]
                 
                 y_offset = 15
