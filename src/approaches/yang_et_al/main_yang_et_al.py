@@ -26,6 +26,7 @@ from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipe
 CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.json"
 
 configs = Config.from_json(CONFIGS_PATH)
+show_random_plots = bool(configs.plot_steps)
 
 run_random_parallel = True
 random_seed = 42
@@ -72,13 +73,13 @@ denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans,
 
 random_selected_pca_component = None
 if run_random_parallel:
-	random_selected_pca_component = run_random_baseline(
+		random_selected_pca_component = run_random_baseline(
 		signal_all_rois_without_nans=signal_all_rois_without_nans,
 		signal_each_roi_seperate=signal_each_roi_seperate,
 		roi_names=roi_names,
 		laplacian=laplacian,
 		fps=configs.fps,
-		plot_steps=configs.plot_steps,
+			plot_steps=show_random_plots,
 		random_seed=random_seed,
 	)
 
@@ -105,7 +106,7 @@ if random_selected_pca_component is not None:
 #plot_chosen_component(chosen_component=selected_pca_component, fps = configs.fps)
 
 # ground truth steps
-if configs.plot_steps and configs.timespan_signal_to_look_at is not None:
+if configs.timespan_signal_to_look_at is not None:
 	start_time, end_time = configs.timespan_signal_to_look_at
 	signal_offset = float(configs.time_first_frame_signal or 0.0)
 	ecg_offset = float(configs.time_first_frame_ecg or 0.0)
@@ -142,10 +143,16 @@ if configs.plot_steps and configs.timespan_signal_to_look_at is not None:
 	else:
 		print("Ground truth mean HR in timespan: insufficient peaks")
 
+	signal_hr_mean = mean_hr_from_peak_times(signal_peak_times)
+	if signal_hr_mean is not None:
+		print(f"Signal mean HR in timespan: {signal_hr_mean:.2f} bpm")
+	else:
+		print("Signal mean HR in timespan: insufficient peaks")
+
 	plt.figure(figsize=(10, 5))
 	signal_line, = plt.plot(signal_time, selected_pca_component, label="Selected PCA component")
 	ground_truth_line, = plt.plot(ground_truth_time, ground_truth_segment, label="Ground truth", alpha=0.7)
-	if random_selected_pca_component is not None:
+	if show_random_plots and random_selected_pca_component is not None:
 		random_time = np.arange(len(random_selected_pca_component)) / configs.fps + start_time
 		random_line, = plt.plot(random_time, random_selected_pca_component, label="Random pipeline component", alpha=0.7)
 		min_distance_random = int(0.3 * configs.fps)
