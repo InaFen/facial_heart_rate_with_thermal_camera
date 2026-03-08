@@ -116,9 +116,9 @@ def save_signal_to_npz(target_path: str, filename: str, signal: npt.NDArray[np.f
 
 
 if __name__ == "__main__":
-    signal_path = "data/ground_truth/opensignals/original_signal/18022026/opensignals_0007800F80FA_2026-02-18_13-32-40.txt"
-    npz_filename = "opensignals_0007800F80FA_2026-02-18_13-32-40.npz"
-    npz_path = "data/ground_truth/opensignals/extracted_npy_files/18022026/flir_a300_rec_000009/"
+    signal_path = "data/ground_truth/opensignals/original_signal/05032026/opensignals_0007800F80FA_2026-03-05_17-17-42.txt"
+    npz_filename = "opensignals_0007800F80FA_2026-03-05_17-17-42.npz"
+    npz_path = "data/ground_truth/opensignals/extracted_npy_files/05032026/"
     
     
     # Read signal and button pressed data
@@ -158,4 +158,4 @@ if __name__ == "__main__":
     plt.show()
     
     # Save to npz
-    #save_signal_to_npz(target_path=npz_path, filename=npz_filename, signal=record_data, sampling_rate=fs, units="mV")
+    save_signal_to_npz(target_path=npz_path, filename=npz_filename, signal=record_data, sampling_rate=fs, units="mV")
