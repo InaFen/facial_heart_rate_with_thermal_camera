@@ -16,6 +16,8 @@ from src.approaches.new_approach.utils.utils_denoised_baseline import add_random
 from src.approaches.new_approach.utils.utils_stft import get_frequencies_over_time_spectrogram, get_frequencies_over_time_cwt
 from src.approaches.new_approach.utils.utils_detrend import detrend_signal
 from src.approaches.new_approach.utils.utils_fft import plot_fft_each_roi, get_dominant_frequency_per_roi, print_dominant_frequencies
+from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph_2, denoise_via_laplacian
+import numpy as np
 
 def main():
     configs = Config.from_json(CONFIGS_PATH)
@@ -25,11 +27,11 @@ def main():
 
     # Apply graph denoising
     denoised_signal_all_rois, signal_each_roi_seperate, roi_names = apply_denoising_graph_pipeline(roi_pixel_data=roi_pixel_data, configs=configs)
-
+    
     denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
     
     # Remove mean (remove DC component - constant offset) before dual ROI subtraction
-    denoised_signal_each_roi_seperate = detrend_signal(roi_pixel_data, roi_names, plot=configs.plot_steps)
+    denoised_signal_each_roi_seperate = detrend_signal(denoised_signal_each_roi_seperate, roi_names, plot=configs.plot_steps)
     
     if configs.plot_steps:
         plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names, title="Detrended Signal per ROI", fps=configs.fps, show_seconds=True)
@@ -63,14 +65,14 @@ def main():
     get_frequencies_over_time_cwt(denoised_signal_each_roi_seperate, fps=configs.fps, roi_names=roi_names, save_path=None, plot=True)
 
     # Apply bandpass filter
-    #bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
-    bandpassed_signal_each_roi_seperate = denoised_signal_each_roi_seperate  # No additional filtering for now
+    bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
+    #bandpassed_signal_each_roi_seperate = denoised_signal_each_roi_seperate  # No additional filtering for now
 
     if configs.plot_steps:
         plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names, title="Bandpassed Denoised Signal per ROI", fps=configs.fps, show_seconds=True)
 
     # Plot FFT for each ROI
-    plot_fft_each_roi(bandpassed_signal_each_roi_seperate, roi_names, fps=configs.fps, show_peaks=True)
+    #plot_fft_each_roi(bandpassed_signal_each_roi_seperate, roi_names, fps=configs.fps, show_peaks=True)
     
     # Get and print dominant frequencies and heart rate estimates
     dominant_frequencies, heart_rates = get_dominant_frequency_per_roi(bandpassed_signal_each_roi_seperate, roi_names, fps=configs.fps)
