@@ -7,7 +7,18 @@ from typing import List, Dict
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
 
-def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict, fps: int, use_ema: bool, ema_alpha: float, show_display: bool = False, flip_upside_down: bool = True):
+def apply_facemesh_to_thermal_video(
+    input_path: str,
+    output_path: str,
+    roi_landmarks: dict,
+    fps: int,
+    use_ema: bool,
+    ema_alpha: float,
+    show_display: bool = False,
+    flip_upside_down: bool = True,
+    start_frame: int = 0,
+    end_frame: int = None,
+):
     """
     Apply MediaPipe FaceMesh to a thermal video, draw ALL landmarks + ROIs,
     optionally display in real time, save annotated video, and collect ROI masks.
@@ -22,6 +33,8 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         use_ema: If True, apply exponential moving average smoothing to landmarks. Default: True
         ema_alpha: EMA blending factor (0.0-1.0); lower = smoother but more lag. Default: 0.2
         flip_upside_down: If True, flip frames vertically for FaceMesh and flip masks/output back to match original orientation.
+        start_frame: Start frame index to process (inclusive). Default: 0
+        end_frame: End frame index to process (exclusive). Default: None (process to end)
     """
 
     print("[IMPORTANT] Ensure that the input video is properly aligned with the original .gray frames (same order, not flipped) for correct ROI mapping later on.")
@@ -53,7 +66,21 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
     smoothed_pts = None
     alpha = ema_alpha if use_ema else 1.0  # If not using EMA, alpha = 1.0 (always use current frame)
 
+    if start_frame > 0:
+        for _ in range(start_frame):
+            ret, _ = cap.read()
+            if not ret:
+                break
+
+    frame_idx = 0
+    max_frames = None
+    if end_frame is not None:
+        max_frames = max(0, end_frame - start_frame)
+
     while True:
+        if max_frames is not None and frame_idx >= max_frames:
+            break
+
         ret, frame = cap.read()
         if not ret:
             break
@@ -139,6 +166,8 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
 
         if show_display and cv2.waitKey(1) & 0xFF == ord('q'):
             break
+
+        frame_idx += 1
 
 
     print("Collected ROI masks for", len(roi_mask_log), "frames.")
@@ -456,6 +485,8 @@ def apply_roi_masks_to_gray_frames(
     gray_dir: str,
     roi_mask_log: List[Dict[str, np.ndarray]],
     output_npz: str = None,
+    start_frame: int = 0,
+    end_frame: int = None,
 ) -> List[Dict[str, Dict[str, object]]]:
     """Apply ROI masks (from video detection) to original .gray frames to extract temperatures.
 
@@ -463,6 +494,8 @@ def apply_roi_masks_to_gray_frames(
         gray_dir: directory containing .gray frames
         roi_mask_log: list of per-frame ROI masks (from apply_facemesh_to_thermal_video)
         output_npz: optional path to save extracted data as npz
+        start_frame: Start frame index to process (inclusive). Default: 0
+        end_frame: End frame index to process (exclusive). Default: None (process to end)
 
     Returns:
         roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "values", "mean_value"}}
@@ -471,14 +504,33 @@ def apply_roi_masks_to_gray_frames(
     if not gray_files:
         raise ValueError(f"No .gray files found in {gray_dir}")
 
-    if len(gray_files) < len(roi_mask_log):
-        raise ValueError(f"Fewer .gray frames ({len(gray_files)}) than masks ({len(roi_mask_log)})")
-    elif len(gray_files) > len(roi_mask_log):
-        raise ValueError(f"More .gray frames ({len(gray_files)}) than masks ({len(roi_mask_log)})")
+    if start_frame < 0:
+        raise ValueError("start_frame must be >= 0")
+
+    if end_frame is None:
+        end_frame = len(gray_files)
+
+    if end_frame < start_frame:
+        raise ValueError("end_frame must be >= start_frame")
+
+    if end_frame > len(gray_files):
+        raise ValueError(f"end_frame {end_frame} exceeds available frames {len(gray_files)}")
+
+    gray_files_slice = gray_files[start_frame:end_frame]
+
+    if len(roi_mask_log) == len(gray_files):
+        roi_masks_slice = roi_mask_log[start_frame:end_frame]
+    else:
+        roi_masks_slice = roi_mask_log
+
+    if len(gray_files_slice) < len(roi_masks_slice):
+        raise ValueError(f"Fewer .gray frames ({len(gray_files_slice)}) than masks ({len(roi_masks_slice)}) in selected range")
+    elif len(gray_files_slice) > len(roi_masks_slice):
+        raise ValueError(f"More .gray frames ({len(gray_files_slice)}) than masks ({len(roi_masks_slice)}) in selected range")
 
     roi_pixel_data: List[Dict[str, Dict[str, object]]] = []
 
-    for idx, (fname, masks) in enumerate(zip(gray_files, roi_mask_log)):
+    for idx, (fname, masks) in enumerate(zip(gray_files_slice, roi_masks_slice)):
         frame_path = os.path.join(gray_dir, fname)
         frame = load_gray_frame(frame_path)
 
@@ -500,8 +552,8 @@ def apply_roi_masks_to_gray_frames(
 
         roi_pixel_data.append(frame_data)
 
-        if (idx + 1) % 100 == 0 or idx == len(gray_files) - 1:
-            print(f"Processed {idx+1}/{len(gray_files)} frames")
+        if (idx + 1) % 100 == 0 or idx == len(gray_files_slice) - 1:
+            print(f"Processed {idx+1}/{len(gray_files_slice)} frames")
 
     if output_npz:
         os.makedirs(os.path.dirname(output_npz), exist_ok=True)
