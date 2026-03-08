@@ -1,14 +1,14 @@
 {
   "paths": {
-    "gray_frames": "data/lepton/processed_lepton_data/03022026_3_interpolated/",
-    "video": "data/recorded_videos/thermal_video_from_y16_frames/03022026_3.mp4",
-    "video_tracked_face": "data/recorded_videos/new_approach/output_tracked_video.mp4",
-    "video_thresholded_pixel": "data/recorded_videos/new_approach/output_thresholded_video.mp4",
-    "video_facemesh": "data/recorded_videos/new_approach/output_facemesh_video.mp4",
-    "pixels_log": "data/saved_data/new_approach/roi_pixel_log.npy",
-    "video_thermal_with_roi_masks": "data/recorded_videos/new_approach/output_video_with_roi_masks.mp4",
-    "roi_pixel_data": "data/saved_data/new_approach/roi_pixel_data.npy",
-    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/03022026/0302_3/opensignals_0007800F80FA_2026-02-03_12-07-12.npz"
+    "gray_frames": "data/lepton/processed_lepton_data/05032026_before_after_sport_interpolated",
+    "video": "data/recorded_videos/thermal_video_from_y16_frames/05032026_before_after_sport.mp4",
+    "video_tracked_face": "data/recorded_videos/yang_et_al/output_tracked_video.mp4",
+    "video_thresholded_pixel": "data/recorded_videos/yang_et_al/output_thresholded_video.mp4",
+    "video_facemesh": "data/recorded_videos/yang_et_al/output_facemesh_video.mp4",
+    "pixels_log": "data/saved_data/yang_et_al/roi_pixel_log.npy",
+    "video_thermal_with_roi_masks": "data/recorded_videos/yang_et_al/output_video_with_roi_masks.mp4",
+    "roi_pixel_data": "data/saved_data/yang_et_al/roi_pixel_data.npy",
+    "ground_truth": "data/ground_truth/opensignals/extracted_npy_files/05032026/opensignals_0007800F80FA_2026-03-05_17-17-42.npz"
   },
   "processing": {
     "overwrite_existing_files": true,
@@ -24,19 +24,18 @@
     "manual_roi_mode": "polygon",
     "manual_roi_mask_load_path": null,
     "manual_roi_mask_save_path": "data/saved_data/new_approach/manual_roi_mask.npy",
-    "manual_roi_names": ["roi_signal", "roi_noise"],
-    "manual_roi_modes": ["polygon", "polygon"],
-    "manual_roi_mask_load_paths": [null, null],
+    "manual_roi_names": ["roi_signal"],
+    "manual_roi_modes": ["polygon"],
+    "manual_roi_mask_load_paths": [null],
     "manual_roi_mask_save_paths": [
-      "data/saved_data/new_approach/manual_roi_mask_signal.npy",
-      "data/saved_data/new_approach/manual_roi_mask_noise.npy"
+      "data/saved_data/new_approach/manual_roi_mask_signal.npy"
     ],
     "manual_roi_selection_colormap": false
   },
   "timing": {
     "time_first_frame_signal": 26.5,
     "time_first_frame_ecg": 0.0,
-    "timespan_signal_to_look_at": [442, 450],
+    "timespan_signal_to_look_at": [315, 345],
     "notes": {
       "time_first_frame_signal_expected": null,
       "time_first_frame_ecg_expected": null
