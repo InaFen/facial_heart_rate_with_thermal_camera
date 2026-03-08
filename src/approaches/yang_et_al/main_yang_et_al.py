@@ -28,7 +28,7 @@ CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.json"
 configs = Config.from_json(CONFIGS_PATH)
 show_random_plots = bool(configs.plot_steps)
 
-run_random_parallel = True
+run_random_parallel = False
 random_seed = 42
 
 #IMPORTANT: Each ROI represents one building block in the graph
@@ -54,7 +54,7 @@ adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_
 
 signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
 # plot each ROI signal seperately
-#plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names, fps=configs.fps, title="Mean Pixel Value of Each ROI Over Time", show_seconds=True)
+plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names, fps=configs.fps, title="Mean Pixel Value of Each ROI Over Time", show_seconds=True)
 
 signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
 #plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
@@ -93,7 +93,7 @@ bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=d
 
 # PCA 
 prinicpal_components = pca(data=bandpassed_signal_each_roi_seperate, num_components=4)
-#plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
+plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
 
 # Find most periodic component
 selected_pca_component = find_most_periodic_pca_component(principal_components=prinicpal_components)
@@ -112,7 +112,7 @@ if configs.timespan_signal_to_look_at is not None:
 	ecg_offset = float(configs.time_first_frame_ecg or 0.0)
 	ground_truth_signal, ground_truth_fs = load_ground_truth_signal(
 		configs.path_ground_truth,
-		flip=True,
+		flip=False,
 	)
 	ground_truth_segment, ground_truth_time = get_ground_truth_segment(
 		ground_truth_signal,
@@ -145,9 +145,9 @@ if configs.timespan_signal_to_look_at is not None:
 
 	signal_hr_mean = mean_hr_from_peak_times(signal_peak_times)
 	if signal_hr_mean is not None:
-		print(f"Signal mean HR in timespan: {signal_hr_mean:.2f} bpm")
+		print(f"Signal mean HR in timespan before PCA: {signal_hr_mean:.2f} bpm")
 	else:
-		print("Signal mean HR in timespan: insufficient peaks")
+		print("Signal mean HR in timespan before PCA: insufficient peaks")
 
 	plt.figure(figsize=(10, 5))
 	signal_line, = plt.plot(signal_time, selected_pca_component, label="Selected PCA component")
