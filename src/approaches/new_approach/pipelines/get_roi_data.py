@@ -202,6 +202,6 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
         plot_roi_mean_signals(roi_pixel_data=roi_pixel_data_for_return) 
     elif configs.plot_steps and not extract_from_video_instead_of_gray_files:
-        plot_roi_temperature_means(roi_pixel_data=roi_pixel_data_for_return)
+        plot_roi_temperature_means(roi_pixel_data=roi_pixel_data_for_return, fps=configs.fps)
 
     return roi_pixel_data_for_return, roi_pixel_log
