@@ -88,7 +88,7 @@ def get_signal_and_heart_rate_from_opensignals_npz(
         mean_hr = 0.0
     
     # Plot original, detrended, and heart rate in separate subplots
-    fig, axes = plt.subplots(3, 1, figsize=(14, 12))
+    fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
 
     # Top plot: Raw signal
     axes[0].plot(t, signal, 'b-', linewidth=0.5, alpha=0.7, label='Raw Signal' + bandpass_info)
@@ -153,10 +153,10 @@ if __name__ == "__main__":
         end_sec = 60.0
     else:
         #file_path = "data/ground_truth/opensignals/extracted_npy_files/18022026/flir_a300_rec_000009/opensignals_0007800F80FA_2026-02-18_13-32-40.npz"
-        file_path = "data/ground_truth/opensignals/extracted_npy_files/12022026/flir_a300_rec_000007/opensignals_0007800F80FA_2026-02-12_15-37-52.npz"
+        file_path = "data/ground_truth/opensignals/extracted_npy_files/05032026/opensignals_0007800F80FA_2026-03-05_17-17-42.npz"
         enable_fft_plot = True
         start_sec = 0.0
-        end_sec = 60.0
+        end_sec = None
     # Set bandpass options here
     apply_bandpass = False
     bp_low = 0.6  # Hz
