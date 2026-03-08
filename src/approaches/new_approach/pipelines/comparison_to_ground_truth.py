@@ -101,7 +101,7 @@ def compare_signal_to_ground_truth_pipeline(configs, bandpassed_signal_each_roi_
 
     # Compute HR series for ground truth
     gt_hr_times, gt_hr_bpm, gt_peak_times, gt_peaks = compute_hr_series_from_peaks(
-        ground_truth_signal_denoised, gt_fs, min_distance_s=0.5, prominence=0.5, configs=configs
+        ground_truth_signal_denoised, gt_fs, min_distance_s=0.6, prominence=1.3, configs=configs
     )
 
     # Compute HR per ROI
