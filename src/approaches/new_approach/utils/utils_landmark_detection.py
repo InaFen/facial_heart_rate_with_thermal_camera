@@ -393,11 +393,7 @@ def create_manual_roi_mask_log_from_gray_frames(
     frame_index = max(0, min(frame_index, len(gray_files) - 1))
     first_frame_path = os.path.join(gray_dir, gray_files[frame_index])
     first_frame = load_gray_frame(first_frame_path)
-    
-    # Flip the frame vertically to match video orientation
-    # Gray frames are stored upside-down relative to the video
-    print("[Warning]: Flipping frame vertically for ROI selection to match video orientation.")
-    first_frame = cv2.flip(first_frame, 0)
+
 
     vmin, vmax = np.percentile(first_frame, [1, 99])
     frame_clipped = np.clip(first_frame, vmin, vmax)
@@ -467,9 +463,6 @@ def create_manual_roi_mask_log_from_gray_frames(
         cv2.fillPoly(mask, [poly], 255)
     else:
         raise ValueError(f"Unknown manual ROI mode: {mode}")
-
-    # Mask is now in the flipped (video) orientation - no need to flip back
-    # It will be applied correctly to the video
 
     if mask_save_path:
         save_dir = os.path.dirname(mask_save_path)
