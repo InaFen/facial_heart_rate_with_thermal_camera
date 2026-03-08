@@ -563,6 +563,88 @@ def apply_roi_masks_to_gray_frames(
     return roi_pixel_data
 
 
+def write_roi_tracked_video_from_gray_frames(
+    gray_dir: str,
+    roi_mask_log: List[Dict[str, np.ndarray]],
+    output_path: str,
+    fps: float,
+    start_frame: int = 0,
+    end_frame: int = None,
+) -> None:
+    """Write a masked video from .gray frames using ROI masks.
+
+    Parameters:
+        gray_dir: directory containing .gray frames
+        roi_mask_log: list of per-frame ROI masks
+        output_path: path to save the masked video
+        fps: frames per second
+        start_frame: Start frame index to process (inclusive). Default: 0
+        end_frame: End frame index to process (exclusive). Default: None (process to end)
+    """
+    _, gray_files = sort_grayfiles_with_interpolations(gray_dir)
+    if not gray_files:
+        raise ValueError(f"No .gray files found in {gray_dir}")
+
+    if start_frame < 0:
+        raise ValueError("start_frame must be >= 0")
+
+    if end_frame is None:
+        end_frame = len(gray_files)
+
+    if end_frame < start_frame:
+        raise ValueError("end_frame must be >= start_frame")
+
+    if end_frame > len(gray_files):
+        raise ValueError(f"end_frame {end_frame} exceeds available frames {len(gray_files)}")
+
+    gray_files_slice = gray_files[start_frame:end_frame]
+    if len(roi_mask_log) == len(gray_files):
+        masks_slice = roi_mask_log[start_frame:end_frame]
+    else:
+        masks_slice = roi_mask_log
+
+    if len(gray_files_slice) != len(masks_slice):
+        raise ValueError(
+            f"Mismatch between gray frames ({len(gray_files_slice)}) and masks ({len(masks_slice)}) in selected range"
+        )
+
+    if not gray_files_slice:
+        return
+
+    first_mask = next(iter(masks_slice[0].values()))
+    drop_telemetry = first_mask.shape[0] <= 120
+    raw_height = first_mask.shape[0] + (2 if drop_telemetry else 0)
+    raw_width = first_mask.shape[1]
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (raw_width, first_mask.shape[0]))
+
+    for fname, masks in zip(gray_files_slice, masks_slice):
+        frame_path = os.path.join(gray_dir, fname)
+        frame = load_gray_frame(
+            frame_path,
+            width=raw_width,
+            height=raw_height,
+            drop_telemetry=drop_telemetry,
+        )
+
+        vmin, vmax = np.percentile(frame, [1, 99])
+        frame_clipped = np.clip(frame, vmin, vmax)
+        frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        combined_mask = np.zeros(frame_norm.shape, dtype=np.uint8)
+        for mask in masks.values():
+            combined_mask = cv2.bitwise_or(combined_mask, mask)
+
+        frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(frame_bgr, contours, -1, (0, 255, 255), 1)
+        out.write(frame_bgr)
+
+    out.release()
+    print(f"Saved ROI tracked video (from gray frames) to: {output_path}")
+
+
 def plot_roi_temperature_means(roi_pixel_data: List[Dict[str, Dict[str, object]]], fps: float = None) -> None:
     """Plot temperature mean values for each ROI across frames.
 

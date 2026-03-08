@@ -12,6 +12,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     plot_roi_temperature_means,
     create_manual_roi_mask_log_from_gray_frames,
     load_gray_frame,
+    write_roi_tracked_video_from_gray_frames,
 )
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
@@ -120,8 +121,8 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         start_frame = int(start_time * configs.fps)
         end_frame = int(end_time * configs.fps)
         os.makedirs(os.path.dirname(configs.path_video_tracked_face), exist_ok=True)
-        _ = apply_roi_masks_to_video(
-            video_path=configs.path_video,
+        write_roi_tracked_video_from_gray_frames(
+            gray_dir=configs.path_gray_frames,
             roi_mask_log=roi_pixel_log,
             output_path=configs.path_video_tracked_face,
             fps=configs.fps,
