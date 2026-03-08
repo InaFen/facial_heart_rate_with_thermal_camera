@@ -7,7 +7,7 @@ from typing import List, Dict
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
 
-def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict, fps: int, use_ema: bool, ema_alpha: float, show_display: bool = False):
+def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landmarks: dict, fps: int, use_ema: bool, ema_alpha: float, show_display: bool = False, flip_upside_down: bool = True):
     """
     Apply MediaPipe FaceMesh to a thermal video, draw ALL landmarks + ROIs,
     optionally display in real time, save annotated video, and collect ROI masks.
@@ -21,8 +21,12 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
         show_display: If True, display video during processing. Default: False (fastest)
         use_ema: If True, apply exponential moving average smoothing to landmarks. Default: True
         ema_alpha: EMA blending factor (0.0-1.0); lower = smoother but more lag. Default: 0.2
+        flip_upside_down: If True, flip frames vertically for FaceMesh and flip masks/output back to match original orientation.
     """
 
+    print("[IMPORTANT] Ensure that the input video is properly aligned with the original .gray frames (same order, not flipped) for correct ROI mapping later on.")
+    if flip_upside_down:
+        print("[Warning] Flipping frames vertically for FaceMesh; masks/output will be flipped back to match original orientation.")
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         print("Error: Cannot open input video.")
@@ -55,6 +59,9 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
             break
 
         thermal_original = frame.copy()
+
+        if flip_upside_down:
+            frame = cv2.flip(frame, 0)
 
         # Robust normalize 16-bit → 8-bit: clip outliers then map to 0-255
         if frame.dtype != np.uint8:
@@ -102,16 +109,26 @@ def apply_facemesh_to_thermal_video(input_path: str, output_path: str, roi_landm
                 mask = np.zeros((height, width), dtype=np.uint8)
                 cv2.fillPoly(mask, [roi_poly], 255)
 
+                if flip_upside_down:
+                    mask = cv2.flip(mask, 0)
+
                 frame_roi_masks[roi_name] = mask
         else:
             # No face detected: create blank masks for each ROI
             smoothed_pts = None
             for roi_name in roi_landmarks.keys():
 
-                frame_roi_masks[roi_name] = np.zeros((height, width), dtype=np.uint8)
+                blank_mask = np.zeros((height, width), dtype=np.uint8)
+                if flip_upside_down:
+                    blank_mask = cv2.flip(blank_mask, 0)
+
+                frame_roi_masks[roi_name] = blank_mask
 
         # Append masks for this frame
         roi_mask_log.append(frame_roi_masks)
+
+        if flip_upside_down:
+            pseudo_rgb = cv2.flip(pseudo_rgb, 0)
 
         if show_display:
             # Show annotated output

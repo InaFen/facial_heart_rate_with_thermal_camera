@@ -148,7 +148,7 @@ def create_thermal_video(input_dir, output_file, fps=9, width=160, height=120):
             continue
 
         # Flip vertically to match desired orientation
-        frame_8bit_bgr = cv2.flip(frame_8bit_bgr, 0)
+        #frame_8bit_bgr = cv2.flip(frame_8bit_bgr, 0)
         
         # Write to video
         out.write(frame_8bit_bgr)
@@ -160,9 +160,9 @@ def create_thermal_video(input_dir, output_file, fps=9, width=160, height=120):
 
 def main():
 
-    input_dir = "data/lepton/processed_lepton_data/03022026_3_interpolated"
-    output = "data/recorded_videos/thermal_video_from_y16_frames/03022026_3.mp4"
-    fps =8.767704384613774 # based on findings in get_consistent_fps_for_gray_images.py
+    input_dir = "data/lepton/processed_lepton_data/05032026_before_after_sport_interpolated"
+    output = "data/recorded_videos/thermal_video_from_y16_frames/05032026_before_after_sport.mp4"
+    fps =8.767701401175636 # based on findings in get_consistent_fps_for_gray_images.py
     width = 160
     height = 120
 
@@ -174,7 +174,7 @@ def main():
     if output_dir and not os.path.isdir(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-    #plot_greyscale_frame("data/lepton/processed_lepton_data/29122025_interpolated/388438_interpolated.gray")
+    plot_greyscale_frame("data/lepton/processed_lepton_data/29122025_interpolated/388438_interpolated.gray")
 
     create_thermal_video(
         input_dir,
