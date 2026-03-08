@@ -43,7 +43,7 @@ def plot_signal_each_roi_seperately(block_features, roi_names, title, fps, show_
         plt.plot(x_axis, signals[n], label=f'ROI: {roi_names[n]}')
     
     plt.xlabel(x_label)
-    plt.ylabel('Mean Pixel Value')
+    plt.ylabel('Mean Kelvin * 100')
     plt.title(title)
     plt.legend()
     plt.tight_layout()
