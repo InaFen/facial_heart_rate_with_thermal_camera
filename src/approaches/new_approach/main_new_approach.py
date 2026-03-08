@@ -23,21 +23,13 @@ def main():
     # Get ROI data
     roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 
-    # Apply timespan filter if configured
-    if configs.timespan_signal_to_look_at is not None:
-        start_time, end_time = configs.timespan_signal_to_look_at
-        start_frame = int(start_time * configs.fps)
-        end_frame = int(end_time * configs.fps)
-        roi_pixel_data = roi_pixel_data[start_frame:end_frame]
-        print(f"Applied timespan filter: {start_time}s to {end_time}s (frames {start_frame} to {end_frame})")
-
     # Apply graph denoising
     denoised_signal_all_rois, signal_each_roi_seperate, roi_names = apply_denoising_graph_pipeline(roi_pixel_data=roi_pixel_data, configs=configs)
 
     denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
     
     # Remove mean (remove DC component - constant offset) before dual ROI subtraction
-    denoised_signal_each_roi_seperate = detrend_signal(denoised_signal_each_roi_seperate, roi_names, plot=configs.plot_steps)
+    denoised_signal_each_roi_seperate = detrend_signal(roi_pixel_data, roi_names, plot=configs.plot_steps)
     
     if configs.plot_steps:
         plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names, title="Detrended Signal per ROI", fps=configs.fps, show_seconds=True)
