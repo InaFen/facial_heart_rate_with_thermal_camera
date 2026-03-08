@@ -26,7 +26,7 @@
     "manual_roi_mask_save_path": "data/saved_data/new_approach/manual_roi_mask.npy",
     "manual_roi_names": ["roi_signal"],
     "manual_roi_modes": ["polygon"],
-    "manual_roi_mask_load_paths": [null],
+    "manual_roi_mask_load_paths": ["data/saved_data/new_approach/manual_roi_mask_signal.npy"],
     "manual_roi_mask_save_paths": [
       "data/saved_data/new_approach/manual_roi_mask_signal.npy"
     ],
