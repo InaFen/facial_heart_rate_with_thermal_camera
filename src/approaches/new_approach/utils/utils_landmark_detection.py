@@ -422,7 +422,7 @@ def create_manual_roi_mask_log_from_gray_frames(
         points = []
         display = frame_display.copy()
 
-        instructions = "Left click: add point | Right click: undo | ENTER: finish | c: clear"
+        #instructions = "Left click: add point | Right click: undo | ENTER: finish | c: clear"
 
         def draw_overlay(img, pts):
             canvas = img.copy()
@@ -430,7 +430,7 @@ def create_manual_roi_mask_log_from_gray_frames(
                 cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, (0, 255, 255), 1)
                 for p in pts:
                     cv2.circle(canvas, p, 2, (0, 255, 255), -1)
-            cv2.putText(canvas, instructions, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.1, (255, 255, 255), 1)
+            #cv2.putText(canvas, instructions, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.1, (255, 255, 255), 1)
             return canvas
 
         def on_mouse(event, x, y, flags, param):
