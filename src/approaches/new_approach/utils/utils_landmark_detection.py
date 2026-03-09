@@ -461,6 +461,40 @@ def create_manual_roi_mask_log_from_gray_frames(
         # Draw polygon directly - no coordinate transformation needed
         poly = np.array(points, dtype=np.int32)
         cv2.fillPoly(mask, [poly], 255)
+    elif mode == "point":
+        point = []
+        display = frame_display.copy()
+
+        def on_mouse(event, x, y, flags, param):
+            nonlocal point
+            if event == cv2.EVENT_LBUTTONDOWN:
+                point = [(x, y)]
+
+        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(display_title, on_mouse)
+
+        while True:
+            canvas = display.copy()
+            if point:
+                cv2.circle(canvas, point[0], 2, (0, 255, 255), -1)
+            cv2.imshow(display_title, canvas)
+            key = cv2.waitKey(20) & 0xFF
+
+            if key == 13:  # Enter
+                break
+            if key == ord('c'):
+                point = []
+
+        cv2.destroyWindow(display_title)
+
+        if len(point) != 1:
+            raise ValueError("Point ROI needs a single click. Please try again.")
+
+        x, y = point[0]
+        if not (0 <= x < width and 0 <= y < height):
+            raise ValueError("Point ROI is out of bounds. Please try again.")
+
+        mask[y, x] = 255
     else:
         raise ValueError(f"Unknown manual ROI mode: {mode}")
 
