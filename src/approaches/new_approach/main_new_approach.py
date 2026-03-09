@@ -51,10 +51,10 @@ def main():
         roi_names = [f"{roi1_name} - {roi2_name}"]
 
     # Add random baseline ROI to denoised signal (control signal for validation)
-    denoised_signal_each_roi_seperate, baseline_names = add_random_baseline_signal(
-        denoised_signal_each_roi_seperate, seed=42, amplitude_scale=0.2
-    )
-    roi_names = list(roi_names) + baseline_names  # Append baseline to ROI names list
+    #denoised_signal_each_roi_seperate, baseline_names = add_random_baseline_signal(
+    #    denoised_signal_each_roi_seperate, seed=42, amplitude_scale=0.2
+    #)
+    #roi_names = list(roi_names) + baseline_names  # Append baseline to ROI names list
 
     #if configs.plot_steps:
     #    plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
