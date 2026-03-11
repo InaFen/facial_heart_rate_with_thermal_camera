@@ -16,6 +16,52 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
 )
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
+
+def split_manual_roi_into_subrois(
+    roi_pixel_log: List[Dict[str, np.ndarray]],
+    roi_name: str,
+    grid_rows: int,
+    grid_cols: int,
+) -> tuple[List[Dict[str, np.ndarray]], List[str]]:
+    if grid_rows <= 0 or grid_cols <= 0:
+        raise ValueError("manual_roi_subroi_grid must contain positive integers")
+
+    subroi_names = [f"{roi_name}_r{row + 1}c{col + 1}" for row in range(grid_rows) for col in range(grid_cols)]
+    new_log: List[Dict[str, np.ndarray]] = []
+
+    for frame_dict in roi_pixel_log:
+        mask = frame_dict.get(roi_name)
+        if mask is None:
+            new_log.append(frame_dict)
+            continue
+
+        ys, xs = np.where(mask > 0)
+        if ys.size == 0 or xs.size == 0:
+            empty_frame = {name: np.zeros_like(mask) for name in subroi_names}
+            new_log.append(empty_frame)
+            continue
+
+        y_min, y_max = int(ys.min()), int(ys.max())
+        x_min, x_max = int(xs.min()), int(xs.max())
+
+        y_edges = np.linspace(y_min, y_max + 1, grid_rows + 1).astype(int)
+        x_edges = np.linspace(x_min, x_max + 1, grid_cols + 1).astype(int)
+
+        frame_subrois: Dict[str, np.ndarray] = {}
+        name_idx = 0
+        for row in range(grid_rows):
+            for col in range(grid_cols):
+                y0, y1 = y_edges[row], y_edges[row + 1]
+                x0, x1 = x_edges[col], x_edges[col + 1]
+                sub_mask = np.zeros_like(mask)
+                sub_mask[y0:y1, x0:x1] = mask[y0:y1, x0:x1]
+                frame_subrois[subroi_names[name_idx]] = sub_mask
+                name_idx += 1
+
+        new_log.append(frame_subrois)
+
+    return new_log, subroi_names
+
 def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_files = False) -> tuple:
     """
     Extract ROI data from thermal video and gray frames.
@@ -35,6 +81,11 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         end_frame = int(end_time * configs.fps)
 
     # Detect face or use manual ROI (support dual ROI selection)
+    split_single_manual_roi = (
+        configs.manual_roi_enabled
+        and configs.manual_roi_split_enabled
+        and len(configs.manual_roi_names) == 1
+    )
     if configs.manual_roi_enabled:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
             frame_index = 0
@@ -65,6 +116,17 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
         else:
             roi_pixel_log = np.load(configs.path_pixels_log, allow_pickle=True)
+
+        if split_single_manual_roi:
+            first_frame = roi_pixel_log[0] if len(roi_pixel_log) > 0 else {}
+            if configs.manual_roi_names[0] in first_frame:
+                grid_rows, grid_cols = configs.manual_roi_subroi_grid
+                roi_pixel_log, _ = split_manual_roi_into_subrois(
+                    roi_pixel_log=roi_pixel_log,
+                    roi_name=configs.manual_roi_names[0],
+                    grid_rows=grid_rows,
+                    grid_cols=grid_cols,
+                )
     else:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
             roi_pixel_log = apply_facemesh_to_thermal_video(
@@ -85,7 +147,11 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
     # Extract ROI pixel data
     if extract_from_video_instead_of_gray_files:
         # Extract ROI pixel data from video instead of gray frames
-        if not os.path.isfile(configs.path_roi_pixel_data) or configs.overwrite_existing_files:
+        if (
+            not os.path.isfile(configs.path_roi_pixel_data)
+            or configs.overwrite_existing_files
+            or split_single_manual_roi
+        ):
             roi_pixel_data = apply_roi_masks_to_video(
                 video_path=configs.path_video,
                 roi_mask_log=roi_pixel_log,
@@ -100,7 +166,11 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             roi_pixel_data = np.load(configs.path_roi_pixel_data, allow_pickle=True)
     else:
         # Extract ROI pixel data from gray frames
-        if not os.path.isfile(configs.path_roi_pixel_data) or configs.overwrite_existing_files:
+        if (
+            not os.path.isfile(configs.path_roi_pixel_data)
+            or configs.overwrite_existing_files
+            or split_single_manual_roi
+        ):
             roi_pixel_data = apply_roi_masks_to_gray_frames(
                 gray_dir=configs.path_gray_frames,
                 roi_mask_log=roi_pixel_log,
