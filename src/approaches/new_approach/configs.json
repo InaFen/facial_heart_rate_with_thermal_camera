@@ -30,7 +30,9 @@
     "manual_roi_mask_save_paths": [
       "data/saved_data/new_approach/manual_roi_mask_signal.npy"
     ],
-    "manual_roi_selection_colormap": false
+    "manual_roi_selection_colormap": false,
+    "manual_roi_split_enabled": false,
+    "manual_roi_subroi_grid": [2, 2]
   },
   "timing": {
     "time_first_frame_signal": 26.5,
