@@ -495,16 +495,82 @@ def create_manual_roi_mask_log_from_gray_frames(
             raise ValueError("Point ROI is out of bounds. Please try again.")
 
         mask[y, x] = 255
+    elif mode == "point_surrounding":
+        point = []
+        display = frame_display.copy()
+
+        def on_mouse(event, x, y, flags, param):
+            nonlocal point
+            if event == cv2.EVENT_LBUTTONDOWN:
+                point = [(x, y)]
+
+        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(display_title, on_mouse)
+
+        while True:
+            canvas = display.copy()
+            if point:
+                cv2.circle(canvas, point[0], 2, (0, 255, 255), -1)
+            cv2.imshow(display_title, canvas)
+            key = cv2.waitKey(20) & 0xFF
+
+            if key == 13:  # Enter
+                break
+            if key == ord('c'):
+                point = []
+
+        cv2.destroyWindow(display_title)
+
+        if len(point) != 1:
+            raise ValueError("Point ROI needs a single click. Please try again.")
+
+        x, y = point[0]
+        if not (0 <= x < width and 0 <= y < height):
+            raise ValueError("Point ROI is out of bounds. Please try again.")
+
+        offsets = [
+            (0, 0, "center"),
+            (-1, 0, "left"),
+            (1, 0, "right"),
+            (0, -1, "up"),
+            (0, 1, "down"),
+            (-1, -1, "up_left"),
+            (1, -1, "up_right"),
+            (-1, 1, "down_left"),
+            (1, 1, "down_right"),
+        ]
+        masks = {}
+        for dx, dy, suffix in offsets:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < width and 0 <= ny < height:
+                sub_mask = np.zeros(first_frame.shape, dtype=np.uint8)
+                sub_mask[ny, nx] = 255
+                masks[f"{roi_name}_{suffix}"] = sub_mask
+        if not masks:
+            raise ValueError("No valid surrounding pixels found for the selected point.")
+        mask = masks
     else:
         raise ValueError(f"Unknown manual ROI mode: {mode}")
 
-    if mask_save_path:
+    if mask_save_path and isinstance(mask, np.ndarray):
         save_dir = os.path.dirname(mask_save_path)
         if save_dir:  # Only create directory if path contains one
             os.makedirs(save_dir, exist_ok=True)
         np.save(mask_save_path, mask)
 
-    roi_mask_log = [{roi_name: mask} for _ in range(len(gray_files))]
+    if mask_save_path and isinstance(mask, dict):
+        save_dir = os.path.dirname(mask_save_path)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        base, ext = os.path.splitext(mask_save_path)
+        ext = ext if ext else ".npy"
+        for name, sub_mask in mask.items():
+            np.save(f"{base}_{name}{ext}", sub_mask)
+
+    if isinstance(mask, dict):
+        roi_mask_log = [mask for _ in range(len(gray_files))]
+    else:
+        roi_mask_log = [{roi_name: mask} for _ in range(len(gray_files))]
     return roi_mask_log
 
 

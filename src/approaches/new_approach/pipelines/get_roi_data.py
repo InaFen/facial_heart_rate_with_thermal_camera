@@ -110,7 +110,9 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             for frame_idx in range(len(roi_mask_logs[0])):
                 frame_dict = {}
                 for roi_idx, roi_name in enumerate(configs.manual_roi_names):
-                    frame_dict[roi_name] = roi_mask_logs[roi_idx][frame_idx][roi_name]
+                    frame_entry = roi_mask_logs[roi_idx][frame_idx]
+                    for key, value in frame_entry.items():
+                        frame_dict[key] = value
                 roi_pixel_log.append(frame_dict)
             os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
             np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
