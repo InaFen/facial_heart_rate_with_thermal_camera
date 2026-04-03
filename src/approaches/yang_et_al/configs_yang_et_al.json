@@ -1,7 +1,7 @@
 {
   "paths": {
-    "gray_frames": "data/lepton/processed_lepton_data/05032026_before_after_sport_interpolated",
-    "video": "data/recorded_videos/thermal_video_from_y16_frames/05032026_before_after_sport.mp4",
+    "gray_frames": "data/lepton/processed_lepton_data/05032026_Wasserhahn_interpolated",
+    "video": "data/recorded_videos/thermal_video_from_y16_frames/05032026_Wasserhahn.mp4",
     "video_tracked_face": "data/recorded_videos/yang_et_al/output_tracked_video.mp4",
     "video_thresholded_pixel": "data/recorded_videos/yang_et_al/output_thresholded_video.mp4",
     "video_facemesh": "data/recorded_videos/yang_et_al/output_facemesh_video.mp4",
@@ -25,19 +25,19 @@
     "manual_roi_mask_load_path": null,
     "manual_roi_mask_save_path": "data/saved_data/new_approach/manual_roi_mask.npy",
     "manual_roi_names": ["roi_signal_temple"],
-    "manual_roi_modes": ["polygon"],
+    "manual_roi_modes": ["point"],
     "manual_roi_mask_load_paths": [null],
     "manual_roi_mask_save_paths": [
       "data/saved_data/new_approach/manual_roi_signal_temple.npy"
     ],
-    "manual_roi_selection_colormap": true,
-    "manual_roi_split_enabled": true,
+    "manual_roi_selection_colormap": false,
+    "manual_roi_split_enabled": false,
     "manual_roi_subroi_grid": [4, 4]
   },
   "timing": {
     "time_first_frame_signal": 10.5,
     "time_first_frame_ecg": 0.0,
-    "timespan_signal_to_look_at": [315, 345],
+    "timespan_signal_to_look_at": [0,30],
     "notes": {
       "time_first_frame_signal_expected": null,
       "time_first_frame_ecg_expected": null
