@@ -209,7 +209,7 @@ def format_netd_result(result: dict[str, float | int | tuple[int, int]]) -> str:
 def format_spatial_noise_result(result: dict[str, float | int | tuple[int, int]]) -> str:
 	"""Format a spatial-noise result dictionary for human-readable output."""
 	return (
-		f"Spatial noise: {result['spatial_noise_c']:.6f} °C ({result['spatial_noise_mk']:.2f} mK)\n"
+		f"Spatial noise (Average over all frames): {result['spatial_noise_c']:.6f} °C ({result['spatial_noise_mk']:.2f} mK)\n"
 		f"Per-frame std mean: {result['frame_std_mean_c']:.6f} °C\n"
 		f"Per-frame std std: {result['frame_std_std_c']:.6f} °C\n"
 		f"Frames: {result['frame_count']}\n"
