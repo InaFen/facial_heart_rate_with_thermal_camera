@@ -107,6 +107,37 @@ def calculate_netd_from_pixelwise_std(
 	}
 
 
+def calculate_spatial_noise_from_frame_std(
+	thermal_frames: np.ndarray,
+	roi: tuple[int, int, int, int] | None = None,
+	ddof: int = 1,
+) -> dict[str, float | int | tuple[int, int]]:
+	"""
+	Calculate spatial noise as the average of per-frame spatial standard deviations.
+
+	For each frame, compute the standard deviation across all pixels (or ROI pixels),
+	then average those per-frame standard deviations over time.
+	"""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+
+	y_slice, x_slice = _normalize_roi(roi, thermal_frames.shape[1:])
+	roi_frames = thermal_frames[:, y_slice, x_slice]
+
+	frame_spatial_std = roi_frames.std(axis=(1, 2), ddof=ddof)
+	spatial_noise = float(frame_spatial_std.mean())
+
+	return {
+		"spatial_noise_c": spatial_noise,
+		"spatial_noise_mk": float(spatial_noise * 1000.0),
+		"frame_std_mean_c": spatial_noise,
+		"frame_std_std_c": float(frame_spatial_std.std(ddof=ddof)),
+		"frame_count": int(thermal_frames.shape[0]),
+		"roi_shape": tuple(int(v) for v in roi_frames.shape[1:]),
+	}
+
+
 def _format_histogram_summary(values: np.ndarray, frame_count: int, bins: int) -> str:
 	"""Format summary statistics for histogram annotation."""
 	values = np.asarray(values, dtype=np.float32)
@@ -141,11 +172,46 @@ def plot_all_pixels_histogram(
 	plt.show()
 
 
+def plot_single_frame_heatmap(
+	thermal_frames: np.ndarray,
+	frame_index: int = 0,
+	title: str = "Thermal Heatmap (Single Frame)",
+	cmap: str = "inferno",
+) -> None:
+	"""Plot one thermal frame as a heatmap."""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+
+	frame_count = thermal_frames.shape[0]
+	if not (0 <= frame_index < frame_count):
+		raise ValueError(f"frame_index must be in [0, {frame_count - 1}], got {frame_index}")
+
+	frame = thermal_frames[frame_index]
+	fig, ax = plt.subplots(figsize=(12, 8))
+	im = ax.imshow(frame, cmap=cmap, origin="upper", aspect="auto")
+	ax.set_title(f"{title} (index={frame_index})")
+	ax.set_xlabel("X Pixel")
+	ax.set_ylabel("Y Pixel")
+	fig.colorbar(im, ax=ax, label="Temperature (°C)")
+	plt.tight_layout()
+	plt.show()
+
+
 def format_netd_result(result: dict[str, float | int | tuple[int, int]]) -> str:
 	"""Format a NETD result dictionary for human-readable output."""
 	return (
-		f"NETD: {result['netd_c']:.6f} °C ({result['netd_mk']:.2f} mK)\n"
+		f"NETD (temporal noise): {result['netd_c']:.6f} °C ({result['netd_mk']:.2f} mK)\n"
 		f"Mean temperature: {result['mean_temperature_c']:.6f} °C\n"
+	)
+
+
+def format_spatial_noise_result(result: dict[str, float | int | tuple[int, int]]) -> str:
+	"""Format a spatial-noise result dictionary for human-readable output."""
+	return (
+		f"Spatial noise: {result['spatial_noise_c']:.6f} °C ({result['spatial_noise_mk']:.2f} mK)\n"
+		f"Per-frame std mean: {result['frame_std_mean_c']:.6f} °C\n"
+		f"Per-frame std std: {result['frame_std_std_c']:.6f} °C\n"
 		f"Frames: {result['frame_count']}\n"
 		f"ROI shape: {result['roi_shape']}"
 	)
@@ -155,8 +221,10 @@ def main() -> None:
 	path = Path("data/infratec_mwir/Black_body_Ascii")
 	#path = Path("data/infratec_mwir/Julian_31_03_1_Ascii")
 	recursive = False
-	roi: tuple[int, int, int, int] | None = None
+	roi: tuple[int, int, int, int] | None = None # If None, whole image is used 
 	plot_histogram = True
+	plot_one_frame_heatmap = True
+	heatmap_frame_index = 0
 
 	if path.is_dir():
 		filepaths = discover_asc_files(path, recursive=recursive)
@@ -167,8 +235,15 @@ def main() -> None:
 	result = calculate_netd_from_pixelwise_std(thermal_frames, roi=roi)
 	print(format_netd_result(result))
 
+	spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames, roi=roi)
+	print(format_spatial_noise_result(spatial_noise_result))
+
 	if plot_histogram:
+		# Check whether noise is Gaussian distributed by plotting a histogram of all pixel values across all frames
 		plot_all_pixels_histogram(thermal_frames)
+
+	if plot_one_frame_heatmap:
+		plot_single_frame_heatmap(thermal_frames, frame_index=heatmap_frame_index)
 
 
 if __name__ == "__main__":
