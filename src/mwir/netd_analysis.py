@@ -138,6 +138,76 @@ def calculate_spatial_noise_from_frame_std(
 	}
 
 
+def calculate_neighbor_temporal_correlation(
+	thermal_frames: np.ndarray,
+	roi: tuple[int, int, int, int] | None = None,
+	ddof: int = 1,
+) -> dict[str, object]:
+	"""
+	Calculate whether temporal noise in neighboring pixels is correlated.
+
+	For each pixel, compute its temporal residuals by subtracting the per-pixel
+	mean over time. Then compute the Pearson correlation with the four direct
+	neighbors (up, down, left, right) and average those correlations per pixel.
+	"""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+
+	y_slice, x_slice = _normalize_roi(roi, thermal_frames.shape[1:])
+	roi_frames = thermal_frames[:, y_slice, x_slice]
+	pixel_mean = roi_frames.mean(axis=0)
+	residuals = roi_frames - pixel_mean
+
+	height, width = roi_frames.shape[1:]
+	corr_sum = np.zeros((height, width), dtype=np.float32)
+	corr_count = np.zeros((height, width), dtype=np.int32)
+
+	def _pairwise_correlation(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+		a_centered = a - a.mean(axis=0)
+		b_centered = b - b.mean(axis=0)
+		cov = np.mean(a_centered * b_centered, axis=0)
+		std_a = a_centered.std(axis=0, ddof=ddof)
+		std_b = b_centered.std(axis=0, ddof=ddof)
+		denom = std_a * std_b
+		corr = np.zeros_like(cov, dtype=np.float32)
+		np.divide(cov, denom, out=corr, where=denom > 0)
+		return corr
+
+	if height > 1:
+		vertical_corr = _pairwise_correlation(residuals[:, :-1, :], residuals[:, 1:, :])
+		corr_sum[:-1, :] += vertical_corr
+		corr_sum[1:, :] += vertical_corr
+		corr_count[:-1, :] += 1
+		corr_count[1:, :] += 1
+
+	if width > 1:
+		horizontal_corr = _pairwise_correlation(residuals[:, :, :-1], residuals[:, :, 1:])
+		corr_sum[:, :-1] += horizontal_corr
+		corr_sum[:, 1:] += horizontal_corr
+		corr_count[:, :-1] += 1
+		corr_count[:, 1:] += 1
+
+	neighbor_corr_map = np.full((height, width), np.nan, dtype=np.float32)
+	valid = corr_count > 0
+	neighbor_corr_map[valid] = corr_sum[valid] / corr_count[valid]
+
+	valid_values = neighbor_corr_map[np.isfinite(neighbor_corr_map)]
+	mean_corr = float(valid_values.mean()) if valid_values.size else float("nan")
+	min_corr = float(valid_values.min()) if valid_values.size else float("nan")
+	max_corr = float(valid_values.max()) if valid_values.size else float("nan")
+
+	return {
+		"neighbor_corr_map": neighbor_corr_map,
+		"mean_neighbor_corr": mean_corr,
+		"min_neighbor_corr": min_corr,
+		"max_neighbor_corr": max_corr,
+		"valid_pixel_count": int(valid_values.size),
+		"frame_count": int(thermal_frames.shape[0]),
+		"roi_shape": tuple(int(v) for v in roi_frames.shape[1:]),
+	}
+
+
 def _format_histogram_summary(values: np.ndarray, frame_count: int, bins: int) -> str:
 	"""Format summary statistics for histogram annotation."""
 	values = np.asarray(values, dtype=np.float32)
@@ -198,6 +268,33 @@ def plot_single_frame_heatmap(
 	plt.show()
 
 
+def plot_neighbor_correlation_heatmap(
+	neighbor_corr_map: np.ndarray,
+	title: str = "Spatial Correlation of Temporal Noise",
+) -> None:
+	"""Plot a heatmap of average correlation with neighboring pixels."""
+	neighbor_corr_map = np.asarray(neighbor_corr_map, dtype=np.float32)
+	valid_values = neighbor_corr_map[np.isfinite(neighbor_corr_map)]
+	if valid_values.size:
+		vmin = float(valid_values.min())
+		vmax = float(valid_values.max())
+		if np.isclose(vmin, vmax):
+			padding = 0.01 if vmin == 0 else abs(vmin) * 0.01
+			vmin -= padding
+			vmax += padding
+	else:
+		vmin, vmax = -1.0, 1.0
+
+	fig, ax = plt.subplots(figsize=(8, 6))
+	im = ax.imshow(neighbor_corr_map, cmap="coolwarm", vmin=vmin, vmax=vmax, origin="upper", aspect="auto")
+	ax.set_title(title)
+	ax.set_xlabel("Pixel column (j)")
+	ax.set_ylabel("Pixel row (i)")
+	fig.colorbar(im, ax=ax, label=f"Average correlation with neighbors ({vmin:.3f} to {vmax:.3f})")
+	plt.tight_layout()
+	plt.show()
+
+
 def format_netd_result(result: dict[str, float | int | tuple[int, int]]) -> str:
 	"""Format a NETD result dictionary for human-readable output."""
 	return (
@@ -217,6 +314,18 @@ def format_spatial_noise_result(result: dict[str, float | int | tuple[int, int]]
 	)
 
 
+def format_neighbor_correlation_result(result: dict[str, object]) -> str:
+	"""Format a neighbor-correlation result dictionary for human-readable output."""
+	return (
+		f"Mean neighbor correlation: {result['mean_neighbor_corr']:.6f}\n"
+		f"Min neighbor correlation: {result['min_neighbor_corr']:.6f}\n"
+		f"Max neighbor correlation: {result['max_neighbor_corr']:.6f}\n"
+		f"Valid pixels: {result['valid_pixel_count']}\n"
+		f"Frames: {result['frame_count']}\n"
+		f"ROI shape: {result['roi_shape']}"
+	)
+
+
 def main() -> None:
 	path = Path("data/infratec_mwir/Black_body_Ascii")
 	#path = Path("data/infratec_mwir/Julian_31_03_1_Ascii")
@@ -224,6 +333,7 @@ def main() -> None:
 	roi: tuple[int, int, int, int] | None = None # If None, whole image is used 
 	plot_histogram = True
 	plot_one_frame_heatmap = True
+	plot_neighbor_correlation_heatmap_enabled = True
 	heatmap_frame_index = 0
 
 	if path.is_dir():
@@ -238,12 +348,18 @@ def main() -> None:
 	spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames, roi=roi)
 	print(format_spatial_noise_result(spatial_noise_result))
 
+	neighbor_correlation_result = calculate_neighbor_temporal_correlation(thermal_frames, roi=roi)
+	print(format_neighbor_correlation_result(neighbor_correlation_result))
+
 	if plot_histogram:
 		# Check whether noise is Gaussian distributed by plotting a histogram of all pixel values across all frames
 		plot_all_pixels_histogram(thermal_frames)
 
 	if plot_one_frame_heatmap:
 		plot_single_frame_heatmap(thermal_frames, frame_index=heatmap_frame_index)
+
+	if plot_neighbor_correlation_heatmap_enabled:
+		plot_neighbor_correlation_heatmap(neighbor_correlation_result["neighbor_corr_map"])
 
 
 if __name__ == "__main__":
