@@ -35,6 +35,7 @@ def load_thermal_frames(filepaths: Sequence[str | Path]) -> np.ndarray:
 	frames = [extract_thermal_data(str(filepath)) for filepath in filepaths]
 	if not frames:
 		raise ValueError("No ASC files were provided.")
+	print("Frames loaded")
 	return np.stack(frames, axis=0)
 
 
@@ -66,6 +67,30 @@ def _normalize_roi(roi: tuple[int, int, int, int] | None, shape: tuple[int, int]
 
 	# +1 because numpy slicing is exclusive at the end index
 	return slice(y_min, y_max + 1), slice(x_min, x_max + 1)
+
+
+def average_consecutive_frames(thermal_frames: np.ndarray, window_size: int) -> np.ndarray:
+	"""Average consecutive frames in non-overlapping windows.
+	Pixels are averaged over time, but not spatially, only temporally."""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+	if window_size < 1:
+		raise ValueError(f"window_size must be >= 1, got {window_size}")
+	if window_size == 1:
+		return thermal_frames
+
+	frame_count = thermal_frames.shape[0]
+	usable_count = (frame_count // window_size) * window_size
+	if usable_count == 0:
+		raise ValueError(
+			f"window_size={window_size} is larger than available frame count ({frame_count})."
+		)
+
+	trimmed = thermal_frames[:usable_count]
+	averaged = trimmed.reshape(-1, window_size, *thermal_frames.shape[1:]).mean(axis=1)
+	print(f"Averaged {frame_count} frames temporally into {averaged.shape[0]} frames using window_size={window_size}.")
+	return averaged
 
 
 def calculate_netd_from_pixelwise_std(
@@ -270,7 +295,7 @@ def plot_single_frame_heatmap(
 
 def plot_neighbor_correlation_heatmap(
 	neighbor_corr_map: np.ndarray,
-	title: str = "Spatial Correlation of Temporal Noise (how similar are neighboring pixels' noise patterns over time?)",
+	title: str = "Spatial Correlation of Temporal Noise (How similar are neighboring pixels' noise patterns over time?)",
 ) -> None:
 	"""Plot a heatmap of average correlation with neighboring pixels."""
 	neighbor_corr_map = np.asarray(neighbor_corr_map, dtype=np.float32)
@@ -326,8 +351,8 @@ def format_neighbor_correlation_result(result: dict[str, object]) -> str:
 
 
 def main() -> None:
-	path = Path("data/infratec_mwir/Black_body_Ascii")
-	#path = Path("/mnt/wwn-0x50000398325009f6-part1/Test_NETD_Ascii")
+	#path = Path("data/infratec_mwir/Black_body_Ascii")
+	path = Path("/mnt/wwn-0x50000398325009f6-part1/10_secs_NETD_Ascii")
     
 	recursive = False
 	roi: tuple[int, int, int, int] | None = None # If None, whole image is used 
@@ -335,31 +360,35 @@ def main() -> None:
 	plot_one_frame_heatmap = True
 	plot_neighbor_correlation_heatmap_enabled = True
 	heatmap_frame_index = 0
+	frame_average_window = 10
 
 	if path.is_dir():
 		filepaths = discover_asc_files(path, recursive=recursive)
 	else:
 		filepaths = [path]
 
-	# Calculate NETD
+	# Get images
 	thermal_frames = load_thermal_frames(filepaths)
-	result = calculate_netd_from_pixelwise_std(thermal_frames, roi=roi)
+	thermal_frames_averaged = average_consecutive_frames(thermal_frames, window_size=frame_average_window)
+
+	# Calculate NETD
+	result = calculate_netd_from_pixelwise_std(thermal_frames_averaged, roi=roi)
 	print(format_netd_result(result))
 
 	# Calculate spatial noise (how much differs pixel values in one frame)
-	spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames, roi=roi)
+	spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames_averaged, roi=roi)
 	print(format_spatial_noise_result(spatial_noise_result))
 
 	# Calculate how much temporal noise is correlated between neighboring pixels
-	neighbor_correlation_result = calculate_neighbor_temporal_correlation(thermal_frames, roi=roi)
+	neighbor_correlation_result = calculate_neighbor_temporal_correlation(thermal_frames_averaged, roi=roi)
 	print(format_neighbor_correlation_result(neighbor_correlation_result))
 
 	if plot_histogram:
 		# Check whether noise is Gaussian distributed by plotting a histogram of all pixel values across all frames
-		plot_all_pixels_histogram(thermal_frames)
+		plot_all_pixels_histogram(thermal_frames_averaged)
 
 	if plot_one_frame_heatmap:
-		plot_single_frame_heatmap(thermal_frames, frame_index=heatmap_frame_index)
+		plot_single_frame_heatmap(thermal_frames_averaged, frame_index=heatmap_frame_index)
 
 	if plot_neighbor_correlation_heatmap_enabled:
 		plot_neighbor_correlation_heatmap(neighbor_correlation_result["neighbor_corr_map"])
