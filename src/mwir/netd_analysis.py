@@ -64,6 +64,7 @@ def _normalize_roi(roi: tuple[int, int, int, int] | None, shape: tuple[int, int]
 			f"Invalid ROI {roi} for frame shape {shape}. Expected x within [0, {width - 1}] and y within [0, {height - 1}]."
 		)
 
+	# +1 because numpy slicing is exclusive at the end index
 	return slice(y_min, y_max + 1), slice(x_min, x_max + 1)
 
 
@@ -91,17 +92,16 @@ def calculate_netd_from_pixelwise_std(
 		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
 
 	y_slice, x_slice = _normalize_roi(roi, thermal_frames.shape[1:])
-	roi_frames = thermal_frames[:, y_slice, x_slice]
-	pixelwise_std = roi_frames.std(axis=0, ddof=ddof)
-	netd_value = float(pixelwise_std.mean())
-	std_of_std = float(pixelwise_std.std(ddof=ddof))
+	roi_frames = thermal_frames[:, y_slice, x_slice] # Get frames in ROI
+	pixelwise_std = roi_frames.std(axis=0, ddof=ddof) # Std dev over time for each pixel in ROI
+	netd_value = float(pixelwise_std.mean()) # Average of per-pixel temporal standard deviations
+	
 	mean_temperature = float(roi_frames.mean())
 
 	return {
 		"netd_c": netd_value,
 		"netd_mk": float(netd_value * 1000.0),
 		"mean_temperature_c": mean_temperature,
-		"frame_mean_std_c": std_of_std,
 		"frame_count": int(thermal_frames.shape[0]),
 		"roi_shape": tuple(int(v) for v in roi_frames.shape[1:]),
 	}
@@ -122,16 +122,15 @@ def calculate_spatial_noise_from_frame_std(
 	if thermal_frames.ndim != 3:
 		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
 
-	y_slice, x_slice = _normalize_roi(roi, thermal_frames.shape[1:])
-	roi_frames = thermal_frames[:, y_slice, x_slice]
+	y_slice, x_slice = _normalize_roi(roi, thermal_frames.shape[1:]) 
+	roi_frames = thermal_frames[:, y_slice, x_slice] # Apply ROI to all frames (if None use whole image)
 
-	frame_spatial_std = roi_frames.std(axis=(1, 2), ddof=ddof)
+	frame_spatial_std = roi_frames.std(axis=(1, 2), ddof=ddof) # Std dev across pixels for each frame
 	spatial_noise = float(frame_spatial_std.mean())
 
 	return {
 		"spatial_noise_c": spatial_noise,
 		"spatial_noise_mk": float(spatial_noise * 1000.0),
-		"frame_std_mean_c": spatial_noise,
 		"frame_std_std_c": float(frame_spatial_std.std(ddof=ddof)),
 		"frame_count": int(thermal_frames.shape[0]),
 		"roi_shape": tuple(int(v) for v in roi_frames.shape[1:]),
@@ -144,7 +143,7 @@ def calculate_neighbor_temporal_correlation(
 	ddof: int = 1,
 ) -> dict[str, object]:
 	"""
-	Calculate whether temporal noise in neighboring pixels is correlated.
+	Calculate whether temporal noise in neighboring pixels is correlated (Pearson correlation).
 
 	For each pixel, compute its temporal residuals by subtracting the per-pixel
 	mean over time. Then compute the Pearson correlation with the four direct
@@ -155,34 +154,35 @@ def calculate_neighbor_temporal_correlation(
 		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
 
 	y_slice, x_slice = _normalize_roi(roi, thermal_frames.shape[1:])
-	roi_frames = thermal_frames[:, y_slice, x_slice]
-	pixel_mean = roi_frames.mean(axis=0)
-	residuals = roi_frames - pixel_mean
+	roi_frames = thermal_frames[:, y_slice, x_slice] # Apply ROI to all frames (if None use whole image)
 
 	height, width = roi_frames.shape[1:]
 	corr_sum = np.zeros((height, width), dtype=np.float32)
 	corr_count = np.zeros((height, width), dtype=np.int32)
 
 	def _pairwise_correlation(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+		"""
+		Pairwise Pearson correlation computed over time
+		"""
 		a_centered = a - a.mean(axis=0)
 		b_centered = b - b.mean(axis=0)
-		cov = np.mean(a_centered * b_centered, axis=0)
+		cov = np.mean(a_centered * b_centered, axis=0) # covariance (how much vary together)
 		std_a = a_centered.std(axis=0, ddof=ddof)
 		std_b = b_centered.std(axis=0, ddof=ddof)
-		denom = std_a * std_b
+		denom = std_a * std_b # variability of each pixel's noise (how much vary individually)
 		corr = np.zeros_like(cov, dtype=np.float32)
 		np.divide(cov, denom, out=corr, where=denom > 0)
 		return corr
 
 	if height > 1:
-		vertical_corr = _pairwise_correlation(residuals[:, :-1, :], residuals[:, 1:, :])
+		vertical_corr = _pairwise_correlation(roi_frames[:, :-1, :], roi_frames[:, 1:, :])
 		corr_sum[:-1, :] += vertical_corr
 		corr_sum[1:, :] += vertical_corr
 		corr_count[:-1, :] += 1
 		corr_count[1:, :] += 1
 
 	if width > 1:
-		horizontal_corr = _pairwise_correlation(residuals[:, :, :-1], residuals[:, :, 1:])
+		horizontal_corr = _pairwise_correlation(roi_frames[:, :, :-1], roi_frames[:, :, 1:])
 		corr_sum[:, :-1] += horizontal_corr
 		corr_sum[:, 1:] += horizontal_corr
 		corr_count[:, :-1] += 1
@@ -270,7 +270,7 @@ def plot_single_frame_heatmap(
 
 def plot_neighbor_correlation_heatmap(
 	neighbor_corr_map: np.ndarray,
-	title: str = "Spatial Correlation of Temporal Noise",
+	title: str = "Spatial Correlation of Temporal Noise (how similar are neighboring pixels' noise patterns over time?)",
 ) -> None:
 	"""Plot a heatmap of average correlation with neighboring pixels."""
 	neighbor_corr_map = np.asarray(neighbor_corr_map, dtype=np.float32)
@@ -307,8 +307,7 @@ def format_spatial_noise_result(result: dict[str, float | int | tuple[int, int]]
 	"""Format a spatial-noise result dictionary for human-readable output."""
 	return (
 		f"Spatial noise (Average over all frames): {result['spatial_noise_c']:.6f} °C ({result['spatial_noise_mk']:.2f} mK)\n"
-		f"Per-frame std mean: {result['frame_std_mean_c']:.6f} °C\n"
-		f"Per-frame std std: {result['frame_std_std_c']:.6f} °C\n"
+		f"Per-frame std std (so std of spatial noise): {result['frame_std_std_c']:.6f} °C\n"
 		f"Frames: {result['frame_count']}\n"
 		f"ROI shape: {result['roi_shape']}"
 	)
@@ -328,7 +327,8 @@ def format_neighbor_correlation_result(result: dict[str, object]) -> str:
 
 def main() -> None:
 	path = Path("data/infratec_mwir/Black_body_Ascii")
-	#path = Path("data/infratec_mwir/Julian_31_03_1_Ascii")
+	#path = Path("/mnt/wwn-0x50000398325009f6-part1/Test_NETD_Ascii")
+    
 	recursive = False
 	roi: tuple[int, int, int, int] | None = None # If None, whole image is used 
 	plot_histogram = True
@@ -341,13 +341,16 @@ def main() -> None:
 	else:
 		filepaths = [path]
 
+	# Calculate NETD
 	thermal_frames = load_thermal_frames(filepaths)
 	result = calculate_netd_from_pixelwise_std(thermal_frames, roi=roi)
 	print(format_netd_result(result))
 
+	# Calculate spatial noise (how much differs pixel values in one frame)
 	spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames, roi=roi)
 	print(format_spatial_noise_result(spatial_noise_result))
 
+	# Calculate how much temporal noise is correlated between neighboring pixels
 	neighbor_correlation_result = calculate_neighbor_temporal_correlation(thermal_frames, roi=roi)
 	print(format_neighbor_correlation_result(neighbor_correlation_result))
 
