@@ -108,6 +108,49 @@ def _normalize_roi(roi: tuple[int, int, int, int] | None, shape: tuple[int, int]
 	return slice(y_min, y_max + 1), slice(x_min, x_max + 1)
 
 
+def _get_colormap_code(colormap: Literal["inferno", "turbo", "hot"]) -> int:
+	"""Map colormap name to OpenCV colormap code."""
+	return {
+		"inferno": cv2.COLORMAP_INFERNO,
+		"turbo": cv2.COLORMAP_TURBO,
+		"hot": cv2.COLORMAP_HOT,
+	}[colormap]
+
+
+def select_roi_on_first_frame(
+	thermal_frames: np.ndarray,
+	normalization: Literal["global", "per-frame"] = "global",
+	colormap: Literal["inferno", "turbo", "hot"] = "inferno",
+	window_name: str = "Select ROI (press ENTER to confirm)",
+) -> tuple[int, int, int, int]:
+	"""Interactively select ROI on the first frame and return `(x_min, x_max, y_min, y_max)`."""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected shape (n_frames, height, width), got {thermal_frames.shape}")
+
+	frame = thermal_frames[0]
+	if normalization == "global":
+		vmin = float(np.nanmin(thermal_frames))
+		vmax = float(np.nanmax(thermal_frames))
+	else:
+		vmin = float(np.nanmin(frame))
+		vmax = float(np.nanmax(frame))
+
+	denominator = max(vmax - vmin, 1e-8)
+	normalized = (frame - vmin) / denominator
+	gray_u8 = np.clip(normalized * 255.0, 0, 255).astype(np.uint8)
+	colored = cv2.applyColorMap(gray_u8, _get_colormap_code(colormap))
+
+	roi = cv2.selectROI(window_name, colored, showCrosshair=True, fromCenter=False)
+	cv2.destroyWindow(window_name)
+
+	x, y, w, h = [int(v) for v in roi]
+	if w <= 0 or h <= 0:
+		raise ValueError("ROI selection cancelled or empty. Please select a valid ROI.")
+
+	return x, x + w - 1, y, y + h - 1
+
+
 def extract_thermal_signal_over_time(
 	thermal_frames: np.ndarray,
 	roi: tuple[int, int, int, int] | None = None,
@@ -388,6 +431,9 @@ def create_video_from_thermal_frames(
 	fps: float = 100.0,
 	normalization: Literal["global", "per-frame"] = "global",
 	colormap: Literal["inferno", "turbo", "hot"] = "inferno",
+	roi: tuple[int, int, int, int] | None = None,
+	roi_color_bgr: tuple[int, int, int] = (0, 255, 255),
+	roi_thickness: int = 2,
 ) -> Path:
 	"""Create an MP4 video from thermal frames stored in a NumPy array."""
 	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
@@ -395,15 +441,13 @@ def create_video_from_thermal_frames(
 		raise ValueError(f"Expected shape (n_frames, height, width), got {thermal_frames.shape}")
 	if fps <= 0:
 		raise ValueError(f"fps must be > 0, got {fps}")
+	if roi is not None:
+		_normalize_roi(roi, thermal_frames.shape[1:])
 
 	output_path = Path(output_path)
 	output_path.parent.mkdir(parents=True, exist_ok=True)
 
-	colormap_code = {
-		"inferno": cv2.COLORMAP_INFERNO,
-		"turbo": cv2.COLORMAP_TURBO,
-		"hot": cv2.COLORMAP_HOT,
-	}[colormap]
+	colormap_code = _get_colormap_code(colormap)
 
 	frame_count, height, width = thermal_frames.shape
 	fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -429,6 +473,9 @@ def create_video_from_thermal_frames(
 
 		gray_u8 = np.clip(normalized * 255.0, 0, 255).astype(np.uint8)
 		colored = cv2.applyColorMap(gray_u8, colormap_code)
+		if roi is not None:
+			x_min, x_max, y_min, y_max = roi
+			cv2.rectangle(colored, (x_min, y_min), (x_max, y_max), roi_color_bgr, roi_thickness)
 		writer.write(colored)
 
 	writer.release()
@@ -437,11 +484,11 @@ def create_video_from_thermal_frames(
 
 
 def main() -> None:
-	asc_directory = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii/")
-	cache_path = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii.npy")
-	ground_truth_path = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_1/opensignals_0007800F7623_2026-03-31_16-24-55.npz")
-	ground_truth_txt_path = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_1/opensignals_0007800F7623_2026-03-31_16-24-55.txt")
-	offset_ground_truth_seconds = 110.1
+	asc_directory = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii/")
+	cache_path = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii.npy")
+	ground_truth_path = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.npz")
+	ground_truth_txt_path = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.txt")
+	offset_ground_truth_seconds = 14.25 #110.1
 	recording_length_seconds = 60.0
 	ground_truth__fps = 1000.0
 	max_fft_frequency_hz = 5.0
@@ -449,13 +496,14 @@ def main() -> None:
 	recursive = False
 	overwrite_cache = False
 	build_cache_if_missing = False
-	create_video = False
+	create_video = True
 	fps: float | None = 100.0
-	video_output_path = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii.mp4")
+	video_output_path = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii.mp4")
 	plot_bandpass_filtered_signal = True
 	bandpass_lowcut_hz = 0.5
 	bandpass_highcut_hz = 3.0
 	bandpass_order = 4
+	select_roi_on_first_frame_enabled = True
 
 	roi: tuple[int, int, int, int] | None = None
 	reducer: Literal["mean", "median"] = "mean"
@@ -472,6 +520,14 @@ def main() -> None:
 	frames = load_thermal_cache_npy(cache_path, mmap_mode="r")
 	print(f"Loaded cached frames with shape: {frames.shape}")
 
+	if select_roi_on_first_frame_enabled:
+		roi = select_roi_on_first_frame(
+			frames,
+			normalization="global",
+			colormap="inferno",
+		)
+		print(f"Selected ROI (x_min, x_max, y_min, y_max): {roi}")
+
 	if create_video:
 		create_video_from_thermal_frames(
 			frames,
@@ -479,6 +535,7 @@ def main() -> None:
 			fps=fps,
 			normalization="global",
 			colormap="inferno",
+			roi=roi,
 		)
 
 	signal = extract_thermal_signal_over_time(frames, roi=roi, reducer=reducer)
@@ -512,6 +569,15 @@ def main() -> None:
 		thermal_title="Thermal Signal (Raw)",
 	)
 
+	plot_fft_thermal_and_ground_truth(
+		thermal_signal=signal,
+		thermal_fps=fps,
+		ground_truth_signal=ground_truth_signal,
+		ground_truth_fps=ground_truth__fps,
+		ground_truth_label=selected_ground_truth_key,
+		max_frequency_hz=max_fft_frequency_hz,
+	)
+
 	if plot_bandpass_filtered_signal:
 		filtered_signal = apply_bandpass_filter(
 			signal=signal,
@@ -537,19 +603,22 @@ def main() -> None:
 			),
 		)
 
-	plot_fft_thermal_and_ground_truth(
-		thermal_signal=signal,
-		thermal_fps=fps,
-		ground_truth_signal=ground_truth_signal,
-		ground_truth_fps=ground_truth__fps,
-		ground_truth_label=selected_ground_truth_key,
-		max_frequency_hz=max_fft_frequency_hz,
-	)
+		plot_fft_thermal_and_ground_truth(
+			thermal_signal=filtered_signal,
+			thermal_fps=fps,
+			ground_truth_signal=ground_truth_signal,
+			ground_truth_fps=ground_truth__fps,
+			ground_truth_label=selected_ground_truth_key,
+			max_frequency_hz=max_fft_frequency_hz,
+		)
+
+	
 
 
 if __name__ == "__main__":
 	main()
 
 
-#TODO print ground truth correctly - look trhough code
-#TODO compare before and after sports (after sports ground truth is currently not correct)
+#TODO averaging to remove netd
+#TODO look at specific roi
+#TODO look at whole face
