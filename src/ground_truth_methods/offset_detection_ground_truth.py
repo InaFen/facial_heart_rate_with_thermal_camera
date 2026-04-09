@@ -9,6 +9,82 @@ DETECTION_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../
 sys.path.insert(0, DETECTION_PATH)
 
 
+def _load_opensignals_metadata_and_data_lines(file_name: str) -> tuple[dict, list[str]]:
+    """Load OpenSignals metadata and data lines from a text file."""
+    with open(file_name, 'r', encoding='utf-8') as file_handle:
+        lines = file_handle.readlines()
+
+    metadata_line = next(
+        (
+            line for line in lines
+            if line.lstrip().startswith('# {') and line.rstrip().endswith('}')
+        ),
+        None,
+    )
+    if metadata_line is None:
+        raise ValueError(f"Could not find OpenSignals JSON metadata in file: {file_name}")
+
+    metadata = json.loads(metadata_line.lstrip()[2:].strip())
+
+    end_header_index = next((index for index, line in enumerate(lines) if line.strip() == '# EndOfHeader'), None)
+    if end_header_index is None:
+        raise ValueError(f"Could not find '# EndOfHeader' marker in file: {file_name}")
+
+    data_lines = [
+        line.strip()
+        for line in lines[end_header_index + 1:]
+        if line.strip() and not line.lstrip().startswith('#')
+    ]
+    return metadata, data_lines
+
+
+def read_opensignals_txt_converted(file_name: str) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.int32], float]:
+    """Read converted OpenSignals text files with `# EndOfHeader`.
+
+    Expected rows are tab-separated and usually contain `nSeq`, `DI`, and a signal
+    column such as `CH1`.
+    """
+    metadata, data_lines = _load_opensignals_metadata_and_data_lines(file_name)
+
+    device_key = list(metadata.keys())[0]
+    device_info = metadata[device_key]
+    sampling_rate = float(device_info.get("sampling rate", 1000))
+
+    columns = device_info.get("column", ["nSeq", "DI", "CH1"])
+    if not isinstance(columns, list) or len(columns) < 3:
+        columns = ["nSeq", "DI", "CH1"]
+
+    try:
+        di_index = columns.index("DI")
+    except ValueError:
+        di_index = 1
+
+    signal_index = next(
+        (index for index, column_name in enumerate(columns) if isinstance(column_name, str) and column_name.upper().startswith("CH")),
+        2,
+    )
+
+    signal_data = []
+    button_data = []
+    for line in data_lines:
+        parts = [part for part in line.split('\t') if part != '']
+        if len(parts) <= max(di_index, signal_index):
+            parts = line.split()
+        if len(parts) <= max(di_index, signal_index):
+            continue
+
+        try:
+            button_value = int(float(parts[di_index]))
+            signal_value = float(parts[signal_index])
+        except ValueError:
+            continue
+
+        signal_data.append(signal_value)
+        button_data.append(button_value)
+
+    return np.array(signal_data, dtype=np.float64), np.array(button_data, dtype=np.int32), sampling_rate
+
+
 def read_opensignals_txt(file_name: str) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.int32], float]:
     """Read OpenSignals text file and extract ECG signal data and button pressed data.
     
@@ -71,13 +147,29 @@ def get_info_opensignals_txt(file_name: str) -> dict:
     Returns:
         dict: Dictionary containing metadata about the signal.
     """
+    return get_info_opensignals_txt_converted(file_name)
+
+
+def get_info_opensignals_txt_converted(file_name: str) -> dict:
+    """Get information from converted OpenSignals TXT files.
+
+    Supports files containing comment headers, a JSON metadata line starting
+    with `# { ... }`, and optionally `# EndOfHeader` before data rows.
+    """
     with open(file_name, 'r') as f:
         lines = f.readlines()
-    
-    # Parse header
-    header_line = lines[1]
-    header_json = header_line[2:]
-    metadata = json.loads(header_json)
+
+    metadata_line = next(
+        (
+            line for line in lines
+            if line.lstrip().startswith('# {') and line.rstrip().endswith('}')
+        ),
+        None,
+    )
+    if metadata_line is None:
+        raise ValueError(f"Could not find OpenSignals JSON metadata in file: {file_name}")
+
+    metadata = json.loads(metadata_line.lstrip()[2:].strip())
     
     device_key = list(metadata.keys())[0]
     device_info = metadata[device_key]
@@ -116,9 +208,9 @@ def save_signal_to_npz(target_path: str, filename: str, signal: npt.NDArray[np.f
 
 
 if __name__ == "__main__":
-    signal_path = "data/ground_truth/opensignals/original_signal/05032026/opensignals_0007800F80FA_2026-03-05_17-17-42.txt"
-    npz_filename = "opensignals_0007800F80FA_2026-03-05_17-17-42.npz"
-    npz_path = "data/ground_truth/opensignals/extracted_npy_files/05032026/"
+    signal_path = "data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_3/opensignals_0007800F7623_2026-03-31_16-42-26.txt"
+    npz_filename = "opensignals_0007800F7623_2026-03-31_16-42-26.npz"
+    npz_path = "data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_3/"
     
     
     # Read signal and button pressed data
