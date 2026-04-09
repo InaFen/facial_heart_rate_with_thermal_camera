@@ -18,6 +18,11 @@ import cv2
 from scipy.signal import butter, filtfilt
 
 try:
+	import mediapipe as mp
+except ImportError:  # pragma: no cover - optional dependency
+	mp = None
+
+try:
 	from .data_extraction import extract_thermal_data
 except ImportError:  # pragma: no cover - allows running the file directly
 	from data_extraction import extract_thermal_data
@@ -115,6 +120,439 @@ def _get_colormap_code(colormap: Literal["inferno", "turbo", "hot"]) -> int:
 		"turbo": cv2.COLORMAP_TURBO,
 		"hot": cv2.COLORMAP_HOT,
 	}[colormap]
+
+
+def _frame_to_detection_image(
+	frame: np.ndarray,
+	global_min: float,
+	global_max: float,
+	normalization: Literal["global", "per-frame"],
+	colormap: Literal["inferno", "turbo", "hot"],
+) -> np.ndarray:
+	"""Convert one thermal frame to a color image suitable for MediaPipe detection."""
+	if normalization == "global":
+		vmin = global_min
+		vmax = global_max
+	else:
+		vmin = float(np.nanmin(frame))
+		vmax = float(np.nanmax(frame))
+
+	denominator = max(vmax - vmin, 1e-8)
+	normalized = (frame - vmin) / denominator
+	gray_u8 = np.clip(normalized * 255.0, 0, 255).astype(np.uint8)
+	return cv2.applyColorMap(gray_u8, _get_colormap_code(colormap))
+
+
+def detect_face_rois_over_time(
+	thermal_frames: np.ndarray,
+	normalization: Literal["global", "per-frame"] = "global",
+	colormap: Literal["inferno", "turbo", "hot"] = "inferno",
+	use_ema: bool = True,
+	ema_alpha: float = 0.2,
+	flip_upside_down: bool = False,
+	min_detection_confidence: float = 0.5,
+	min_tracking_confidence: float = 0.5,
+	padding_ratio: float = 0.05,
+) -> list[tuple[int, int, int, int] | None]:
+	"""Detect a face on every frame and return a per-frame bounding-box ROI.
+
+	The ROI is derived from all FaceMesh landmarks in the frame and padded slightly
+	to make the extracted thermal signal more stable.
+	"""
+	if mp is None:
+		raise ImportError("mediapipe is required for face ROI detection but is not installed.")
+
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected shape (n_frames, height, width), got {thermal_frames.shape}")
+	if not (0.0 <= padding_ratio < 0.5):
+		raise ValueError(f"padding_ratio must be in [0.0, 0.5), got {padding_ratio}")
+	if not (0.0 < ema_alpha <= 1.0):
+		raise ValueError(f"ema_alpha must be in (0, 1], got {ema_alpha}")
+
+	frame_count, height, width = thermal_frames.shape
+	global_min = float(np.nanmin(thermal_frames))
+	global_max = float(np.nanmax(thermal_frames))
+	face_rois: list[tuple[int, int, int, int] | None] = []
+	smoothed_pts: np.ndarray | None = None
+	alpha = ema_alpha if use_ema else 1.0
+
+	with mp.solutions.face_mesh.FaceMesh(
+		max_num_faces=1,
+		refine_landmarks=True,
+		min_detection_confidence=min_detection_confidence,
+		min_tracking_confidence=min_tracking_confidence,
+	) as face_mesh:
+		for index in range(frame_count):
+			frame = thermal_frames[index]
+			frame_for_mesh = np.flipud(frame) if flip_upside_down else frame
+			detection_bgr = _frame_to_detection_image(frame_for_mesh, global_min, global_max, normalization, colormap)
+			detection_rgb = cv2.cvtColor(detection_bgr, cv2.COLOR_BGR2RGB)
+			results = face_mesh.process(detection_rgb)
+
+			if not results.multi_face_landmarks:
+				smoothed_pts = None
+				face_rois.append(None)
+				continue
+
+			landmarks = results.multi_face_landmarks[0].landmark
+			points = np.array(
+				[[int(lm.x * width), int(lm.y * height)] for lm in landmarks],
+				dtype=np.float32,
+			)
+			points[:, 0] = np.clip(points[:, 0], 0, width - 1)
+			points[:, 1] = np.clip(points[:, 1], 0, height - 1)
+
+			if smoothed_pts is None:
+				smoothed_pts = points.copy()
+			else:
+				smoothed_pts = alpha * points + (1.0 - alpha) * smoothed_pts
+
+			points_int = smoothed_pts.astype(np.int32)
+			if flip_upside_down:
+				points_int[:, 1] = (height - 1) - points_int[:, 1]
+
+			points_int[:, 0] = np.clip(points_int[:, 0], 0, width - 1)
+			points_int[:, 1] = np.clip(points_int[:, 1], 0, height - 1)
+
+			x_min = int(points_int[:, 0].min())
+			x_max = int(points_int[:, 0].max())
+			y_min = int(points_int[:, 1].min())
+			y_max = int(points_int[:, 1].max())
+
+			if x_max <= x_min or y_max <= y_min:
+				face_rois.append(None)
+				continue
+
+			pad_x = max(1, int(round((x_max - x_min) * padding_ratio)))
+			pad_y = max(1, int(round((y_max - y_min) * padding_ratio)))
+			x_min = max(0, x_min - pad_x)
+			x_max = min(width - 1, x_max + pad_x)
+			y_min = max(0, y_min - pad_y)
+			y_max = min(height - 1, y_max + pad_y)
+
+			face_rois.append((x_min, x_max, y_min, y_max))
+
+	return face_rois
+
+
+def detect_landmark_roi_masks_over_time(
+	thermal_frames: np.ndarray,
+	roi_landmarks: dict[str, list[int]],
+	normalization: Literal["global", "per-frame"] = "global",
+	colormap: Literal["inferno", "turbo", "hot"] = "inferno",
+	use_ema: bool = True,
+	ema_alpha: float = 0.2,
+	flip_upside_down: bool = False,
+	start_frame: int = 0,
+	end_frame: int | None = None,
+	min_detection_confidence: float = 0.5,
+	min_tracking_confidence: float = 0.5,
+) -> list[dict[str, np.ndarray]]:
+	"""Detect FaceMesh per frame and build ROI masks from landmark index groups."""
+	if mp is None:
+		raise ImportError("mediapipe is required for landmark ROI detection but is not installed.")
+
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected shape (n_frames, height, width), got {thermal_frames.shape}")
+	if not roi_landmarks:
+		raise ValueError("`roi_landmarks` must not be empty.")
+	if not (0.0 < ema_alpha <= 1.0):
+		raise ValueError(f"ema_alpha must be in (0, 1], got {ema_alpha}")
+	if start_frame < 0:
+		raise ValueError(f"start_frame must be >= 0, got {start_frame}")
+
+	frame_count, height, width = thermal_frames.shape
+	if end_frame is None:
+		end_frame = frame_count
+	end_frame = min(end_frame, frame_count)
+	if end_frame < start_frame:
+		raise ValueError(f"end_frame ({end_frame}) must be >= start_frame ({start_frame})")
+
+	global_min = float(np.nanmin(thermal_frames))
+	global_max = float(np.nanmax(thermal_frames))
+	roi_names = list(roi_landmarks.keys())
+	roi_mask_log: list[dict[str, np.ndarray]] = []
+	for _ in range(frame_count):
+		roi_mask_log.append({name: np.zeros((height, width), dtype=np.uint8) for name in roi_names})
+
+	smoothed_pts: np.ndarray | None = None
+	alpha = ema_alpha if use_ema else 1.0
+
+	with mp.solutions.face_mesh.FaceMesh(
+		max_num_faces=1,
+		refine_landmarks=True,
+		min_detection_confidence=min_detection_confidence,
+		min_tracking_confidence=min_tracking_confidence,
+	) as face_mesh:
+		for frame_idx in range(start_frame, end_frame):
+			frame = thermal_frames[frame_idx]
+			frame_for_mesh = np.flipud(frame) if flip_upside_down else frame
+			detection_bgr = _frame_to_detection_image(frame_for_mesh, global_min, global_max, normalization, colormap)
+			detection_rgb = cv2.cvtColor(detection_bgr, cv2.COLOR_BGR2RGB)
+			results = face_mesh.process(detection_rgb)
+
+			if not results.multi_face_landmarks:
+				smoothed_pts = None
+				continue
+
+			landmarks = results.multi_face_landmarks[0].landmark
+			points = np.array(
+				[[int(lm.x * width), int(lm.y * height)] for lm in landmarks],
+				dtype=np.float32,
+			)
+			points[:, 0] = np.clip(points[:, 0], 0, width - 1)
+			points[:, 1] = np.clip(points[:, 1], 0, height - 1)
+
+			if smoothed_pts is None:
+				smoothed_pts = points.copy()
+			else:
+				smoothed_pts = alpha * points + (1.0 - alpha) * smoothed_pts
+
+			points_int = smoothed_pts.astype(np.int32)
+			if flip_upside_down:
+				points_int[:, 1] = (height - 1) - points_int[:, 1]
+
+			points_int[:, 0] = np.clip(points_int[:, 0], 0, width - 1)
+			points_int[:, 1] = np.clip(points_int[:, 1], 0, height - 1)
+
+			for roi_name, indices in roi_landmarks.items():
+				if not indices:
+					continue
+
+				index_array = np.asarray(indices, dtype=np.int32)
+				if np.any(index_array < 0) or np.any(index_array >= points_int.shape[0]):
+					raise ValueError(
+						f"ROI '{roi_name}' contains invalid landmark index. "
+						f"Valid range is [0, {points_int.shape[0] - 1}]"
+					)
+
+				roi_poly = points_int[index_array]
+				mask = np.zeros((height, width), dtype=np.uint8)
+
+				if roi_poly.shape[0] >= 3:
+					cv2.fillPoly(mask, [roi_poly], 255)
+				elif roi_poly.shape[0] == 2:
+					cv2.line(mask, tuple(roi_poly[0]), tuple(roi_poly[1]), 255, thickness=1)
+				else:
+					x, y = roi_poly[0]
+					mask[int(y), int(x)] = 255
+
+				roi_mask_log[frame_idx][roi_name] = mask
+
+	return roi_mask_log
+
+
+def _fill_missing_signal(
+	signal: np.ndarray,
+	fill_missing: Literal["nan", "interpolate", "previous"],
+	error_message: str,
+) -> np.ndarray:
+	"""Fill missing values in a 1D signal represented by NaNs."""
+	signal = np.asarray(signal, dtype=np.float32)
+	if np.all(np.isnan(signal)):
+		raise ValueError(error_message)
+
+	if fill_missing == "nan":
+		return signal
+
+	valid_indices = np.flatnonzero(~np.isnan(signal))
+	if valid_indices.size == 0:
+		raise ValueError(error_message)
+
+	if fill_missing == "previous":
+		filled = signal.copy()
+		last_value = np.nan
+		for index, value in enumerate(filled):
+			if np.isnan(value):
+				filled[index] = last_value
+			else:
+				last_value = value
+
+		if np.isnan(filled[0]):
+			first_valid = valid_indices[0]
+			filled[:first_valid] = signal[first_valid]
+		return filled
+
+	if fill_missing != "interpolate":
+		raise ValueError(f"Unsupported fill_missing mode: {fill_missing}")
+
+	filled = signal.copy()
+	missing = np.isnan(filled)
+	if missing.any():
+		filled[missing] = np.interp(np.flatnonzero(missing), valid_indices, filled[valid_indices])
+	return filled
+
+
+def extract_signal_from_roi_mask_log(
+	thermal_frames: np.ndarray,
+	roi_mask_log: list[dict[str, np.ndarray]],
+	roi_name: str,
+	reducer: Literal["mean", "median"] = "mean",
+	fill_missing: Literal["nan", "interpolate", "previous"] = "interpolate",
+) -> np.ndarray:
+	"""Extract one signal from one named ROI in a per-frame ROI-mask log."""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected shape (n_frames, height, width), got {thermal_frames.shape}")
+	if len(roi_mask_log) != thermal_frames.shape[0]:
+		raise ValueError("`roi_mask_log` must have the same length as `thermal_frames`.")
+
+	values: list[float] = []
+	for frame, frame_masks in zip(thermal_frames, roi_mask_log):
+		mask = frame_masks.get(roi_name)
+		if mask is None or mask.shape != frame.shape:
+			values.append(float("nan"))
+			continue
+
+		ys, xs = np.where(mask == 255)
+		if ys.size == 0:
+			values.append(float("nan"))
+			continue
+
+		roi_values = frame[ys, xs]
+		if reducer == "mean":
+			values.append(float(np.nanmean(roi_values)))
+		elif reducer == "median":
+			values.append(float(np.nanmedian(roi_values)))
+		else:
+			raise ValueError(f"Unsupported reducer: {reducer}")
+
+	signal = np.asarray(values, dtype=np.float32)
+	return _fill_missing_signal(
+		signal,
+		fill_missing=fill_missing,
+		error_message=f"No valid landmark ROI values were found for ROI '{roi_name}'.",
+	)
+
+
+def extract_signal_from_roi_sequence(
+	thermal_frames: np.ndarray,
+	roi_sequence: list[tuple[int, int, int, int] | None],
+	reducer: Literal["mean", "median"] = "mean",
+	fill_missing: Literal["nan", "interpolate", "previous"] = "interpolate",
+) -> np.ndarray:
+	"""Extract one thermal value per frame from a per-frame ROI sequence."""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected shape (n_frames, height, width), got {thermal_frames.shape}")
+	if len(thermal_frames) != len(roi_sequence):
+		raise ValueError("`roi_sequence` must have the same length as `thermal_frames`.")
+
+	values: list[float] = []
+	for frame, roi in zip(thermal_frames, roi_sequence):
+		if roi is None:
+			values.append(float("nan"))
+			continue
+
+		y_slice, x_slice = _normalize_roi(roi, frame.shape)
+		roi_frame = frame[y_slice, x_slice]
+		if roi_frame.size == 0:
+			values.append(float("nan"))
+			continue
+
+		if reducer == "mean":
+			values.append(float(np.nanmean(roi_frame)))
+		elif reducer == "median":
+			values.append(float(np.nanmedian(roi_frame)))
+		else:
+			raise ValueError(f"Unsupported reducer: {reducer}")
+
+	signal = np.asarray(values, dtype=np.float32)
+	return _fill_missing_signal(
+		signal,
+		fill_missing=fill_missing,
+		error_message="No valid face ROIs were detected in any frame.",
+	)
+
+
+def roi_mask_log_to_bboxes(
+	roi_mask_log: list[dict[str, np.ndarray]],
+	roi_name: str,
+) -> list[tuple[int, int, int, int] | None]:
+	"""Convert per-frame ROI masks to per-frame bounding boxes for visualization."""
+	bboxes: list[tuple[int, int, int, int] | None] = []
+	for frame_masks in roi_mask_log:
+		mask = frame_masks.get(roi_name)
+		if mask is None:
+			bboxes.append(None)
+			continue
+
+		ys, xs = np.where(mask == 255)
+		if ys.size == 0:
+			bboxes.append(None)
+			continue
+
+		bboxes.append((int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())))
+
+	return bboxes
+
+
+def extract_landmark_roi_signal_over_time(
+	thermal_frames: np.ndarray,
+	roi_landmarks: dict[str, list[int]],
+	roi_name: str,
+	normalization: Literal["global", "per-frame"] = "global",
+	colormap: Literal["inferno", "turbo", "hot"] = "inferno",
+	reducer: Literal["mean", "median"] = "mean",
+	fill_missing: Literal["nan", "interpolate", "previous"] = "interpolate",
+	use_ema: bool = True,
+	ema_alpha: float = 0.2,
+	flip_upside_down: bool = False,
+	start_frame: int = 0,
+	end_frame: int | None = None,
+) -> tuple[np.ndarray, list[dict[str, np.ndarray]]]:
+	"""Extract thermal signal from a landmark-defined ROI tracked per frame with FaceMesh."""
+	roi_mask_log = detect_landmark_roi_masks_over_time(
+		thermal_frames=thermal_frames,
+		roi_landmarks=roi_landmarks,
+		normalization=normalization,
+		colormap=colormap,
+		use_ema=use_ema,
+		ema_alpha=ema_alpha,
+		flip_upside_down=flip_upside_down,
+		start_frame=start_frame,
+		end_frame=end_frame,
+	)
+	signal = extract_signal_from_roi_mask_log(
+		thermal_frames=thermal_frames,
+		roi_mask_log=roi_mask_log,
+		roi_name=roi_name,
+		reducer=reducer,
+		fill_missing=fill_missing,
+	)
+	return signal, roi_mask_log
+
+
+def extract_face_signal_over_time(
+	thermal_frames: np.ndarray,
+	normalization: Literal["global", "per-frame"] = "global",
+	colormap: Literal["inferno", "turbo", "hot"] = "inferno",
+	reducer: Literal["mean", "median"] = "mean",
+	fill_missing: Literal["nan", "interpolate", "previous"] = "interpolate",
+	padding_ratio: float = 0.05,
+	use_ema: bool = True,
+	ema_alpha: float = 0.2,
+	flip_upside_down: bool = False,
+) -> tuple[np.ndarray, list[tuple[int, int, int, int] | None]]:
+	"""Detect the face in every frame and return the face-based thermal signal."""
+	face_rois = detect_face_rois_over_time(
+		thermal_frames,
+		normalization=normalization,
+		colormap=colormap,
+		use_ema=use_ema,
+		ema_alpha=ema_alpha,
+		flip_upside_down=flip_upside_down,
+		padding_ratio=padding_ratio,
+	)
+	signal = extract_signal_from_roi_sequence(
+		thermal_frames,
+		face_rois,
+		reducer=reducer,
+		fill_missing=fill_missing,
+	)
+	return signal, face_rois
 
 
 def select_roi_on_first_frame(
@@ -432,6 +870,8 @@ def create_video_from_thermal_frames(
 	normalization: Literal["global", "per-frame"] = "global",
 	colormap: Literal["inferno", "turbo", "hot"] = "inferno",
 	roi: tuple[int, int, int, int] | None = None,
+	roi_per_frame: list[tuple[int, int, int, int] | None] | None = None,
+	roi_mask_per_frame: list[np.ndarray | None] | None = None,
 	roi_color_bgr: tuple[int, int, int] = (0, 255, 255),
 	roi_thickness: int = 2,
 ) -> Path:
@@ -443,6 +883,10 @@ def create_video_from_thermal_frames(
 		raise ValueError(f"fps must be > 0, got {fps}")
 	if roi is not None:
 		_normalize_roi(roi, thermal_frames.shape[1:])
+	if roi_per_frame is not None and len(roi_per_frame) != thermal_frames.shape[0]:
+		raise ValueError("`roi_per_frame` must have the same length as `thermal_frames`.")
+	if roi_mask_per_frame is not None and len(roi_mask_per_frame) != thermal_frames.shape[0]:
+		raise ValueError("`roi_mask_per_frame` must have the same length as `thermal_frames`.")
 
 	output_path = Path(output_path)
 	output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -473,8 +917,21 @@ def create_video_from_thermal_frames(
 
 		gray_u8 = np.clip(normalized * 255.0, 0, 255).astype(np.uint8)
 		colored = cv2.applyColorMap(gray_u8, colormap_code)
-		if roi is not None:
-			x_min, x_max, y_min, y_max = roi
+
+		frame_mask = None if roi_mask_per_frame is None else roi_mask_per_frame[index]
+		if frame_mask is not None:
+			if frame_mask.shape != (height, width):
+				raise ValueError(
+					f"ROI mask at frame {index} has shape {frame_mask.shape}, expected {(height, width)}"
+				)
+			mask_u8 = (frame_mask > 0).astype(np.uint8) * 255
+			contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+			if contours:
+				cv2.drawContours(colored, contours, -1, roi_color_bgr, roi_thickness)
+
+		frame_roi = roi_per_frame[index] if roi_per_frame is not None else roi
+		if frame_mask is None and frame_roi is not None:
+			x_min, x_max, y_min, y_max = frame_roi
 			cv2.rectangle(colored, (x_min, y_min), (x_max, y_max), roi_color_bgr, roi_thickness)
 		writer.write(colored)
 
@@ -484,11 +941,63 @@ def create_video_from_thermal_frames(
 
 
 def main() -> None:
-	asc_directory = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii/")
-	cache_path = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii.npy")
-	ground_truth_path = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.npz")
-	ground_truth_txt_path = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.txt")
-	offset_ground_truth_seconds = 14.25 #110.1
+	# Temple before sport
+	asc_directory_1 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii/")
+	cache_path_1 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii.npy")
+	ground_truth_path_1 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_1/opensignals_0007800F7623_2026-03-31_16-24-55.npz")
+	ground_truth_txt_path_1 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_1/opensignals_0007800F7623_2026-03-31_16-24-55.txt")
+	offset_ground_truth_seconds_1 = 110.1
+	video_output_path_1 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii.mp4")
+	
+	# Temple after sport
+	asc_directory_4 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii/")
+	cache_path_4 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii.npy")
+	ground_truth_path_4 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.npz")
+	ground_truth_txt_path_4 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.txt")
+	offset_ground_truth_seconds_4 = 14.25
+	video_output_path_4 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii.mp4")
+	
+	# Face befor sport
+	asc_directory_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii/")
+	cache_path_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii.npy")
+	ground_truth_path_2 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_2/opensignals_0007800F7623_2026-03-31_16-37-56.npz")
+	ground_truth_txt_path_2 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_2/opensignals_0007800F7623_2026-03-31_16-37-56.txt")
+	offset_ground_truth_seconds_2 = 14.25 #	# TODO adapt
+	video_output_path_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii.mp4")
+	
+	# Face after sport
+	asc_directory_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii/")
+	cache_path_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii.npy")
+	# TODO adapt
+	ground_truth_path_3 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.npz")
+	ground_truth_txt_path_3 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.txt")
+	offset_ground_truth_seconds_3 = 14.25 #110.1
+	video_output_path_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii.mp4")
+
+	recording_number = 3
+
+	if recording_number == 4:
+		asc_directory = asc_directory_4
+		cache_path = cache_path_4
+		ground_truth_path = ground_truth_path_4
+		ground_truth_txt_path = ground_truth_txt_path_4
+		offset_ground_truth_seconds = offset_ground_truth_seconds_4
+		video_output_path = video_output_path_4
+	elif recording_number == 2:
+		asc_directory = asc_directory_2
+		cache_path = cache_path_2
+		ground_truth_path = ground_truth_path_2
+		ground_truth_txt_path = ground_truth_txt_path_2
+		offset_ground_truth_seconds = offset_ground_truth_seconds_2
+		video_output_path = video_output_path_2
+	elif recording_number == 3:
+		asc_directory = asc_directory_3
+		cache_path = cache_path_3
+		ground_truth_path = ground_truth_path_3
+		ground_truth_txt_path = ground_truth_txt_path_3
+		offset_ground_truth_seconds = offset_ground_truth_seconds_3
+		video_output_path = video_output_path_3
+
 	recording_length_seconds = 60.0
 	ground_truth__fps = 1000.0
 	max_fft_frequency_hz = 5.0
@@ -498,14 +1007,26 @@ def main() -> None:
 	build_cache_if_missing = False
 	create_video = True
 	fps: float | None = 100.0
-	video_output_path = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii.mp4")
-	plot_bandpass_filtered_signal = True
+	plot_bandpass_filtered_signal = False
 	bandpass_lowcut_hz = 0.5
 	bandpass_highcut_hz = 3.0
 	bandpass_order = 4
-	select_roi_on_first_frame_enabled = True
+	select_roi_on_first_frame_enabled = False
+	use_mediapipe_landmark_roi_detection = True
+	use_mediapipe_face_roi_detection = True
+	face_roi_padding_ratio = 0.05
+	use_landmark_ema = True
+	landmark_ema_alpha = 0.2
+	landmark_flip_upside_down = False
+	roi_landmarks: dict[str, list[int]] = {
+		"whole_face": [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109],
+		"forehead": [10, 338, 297, 332, 284, 251, 389, 368, 300, 293, 334, 296, 336, 9, 107, 66, 105, 63, 71, 162, 21, 54, 103, 67, 109]
+	}
+	selected_landmark_roi_name = "whole_face"
 
 	roi: tuple[int, int, int, int] | None = None
+	face_rois: list[tuple[int, int, int, int] | None] | None = None
+	selected_roi_masks_per_frame: list[np.ndarray | None] | None = None
 	reducer: Literal["mean", "median"] = "mean"
 
 	if build_cache_if_missing and not cache_path.exists():
@@ -528,6 +1049,41 @@ def main() -> None:
 		)
 		print(f"Selected ROI (x_min, x_max, y_min, y_max): {roi}")
 
+	if use_mediapipe_landmark_roi_detection:
+		signal, roi_mask_log = extract_landmark_roi_signal_over_time(
+			thermal_frames=frames,
+			roi_landmarks=roi_landmarks,
+			roi_name=selected_landmark_roi_name,
+			normalization="global",
+			colormap="inferno",
+			reducer=reducer,
+			fill_missing="interpolate",
+			use_ema=use_landmark_ema,
+			ema_alpha=landmark_ema_alpha,
+			flip_upside_down=landmark_flip_upside_down,
+		)
+		selected_roi_masks_per_frame = [
+			frame_masks.get(selected_landmark_roi_name)
+			for frame_masks in roi_mask_log
+		]
+		face_rois = roi_mask_log_to_bboxes(roi_mask_log, selected_landmark_roi_name)
+		roi = None
+	elif use_mediapipe_face_roi_detection:
+		signal, face_rois = extract_face_signal_over_time(
+			frames,
+			normalization="global",
+			colormap="inferno",
+			reducer=reducer,
+			fill_missing="interpolate",
+			padding_ratio=face_roi_padding_ratio,
+			use_ema=use_landmark_ema,
+			ema_alpha=landmark_ema_alpha,
+			flip_upside_down=landmark_flip_upside_down,
+		)
+		roi = None
+	else:
+		signal = extract_thermal_signal_over_time(frames, roi=roi, reducer=reducer)
+
 	if create_video:
 		create_video_from_thermal_frames(
 			frames,
@@ -536,9 +1092,9 @@ def main() -> None:
 			normalization="global",
 			colormap="inferno",
 			roi=roi,
+			roi_per_frame=face_rois,
+			roi_mask_per_frame=selected_roi_masks_per_frame,
 		)
-
-	signal = extract_thermal_signal_over_time(frames, roi=roi, reducer=reducer)
 	if fps is None or fps <= 0:
 		raise ValueError("`fps` must be > 0 for linked thermal/ground-truth plotting.")
 
@@ -617,8 +1173,3 @@ def main() -> None:
 
 if __name__ == "__main__":
 	main()
-
-
-#TODO averaging to remove netd
-#TODO look at specific roi
-#TODO look at whole face
