@@ -23,9 +23,9 @@ from src.approaches.yang_et_al.utils_random_baseline import run_random_baseline
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 
-CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.json"
+CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.yaml"
 
-configs = Config.from_json(CONFIGS_PATH)
+configs = Config.from_yaml(CONFIGS_PATH)
 show_random_plots = bool(configs.plot_steps)
 
 run_random_parallel = False
@@ -33,7 +33,7 @@ random_seed = 42
 
 #IMPORTANT: Each ROI represents one building block in the graph
 
-# original pipeline for face detection
+# original pipeline for face detection # TODO
 #track_face(in_path= path_video, out_path=path_video_tracked_face)
 #filter_out_pixels_below_threshold(video_path=path_video, output_path=path_video_thresholded_pixel, threshold_value=160)
 
