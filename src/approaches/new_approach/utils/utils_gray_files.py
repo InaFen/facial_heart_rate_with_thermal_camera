@@ -1,8 +1,9 @@
 
 import os
 
-def sort_grayfiles_with_interpolations(path_gray_images: str):
+def sort_grayfiles_with_interpolations(path_gray_images: str) -> (list[int], list[str]):
     """Takes a directory with .gray files named with timestamps and returns a sorted list of filenames.
+    Sorts according to output format of the get_consistent_fps_for_gray_images.py script, which includes "_interpolated" files.
     Parameters:
         path_gray_images: directory containing .gray files
     Returns:
