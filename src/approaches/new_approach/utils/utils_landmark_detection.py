@@ -373,6 +373,63 @@ def load_gray_frame(filepath: str, width: int = 160, height: int = 122, drop_tel
     return frame
 
 
+def split_manual_roi_into_subrois(
+    roi_pixel_log: List[Dict[str, np.ndarray]],
+    roi_name: str,
+    grid_rows: int,
+    grid_cols: int,
+) -> tuple[List[Dict[str, np.ndarray]], List[str]]:
+    """Split a single manual ROI into a grid of sub-ROIs based on the bounding box of the original ROI mask.
+    Parameters:
+        roi_pixel_log: List of dictionaries containing ROI masks for each frame.
+        roi_name: The name of the ROI to split (should match the key in the dictionaries).
+        grid_rows: Number of rows in the sub-ROI grid.
+        grid_cols: Number of columns in the sub-ROI grid.
+        Returns:
+            Tuple of (new_log, subroi_names) where:
+            - new_log: List of dictionaries containing sub-ROI masks for each frame.
+            - subroi_names: List of names for the sub-ROIs.
+    """
+    if grid_rows <= 0 or grid_cols <= 0:
+        raise ValueError("manual_roi_subroi_grid must contain positive integers")
+
+    subroi_names = [f"{roi_name}_r{row + 1}c{col + 1}" for row in range(grid_rows) for col in range(grid_cols)]
+    new_log: List[Dict[str, np.ndarray]] = []
+
+    for frame_dict in roi_pixel_log:
+        mask = frame_dict.get(roi_name)
+        if mask is None:
+            new_log.append(frame_dict)
+            continue
+
+        ys, xs = np.where(mask > 0)
+        if ys.size == 0 or xs.size == 0:
+            empty_frame = {name: np.zeros_like(mask) for name in subroi_names}
+            new_log.append(empty_frame)
+            continue
+
+        y_min, y_max = int(ys.min()), int(ys.max())
+        x_min, x_max = int(xs.min()), int(xs.max())
+
+        y_edges = np.linspace(y_min, y_max + 1, grid_rows + 1).astype(int)
+        x_edges = np.linspace(x_min, x_max + 1, grid_cols + 1).astype(int)
+
+        frame_subrois: Dict[str, np.ndarray] = {}
+        name_idx = 0
+        for row in range(grid_rows):
+            for col in range(grid_cols):
+                y0, y1 = y_edges[row], y_edges[row + 1]
+                x0, x1 = x_edges[col], x_edges[col + 1]
+                sub_mask = np.zeros_like(mask)
+                sub_mask[y0:y1, x0:x1] = mask[y0:y1, x0:x1]
+                frame_subrois[subroi_names[name_idx]] = sub_mask
+                name_idx += 1
+
+        new_log.append(frame_subrois)
+
+    return new_log, subroi_names
+
+
 def create_manual_roi_mask_log_from_gray_frames(
     gray_dir: str,
     roi_name: str = "manual_roi",

@@ -13,58 +13,17 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     create_manual_roi_mask_log_from_gray_frames,
     load_gray_frame,
     write_roi_tracked_video_from_gray_frames,
+    split_manual_roi_into_subrois
 )
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
 
-def split_manual_roi_into_subrois(
-    roi_pixel_log: List[Dict[str, np.ndarray]],
-    roi_name: str,
-    grid_rows: int,
-    grid_cols: int,
-) -> tuple[List[Dict[str, np.ndarray]], List[str]]:
-    if grid_rows <= 0 or grid_cols <= 0:
-        raise ValueError("manual_roi_subroi_grid must contain positive integers")
-
-    subroi_names = [f"{roi_name}_r{row + 1}c{col + 1}" for row in range(grid_rows) for col in range(grid_cols)]
-    new_log: List[Dict[str, np.ndarray]] = []
-
-    for frame_dict in roi_pixel_log:
-        mask = frame_dict.get(roi_name)
-        if mask is None:
-            new_log.append(frame_dict)
-            continue
-
-        ys, xs = np.where(mask > 0)
-        if ys.size == 0 or xs.size == 0:
-            empty_frame = {name: np.zeros_like(mask) for name in subroi_names}
-            new_log.append(empty_frame)
-            continue
-
-        y_min, y_max = int(ys.min()), int(ys.max())
-        x_min, x_max = int(xs.min()), int(xs.max())
-
-        y_edges = np.linspace(y_min, y_max + 1, grid_rows + 1).astype(int)
-        x_edges = np.linspace(x_min, x_max + 1, grid_cols + 1).astype(int)
-
-        frame_subrois: Dict[str, np.ndarray] = {}
-        name_idx = 0
-        for row in range(grid_rows):
-            for col in range(grid_cols):
-                y0, y1 = y_edges[row], y_edges[row + 1]
-                x0, x1 = x_edges[col], x_edges[col + 1]
-                sub_mask = np.zeros_like(mask)
-                sub_mask[y0:y1, x0:x1] = mask[y0:y1, x0:x1]
-                frame_subrois[subroi_names[name_idx]] = sub_mask
-                name_idx += 1
-
-        new_log.append(frame_subrois)
-
-    return new_log, subroi_names
-
 def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_files = False) -> tuple:
     """
-    Extract ROI data from thermal video and gray frames.
+    Extract ROI data from thermal video and gray frames (raw data).
+    ROI can be defined via manual user input (drawing on first frame) or via facemesh-based landmark detection.
+    The ROI masks are applied to either the video frames or the original gray frames to extract pixel data for each ROI over time.
+
     
     Returns:
         Tuple of (roi_pixel_data, roi_pixel_log) where:
