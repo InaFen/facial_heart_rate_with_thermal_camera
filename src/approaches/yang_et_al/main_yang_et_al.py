@@ -9,7 +9,7 @@ sys.path.insert(0, project_root)
 
 from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_temperature_means
 from src.approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold
-from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph_2, add_centroids_to_roi_data, denoise_via_laplacian
+from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph, add_centroids_to_roi_data, denoise_via_laplacian
 from src.approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
 from src.approaches.yang_et_al.utils_plotting import plot_signal_each_roi_seperately, plot_flattened_signal_each_roi, plot_denoised_signal_unflat, plot_original_vs_denoised, plot_principal_components_in_seperate_plots, plot_chosen_component
 from src.approaches.yang_et_al.utils_post_processing import pca, apply_butterworth_bandpass_filter, transform_flatten_signal_to_original_shape, find_most_periodic_pca_component
@@ -25,31 +25,38 @@ from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipe
 
 CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.yaml"
 
+# Get configurations
 configs = Config.from_yaml(CONFIGS_PATH)
-show_random_plots = bool(configs.plot_steps)
 
+# TODO move to configs
 run_random_parallel = False
 random_seed = 42
 
-#IMPORTANT: Each ROI represents one building block in the graph
+# IMPORTANT: Each ROI represents one building block in the graph
+# If ROIs are detected with mediapipe, they have to be set accordingly (e.g. 16 ROIs for 16 building blocks)
+# If ROI is manually defined, manual_roi_split_enabled = True so the ROI is split in sub-ROIs
 
 # original pipeline for face detection # TODO
 #track_face(in_path= path_video, out_path=path_video_tracked_face)
 #filter_out_pixels_below_threshold(video_path=path_video, output_path=path_video_thresholded_pixel, threshold_value=160)
 
-# get face with mediapipe (not original pipeline)
+# Get face with mediapipe (not original pipeline)
 roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 
 
-# Calculate centroids of each ROI in each frame
-roi_pixel_data_with_centroids = add_centroids_to_roi_data(roi_pixel_data)
+# Calculate centroids of each ROI in each frame (change in place)
+_ = add_centroids_to_roi_data(roi_pixel_data)
 
 
 # Create graph and get laplacian
+# Each block is one ROI (see information above), and features for each block include:
+# - Mean pixel value
+# - Centroid x-coordinate
+# - Centroid y-coordinate
 block_features, roi_names = build_block_features_from_roi_pixel_data(roi_pixel_data)
 
-adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_features)
-
+adjacency_matrix, laplacian = build_spatiotemporal_graph(block_features=block_features)
+# TODO double-check that everything is similar to paper
 #TODO graph creation with optimal feature metric
 
 signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
@@ -67,7 +74,7 @@ signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
 
 
 # Denoise signal via laplacian
-denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, L=laplacian)
+denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, laplacian=laplacian)
 #plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
 #plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
 
@@ -79,7 +86,7 @@ if run_random_parallel:
 		roi_names=roi_names,
 		laplacian=laplacian,
 		fps=configs.fps,
-			plot_steps=show_random_plots,
+			plot_steps=bool(configs.plot_steps),
 		random_seed=random_seed,
 	)
 
@@ -152,7 +159,7 @@ if configs.timespan_signal_to_look_at is not None:
 	plt.figure(figsize=(10, 5))
 	signal_line, = plt.plot(signal_time, selected_pca_component, label="Selected PCA component")
 	ground_truth_line, = plt.plot(ground_truth_time, ground_truth_segment, label="Ground truth", alpha=0.7)
-	if show_random_plots and random_selected_pca_component is not None:
+	if bool(configs.plot_steps) and random_selected_pca_component is not None:
 		random_time = np.arange(len(random_selected_pca_component)) / configs.fps + start_time
 		random_line, = plt.plot(random_time, random_selected_pca_component, label="Random pipeline component", alpha=0.7)
 		min_distance_random = int(0.3 * configs.fps)

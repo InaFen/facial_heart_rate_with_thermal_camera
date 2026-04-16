@@ -85,70 +85,69 @@ def build_spatiotemporal_graph(block_features, temporal_weight=0.1, sigma_spatia
     Returns: W (adjacency), L (laplacian) - which has format: [t=0 ROI0, t=0 ROI1, ..., t=0 ROI3,
     t=1 ROI0, t=1 ROI1, ..., t=1 ROI3,]
     """
-    T = len(block_features) # Number of frames
-    N = block_features[0].shape[0] # Number of blocks (= subregions)
+    # Get dimensions
+    num_frames = len(block_features) # Number of frames (T)
+    num_blocks = block_features[0].shape[0] # Number of blocks (= subregions) (N)
     D = block_features[0].shape[1] # Feature dimension
-    total = N * T # Total number of nodes
-    W = np.zeros((total, total), dtype=float) # Adjacency matrix
+    total = num_blocks * num_frames # Total number of nodes
+    adjacency_matrix = np.zeros((total, total), dtype=float) # Adjacency matrix (W)
 
-    # Optionally normalize features per-dim to zero mean unit var
-    # flatten all features to compute normalization
+    # Flatten all features to compute normalization
     block_values = [f[:, 0:1] for f in block_features]  # value
     block_coords = [f[:, 1:3] for f in block_features]  # x,y
 
-    # normalize values
+    # Normalize values
     all_vals = np.vstack(block_values) # format: [t=0 ROI0, t=0 ROI1, ..., t=0 ROI3,t=1 ROI0, t=1 ROI1, ..., t=1 ROI3,]
-    mu_val = np.nanmean(all_vals, axis=0) # all_vals might have some NaNs if ROIs not detected in every frame
-    s_val = np.nanstd(all_vals, axis=0) # all_vals might have some NaNs if ROIs not detected in every frame
-    s_val[s_val==0] = 1.0
-    # temporarily replace NaNs with mean when normalizing
-    norm_values = [(np.where(np.isnan(v), mu_val, v) - mu_val)/s_val for v in block_values]
+    mean_val = np.nanmean(all_vals, axis=0) # all_vals might have some NaNs if ROIs not detected in every frame
+    std_val = np.nanstd(all_vals, axis=0) # all_vals might have some NaNs if ROIs not detected in every frame
+    std_val[std_val==0] = 1.0 # to avoid division by zero if all values are the same
+    # Temporarily replace NaNs with mean when normalizing
+    norm_values = [(np.where(np.isnan(v), mean_val, v) - mean_val)/std_val for v in block_values]
 
-    # normalize coordinates
+    # Normalize coordinates (similarly to values)
     all_coords = np.vstack(block_coords)
-    mu_coord = np.nanmean(all_coords, axis=0) # all_coords might have some NaNs if ROIs not detected in every frame
-    s_coord = np.nanstd(all_coords, axis=0)
-    s_coord[s_coord==0] = 1.0
-    #  temporarily replace NaNs with mean when normalizing
-    norm_coords = [(np.where(np.isnan(c), mu_coord, c) - mu_coord)/s_coord for c in block_coords]
-
-    # recombine
+    mean_coord = np.nanmean(all_coords, axis=0)
+    std_coord = np.nanstd(all_coords, axis=0)
+    std_coord[std_coord==0] = 1.0
+    norm_coords = [(np.where(np.isnan(c), mean_coord, c) - mean_coord)/std_coord for c in block_coords]
+    
+    # Recombine
     norm_feats = [np.hstack([v, c]) for v,c in zip(norm_values, norm_coords)]
 
     # Build spatial edges (-> nodes within same frame are connected, high weight if features similar)
-    for t in range(T):
-        F = norm_feats[t]  # N x D
+    for t in range(num_frames):
+        feature_matrix = norm_feats[t]  # N x D (F)
         # pairwise Euclidean distances
-        pdist = cdist(F, F, metric='euclidean')  # N x N
+        pdist = cdist(feature_matrix, feature_matrix, metric='euclidean')  # N x N
         if sigma_spatial is None:
-            Wsp = np.exp(-pdist)         # exp(-d) 
+            spatial_weights = np.exp(-pdist)         # exp(-d) 
         else:
-            Wsp = np.exp(-(pdist**2) / (2 * sigma_spatial**2)) # exp(-d^2/(2*sigma^2))
+            spatial_weights = np.exp(-(pdist**2) / (2 * sigma_spatial**2)) # exp(-d^2/(2*sigma^2))
         
         # Set edges to 0 if original feature was NaN
         mask_nan = np.isnan(block_features[t]).any(axis=1)
-        Wsp[mask_nan, :] = 0
-        Wsp[:, mask_nan] = 0
+        spatial_weights[mask_nan, :] = 0
+        spatial_weights[:, mask_nan] = 0
 
-        start = t * N # starting index in W
-        W[start:start+N, start:start+N] = Wsp # Fill the diagonal block for frame t with spatial weights
+        start = t * num_blocks # starting index in W
+        adjacency_matrix[start:start+num_blocks, start:start+num_blocks] = spatial_weights # Fill the diagonal block for frame t with spatial weights
 
-    # temporal edges
-    for t in range(T-1):
+    # Temporal edges
+    for t in range(num_frames-1):
         Fcur = norm_feats[t]
         Fnext = norm_feats[t+1] # Loop over consecutive frames
-        start_cur = t * N
-        start_next = (t+1) * N
+        start_cur = t * num_blocks
+        start_next = (t+1) * num_blocks
         if temporal_mode == 'const':
             # Same block across frames has constant weight
-            for b in range(N):
-                 # skip if either block is NaN
+            for b in range(num_blocks):
+                 # Skip if either block is NaN
                 if np.isnan(block_features[t][b]).any() or np.isnan(block_features[t+1][b]).any():
                     continue
                 i = start_cur + b
                 j = start_next + b
-                W[i, j] = temporal_weight
-                W[j, i] = temporal_weight
+                adjacency_matrix[i, j] = temporal_weight
+                adjacency_matrix[j, i] = temporal_weight
         elif temporal_mode == 'similarity':
             # Same block across frames weighted by feature similarity
             # similarity between same block across times
@@ -157,22 +156,22 @@ def build_spatiotemporal_graph(block_features, temporal_weight=0.1, sigma_spatia
             # zero similarity if either feature was NaN
             mask_nan = np.isnan(block_features[t]).any(axis=1) | np.isnan(block_features[t+1]).any(axis=1)
             sim[mask_nan] = 0
-            for b in range(N):
+            for b in range(num_blocks):
                 i = start_cur + b
                 j = start_next + b
-                W[i, j] = sim[b]
-                W[j, i] = sim[b]
+                adjacency_matrix[i, j] = sim[b]
+                adjacency_matrix[j, i] = sim[b]
 
-    # degree and laplacian
-    Dmat = np.diag(W.sum(axis=1)) # Degree matrix (sum of rows)
-    L = Dmat - W # Laplacian (used for graph smoothing)
-    return W, L
+    # Degree and laplacian
+    degree_matrix = np.diag(adjacency_matrix.sum(axis=1)) # Degree matrix (sum of rows)
+    laplacian = degree_matrix - adjacency_matrix # Laplacian (used for graph smoothing)
+    return adjacency_matrix, laplacian
 
-def denoise_via_laplacian(Y, L, mu=0.1):
+def denoise_via_laplacian(Y, laplacian, mu=0.1):
     """Denoise signal Y via graph Laplacian L."""
     # Y: shape (N*T,) vector or (N*T, C) if multichannel stacked appropriately
-    Ntot = L.shape[0] # total number of nodes
-    A = sparse.identity(Ntot, format='csr') + mu * sparse.csr_matrix(L) # (I + mu*L)
+    Ntot = laplacian.shape[0] # total number of nodes
+    A = sparse.identity(Ntot, format='csr') + mu * sparse.csr_matrix(laplacian) # (I + mu*L)
     # If Y is vector:
     x = spsolve(A, Y) # solve (I + mu*L)x = Y
     return x # denoised signal
