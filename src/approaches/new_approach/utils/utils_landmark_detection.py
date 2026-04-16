@@ -349,7 +349,17 @@ def plot_roi_mean_signals(roi_pixel_data: list, fps: float = None, plot_in_secs:
 
 
 def load_gray_frame(filepath: str, width: int = 160, height: int = 122, drop_telemetry: bool = True) -> np.ndarray:
-    """Load a .gray frame (Y16, little-endian) and optionally strip telemetry lines."""
+    """Load a .gray frame (Y16, little-endian) and optionally strip telemetry lines.
+    
+    Parameters:
+        filepath: Path to the .gray file
+        width: Width of the frame
+        height: Height of the frame (default: 122: expects additional 2 lines of telemetry, so actual image data is 120)
+        drop_telemetry: Whether to drop telemetry lines (default: True, drops last 2 lines if height > 120)
+
+    Returns:
+        np.ndarray: The loaded frame as a NumPy array
+    """
     raw = np.fromfile(filepath, dtype=np.uint16)
     if raw.size != width * height:
         raise ValueError(f"Unexpected frame size in {filepath}: got {raw.size}, expected {width*height}")
@@ -369,15 +379,27 @@ def create_manual_roi_mask_log_from_gray_frames(
     mask_save_path: str = None,
     use_colormap: bool = True,
 ) -> List[Dict[str, np.ndarray]]:
-    """Create a fixed ROI mask by manually drawing on the first gray frame.
+    """Create a fixed ROI mask for all frames by manually drawing on the first gray frame.
+
+    Parameters:
+        gray_dir: Directory containing .gray frames
+        roi_name: Name of the ROI (used as key in output log)
+        display_title: Window title for ROI drawing interface
+        mode: "rectangle", "polygon", "point", "point_surrounding" (point with 8 surrounding pixels) for ROI drawing method
+        frame_index: Index of the frame to use for ROI drawing (default: 0)
+        mask_load_path: Optional path to load an existing ROI mask (skips drawing if provided)
+        mask_save_path: Optional path to save the drawn ROI mask for future reuse
+        use_colormap: If True, apply a colormap to the frame for easier visualization during ROI drawing
 
     Returns:
         roi_mask_log: list of per-frame ROI masks (same mask reused for all frames)
     """
+    # Sort gray files
     _, gray_files = sort_grayfiles_with_interpolations(gray_dir)
     if not gray_files:
         raise ValueError(f"No .gray files found in {gray_dir}")
 
+    # Load mask if path provided
     if mask_load_path:
         loaded_mask = np.load(mask_load_path)
         if loaded_mask.ndim != 2:
@@ -390,10 +412,10 @@ def create_manual_roi_mask_log_from_gray_frames(
         roi_mask_log = [{roi_name: mask} for _ in range(len(gray_files))]
         return roi_mask_log
 
+    # Load first frame for ROI drawing
     frame_index = max(0, min(frame_index, len(gray_files) - 1))
     first_frame_path = os.path.join(gray_dir, gray_files[frame_index])
     first_frame = load_gray_frame(first_frame_path)
-
 
     vmin, vmax = np.percentile(first_frame, [1, 99])
     frame_clipped = np.clip(first_frame, vmin, vmax)
@@ -407,6 +429,7 @@ def create_manual_roi_mask_log_from_gray_frames(
     height, width = first_frame.shape
     mask = np.zeros(first_frame.shape, dtype=np.uint8)
 
+    # User draws ROI on the first frame (options: rectangle, polygon, point, point_surrounding - point with 8 surrounding pixels)
     if mode == "rectangle":
         cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
         roi_rect = cv2.selectROI(display_title, frame_display, fromCenter=False, showCrosshair=True)
@@ -552,6 +575,7 @@ def create_manual_roi_mask_log_from_gray_frames(
     else:
         raise ValueError(f"Unknown manual ROI mode: {mode}")
 
+    # Save mask if path provided
     if mask_save_path and isinstance(mask, np.ndarray):
         save_dir = os.path.dirname(mask_save_path)
         if save_dir:  # Only create directory if path contains one
