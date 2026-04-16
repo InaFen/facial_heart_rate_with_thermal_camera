@@ -72,6 +72,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         - roi_pixel_log: The detected pixel locations per ROI per frame
     """
     
+    # Limit processing to specific timespan if specified in configs
     start_frame = None
     end_frame = None
     limit_to_timespan = configs.timespan_signal_to_look_at is not None
@@ -80,7 +81,12 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         start_frame = int(start_time * configs.fps)
         end_frame = int(end_time * configs.fps)
 
-    # Detect face or use manual ROI (support dual ROI selection)
+    ##########
+    # Get ROI (manual ROI with user input or facemesh-based ROI)
+    ##########
+
+    # If manual ROI is enabled, user draws ROI on first frame and it is applied to all frames
+    # Check if we need to split a single manual ROI into sub-ROIs based on configs
     split_single_manual_roi = (
         configs.manual_roi_enabled
         and configs.manual_roi_split_enabled
@@ -119,6 +125,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         else:
             roi_pixel_log = np.load(configs.path_pixels_log, allow_pickle=True)
 
+        # Split single manual ROI into sub-ROIs if enabled in configs
         if split_single_manual_roi:
             first_frame = roi_pixel_log[0] if len(roi_pixel_log) > 0 else {}
             if configs.manual_roi_names[0] in first_frame:
@@ -129,6 +136,8 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
                     grid_rows=grid_rows,
                     grid_cols=grid_cols,
                 )
+    
+    # If manual ROI not enabled, use facemesh-based ROI detection: detects landmarks on thermal video, applies ROI mask then on gray frames (so raw data)
     else:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
             roi_pixel_log = apply_facemesh_to_thermal_video(
@@ -146,9 +155,12 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         else:
             roi_pixel_log = np.load(configs.path_pixels_log, allow_pickle=True)
 
+    ##########
     # Extract ROI pixel data
+    ##########
+
+    # Extract ROI pixel data from video instead of gray frames
     if extract_from_video_instead_of_gray_files:
-        # Extract ROI pixel data from video instead of gray frames
         if (
             not os.path.isfile(configs.path_roi_pixel_data)
             or configs.overwrite_existing_files
@@ -166,8 +178,9 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             np.save(configs.path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
         else:
             roi_pixel_data = np.load(configs.path_roi_pixel_data, allow_pickle=True)
+    
+    # Extract ROI pixel data from gray frames
     else:
-        # Extract ROI pixel data from gray frames
         if (
             not os.path.isfile(configs.path_roi_pixel_data)
             or configs.overwrite_existing_files

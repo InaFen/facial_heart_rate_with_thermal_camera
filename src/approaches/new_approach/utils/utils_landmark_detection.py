@@ -18,11 +18,12 @@ def apply_facemesh_to_thermal_video(
     flip_upside_down: bool = True,
     start_frame: int = 0,
     end_frame: int = None,
-):
+) -> list[dict]:
     """
     Apply MediaPipe FaceMesh to a thermal video, draw ALL landmarks + ROIs,
     optionally display in real time, save annotated video, and collect ROI masks.
     If a frame has no detected face, a blank mask is stored to maintain alignment.
+    Facemesh is trained on RGB images, so a perceptual colormap is applied to the thermal frames before processing.
     
     Parameters:
         input_path: Path to input thermal video
@@ -35,6 +36,9 @@ def apply_facemesh_to_thermal_video(
         flip_upside_down: If True, flip frames vertically for FaceMesh and flip masks/output back to match original orientation.
         start_frame: Start frame index to process (inclusive). Default: 0
         end_frame: End frame index to process (exclusive). Default: None (process to end)
+    
+    Returns:
+        List of dictionaries containing ROI masks for each frame.
     """
 
     print("[IMPORTANT] Ensure that the input video is properly aligned with the original .gray frames (same order, not flipped) for correct ROI mapping later on.")
@@ -90,7 +94,7 @@ def apply_facemesh_to_thermal_video(
         if flip_upside_down:
             frame = cv2.flip(frame, 0)
 
-        # Robust normalize 16-bit → 8-bit: clip outliers then map to 0-255
+        # Robust normalize 16-bit -> 8-bit: clip outliers then map to 0-255
         if frame.dtype != np.uint8:
             vmin, vmax = np.percentile(frame, [1, 99])
             frame_clipped = np.clip(frame, vmin, vmax)
