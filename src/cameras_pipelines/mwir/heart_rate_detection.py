@@ -28,12 +28,17 @@ except ImportError:  # pragma: no cover - allows running the file directly
 	from data_extraction import extract_thermal_data
 
 try:
-	from ..ground_truth_methods.offset_detection_ground_truth import read_opensignals_txt
+	from .netd_analysis import average_consecutive_frames
+except ImportError:  # pragma: no cover - allows running the file directly
+	from netd_analysis import average_consecutive_frames
+
+try:
+	from ..ground_truth_methods.offset_detection_ground_truth import read_opensignals_txt, read_opensignals_txt_converted
 except ImportError:  # pragma: no cover - allows running the file directly
 	project_root = Path(__file__).resolve().parents[2]
 	if str(project_root) not in sys.path:
 		sys.path.insert(0, str(project_root))
-	from src.ground_truth_methods.offset_detection_ground_truth import read_opensignals_txt
+	from src.ground_truth_methods.offset_detection_ground_truth import read_opensignals_txt, read_opensignals_txt_converted
 
 
 def discover_asc_files(directory: str | Path, recursive: bool = False) -> list[Path]:
@@ -636,6 +641,41 @@ def plot_thermal_signal_over_time(
 	plt.show()
 
 
+def plot_averaged_vs_non_averaged_signals(
+	non_averaged_signal: np.ndarray,
+	non_averaged_fps: float,
+	averaged_signal: np.ndarray,
+	averaged_fps: float,
+	title: str = "Thermal Signal: Non-Averaged vs Averaged",
+) -> None:
+	"""Plot non-averaged and averaged thermal signals together for comparison."""
+	non_averaged_signal = np.asarray(non_averaged_signal, dtype=np.float32)
+	averaged_signal = np.asarray(averaged_signal, dtype=np.float32)
+
+	if non_averaged_signal.ndim != 1:
+		raise ValueError(f"Expected 1D non_averaged_signal, got shape {non_averaged_signal.shape}")
+	if averaged_signal.ndim != 1:
+		raise ValueError(f"Expected 1D averaged_signal, got shape {averaged_signal.shape}")
+	if non_averaged_fps <= 0:
+		raise ValueError(f"non_averaged_fps must be > 0, got {non_averaged_fps}")
+	if averaged_fps <= 0:
+		raise ValueError(f"averaged_fps must be > 0, got {averaged_fps}")
+
+	t_non_averaged = np.arange(non_averaged_signal.size, dtype=np.float32) / float(non_averaged_fps)
+	t_averaged = np.arange(averaged_signal.size, dtype=np.float32) / float(averaged_fps)
+
+	plt.figure(figsize=(12, 5))
+	plt.plot(t_non_averaged, non_averaged_signal, linewidth=1.0, alpha=0.7, label="Non-averaged")
+	plt.plot(t_averaged, averaged_signal, linewidth=1.6, alpha=0.95, label="Averaged")
+	plt.title(title)
+	plt.xlabel("Time (s)")
+	plt.ylabel("Temperature (°C)")
+	plt.grid(alpha=0.3)
+	plt.legend()
+	plt.tight_layout()
+	plt.show()
+
+
 def load_ground_truth_segment_from_npz(
 	npz_path: str | Path,
 	offset_seconds: float,
@@ -705,6 +745,35 @@ def load_button_segment_from_opensignals_txt(
 		raise ValueError(f"recording_length_seconds must be > 0, got {recording_length_seconds}")
 
 	_, button_data, sampling_rate = read_opensignals_txt(str(txt_path))
+	if sampling_rate <= 0:
+		raise ValueError(f"Invalid sampling rate from OpenSignals TXT: {sampling_rate}")
+
+	start_idx = max(0, int(round(offset_seconds * sampling_rate)))
+	segment_len = int(round(recording_length_seconds * sampling_rate))
+	end_idx = min(button_data.size, start_idx + segment_len)
+	if end_idx <= start_idx:
+		raise ValueError(
+			"Requested button segment is empty. "
+			f"offset={offset_seconds}s, length={recording_length_seconds}s, fs={sampling_rate}, signal_size={button_data.size}"
+		)
+
+	button_segment = np.asarray(button_data[start_idx:end_idx], dtype=np.float32)
+	button_time = offset_seconds + np.arange(button_segment.size, dtype=np.float32) / float(sampling_rate)
+	return button_time, button_segment, float(sampling_rate)
+
+def load_button_segment_from_opensignals_txt_converted(
+	txt_path: str | Path,
+	offset_seconds: float,
+	recording_length_seconds: float,
+) -> tuple[np.ndarray, np.ndarray, float]:
+	"""Load button signal from OpenSignals TXT and return requested time segment."""
+	txt_path = Path(txt_path)
+	if not txt_path.exists():
+		raise FileNotFoundError(f"OpenSignals TXT does not exist: {txt_path}")
+	if recording_length_seconds <= 0:
+		raise ValueError(f"recording_length_seconds must be > 0, got {recording_length_seconds}")
+
+	_, button_data, sampling_rate = read_opensignals_txt_converted(str(txt_path))
 	if sampling_rate <= 0:
 		raise ValueError(f"Invalid sampling rate from OpenSignals TXT: {sampling_rate}")
 
@@ -961,28 +1030,36 @@ def main() -> None:
 	asc_directory_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii/")
 	cache_path_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii.npy")
 	ground_truth_path_2 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_2/opensignals_0007800F7623_2026-03-31_16-37-56.npz")
-	ground_truth_txt_path_2 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_2/opensignals_0007800F7623_2026-03-31_16-37-56.txt")
-	offset_ground_truth_seconds_2 = 14.25 #	# TODO adapt
+	ground_truth_txt_path_2 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_2/opensignals_0007800F7623_16-37-56_converted.txt")
+	offset_ground_truth_seconds_2 = 45.5
 	video_output_path_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii.mp4")
 	
 	# Face after sport
 	asc_directory_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii/")
 	cache_path_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii.npy")
-	# TODO adapt
-	ground_truth_path_3 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.npz")
-	ground_truth_txt_path_3 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.txt")
-	offset_ground_truth_seconds_3 = 14.25 #110.1
+	ground_truth_path_3 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_3/opensignals_0007800F7623_2026-03-31_16-42-26.npz")
+	ground_truth_txt_path_3 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_3/opensignals_0007800F7623_2026-03-31_16-42-26.txt")
+	offset_ground_truth_seconds_3 = 9.25
 	video_output_path_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii.mp4")
 
-	recording_number = 3
+	recording_number = 1
 
-	if recording_number == 4:
+	if recording_number == 1:
+		asc_directory = asc_directory_1
+		cache_path = cache_path_1
+		ground_truth_path = ground_truth_path_1
+		ground_truth_txt_path = ground_truth_txt_path_1
+		offset_ground_truth_seconds = offset_ground_truth_seconds_1
+		video_output_path = video_output_path_1
+		print("Using recording 1: Temple before sport")
+	elif recording_number == 4:
 		asc_directory = asc_directory_4
 		cache_path = cache_path_4
 		ground_truth_path = ground_truth_path_4
 		ground_truth_txt_path = ground_truth_txt_path_4
 		offset_ground_truth_seconds = offset_ground_truth_seconds_4
 		video_output_path = video_output_path_4
+		print("Using recording 4: Temple after sport")
 	elif recording_number == 2:
 		asc_directory = asc_directory_2
 		cache_path = cache_path_2
@@ -990,6 +1067,7 @@ def main() -> None:
 		ground_truth_txt_path = ground_truth_txt_path_2
 		offset_ground_truth_seconds = offset_ground_truth_seconds_2
 		video_output_path = video_output_path_2
+		print("Using recording 2: Face before sport")
 	elif recording_number == 3:
 		asc_directory = asc_directory_3
 		cache_path = cache_path_3
@@ -997,6 +1075,7 @@ def main() -> None:
 		ground_truth_txt_path = ground_truth_txt_path_3
 		offset_ground_truth_seconds = offset_ground_truth_seconds_3
 		video_output_path = video_output_path_3
+		print("Using recording 3: Face after sport")
 
 	recording_length_seconds = 60.0
 	ground_truth__fps = 1000.0
@@ -1007,27 +1086,53 @@ def main() -> None:
 	build_cache_if_missing = False
 	create_video = True
 	fps: float | None = 100.0
-	plot_bandpass_filtered_signal = False
+	apply_average_consecutive_frames_first = False
+	frame_average_window_size = 10
+	plot_averaged_vs_non_averaged_comparison = False
+	plot_bandpass_filtered_signal = True
 	bandpass_lowcut_hz = 0.5
 	bandpass_highcut_hz = 3.0
 	bandpass_order = 4
-	select_roi_on_first_frame_enabled = False
-	use_mediapipe_landmark_roi_detection = True
-	use_mediapipe_face_roi_detection = True
+
+	select_roi_on_first_frame_enabled = True
+
+	use_mediapipe_landmark_roi_detection = False
+	use_mediapipe_face_roi_detection = False
 	face_roi_padding_ratio = 0.05
-	use_landmark_ema = True
+	use_landmark_ema = False
 	landmark_ema_alpha = 0.2
 	landmark_flip_upside_down = False
 	roi_landmarks: dict[str, list[int]] = {
 		"whole_face": [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109],
 		"forehead": [10, 338, 297, 332, 284, 251, 389, 368, 300, 293, 334, 296, 336, 9, 107, 66, 105, 63, 71, 162, 21, 54, 103, 67, 109]
 	}
-	selected_landmark_roi_name = "whole_face"
+	selected_landmark_roi_name = "forehead"
 
 	roi: tuple[int, int, int, int] | None = None
 	face_rois: list[tuple[int, int, int, int] | None] | None = None
 	selected_roi_masks_per_frame: list[np.ndarray | None] | None = None
+	non_averaged_signal_for_comparison: np.ndarray | None = None
 	reducer: Literal["mean", "median"] = "mean"
+
+	ground_truth_time, ground_truth_signal, selected_ground_truth_key = load_ground_truth_segment_from_npz(
+		npz_path=ground_truth_path,
+		offset_seconds=offset_ground_truth_seconds,
+		recording_length_seconds=recording_length_seconds,
+		ground_truth_fps=ground_truth__fps,
+	)
+
+	if recording_number == 2:
+		button_time, button_signal, _ = load_button_segment_from_opensignals_txt_converted(
+			txt_path=ground_truth_txt_path,
+			offset_seconds=offset_ground_truth_seconds,
+			recording_length_seconds=recording_length_seconds,
+		)
+	else:
+		button_time, button_signal, _ = load_button_segment_from_opensignals_txt(
+			txt_path=ground_truth_txt_path,
+			offset_seconds=offset_ground_truth_seconds,
+			recording_length_seconds=recording_length_seconds,
+		)
 
 	if build_cache_if_missing and not cache_path.exists():
 		build_thermal_cache_npy(
@@ -1038,8 +1143,23 @@ def main() -> None:
 			progress_every=100,
 		)
 
-	frames = load_thermal_cache_npy(cache_path, mmap_mode="r")
+	original_frames = load_thermal_cache_npy(cache_path, mmap_mode="r")
+	frames = original_frames
 	print(f"Loaded cached frames with shape: {frames.shape}")
+
+	if apply_average_consecutive_frames_first:
+		frames = average_consecutive_frames(frames, window_size=frame_average_window_size)
+		print(f"Using temporally averaged frames with shape: {frames.shape}")
+
+	thermal_fps = fps
+	if thermal_fps is not None and apply_average_consecutive_frames_first:
+		thermal_fps = thermal_fps / float(frame_average_window_size)
+		if thermal_fps <= 0:
+			raise ValueError(
+				"Effective thermal FPS became <= 0 after averaging. "
+				"Check `fps` and `frame_average_window_size`."
+			)
+		print(f"Effective thermal FPS after averaging: {thermal_fps:.6f}")
 
 	if select_roi_on_first_frame_enabled:
 		roi = select_roi_on_first_frame(
@@ -1068,6 +1188,19 @@ def main() -> None:
 		]
 		face_rois = roi_mask_log_to_bboxes(roi_mask_log, selected_landmark_roi_name)
 		roi = None
+		if apply_average_consecutive_frames_first and plot_averaged_vs_non_averaged_comparison:
+			non_averaged_signal_for_comparison, _ = extract_landmark_roi_signal_over_time(
+				thermal_frames=original_frames,
+				roi_landmarks=roi_landmarks,
+				roi_name=selected_landmark_roi_name,
+				normalization="global",
+				colormap="inferno",
+				reducer=reducer,
+				fill_missing="interpolate",
+				use_ema=use_landmark_ema,
+				ema_alpha=landmark_ema_alpha,
+				flip_upside_down=landmark_flip_upside_down,
+			)
 	elif use_mediapipe_face_roi_detection:
 		signal, face_rois = extract_face_signal_over_time(
 			frames,
@@ -1081,39 +1214,55 @@ def main() -> None:
 			flip_upside_down=landmark_flip_upside_down,
 		)
 		roi = None
+		if apply_average_consecutive_frames_first and plot_averaged_vs_non_averaged_comparison:
+			non_averaged_signal_for_comparison, _ = extract_face_signal_over_time(
+				original_frames,
+				normalization="global",
+				colormap="inferno",
+				reducer=reducer,
+				fill_missing="interpolate",
+				padding_ratio=face_roi_padding_ratio,
+				use_ema=use_landmark_ema,
+				ema_alpha=landmark_ema_alpha,
+				flip_upside_down=landmark_flip_upside_down,
+			)
 	else:
 		signal = extract_thermal_signal_over_time(frames, roi=roi, reducer=reducer)
+		if apply_average_consecutive_frames_first and plot_averaged_vs_non_averaged_comparison:
+			non_averaged_signal_for_comparison = extract_thermal_signal_over_time(original_frames, roi=roi, reducer=reducer)
+
+	if (
+		apply_average_consecutive_frames_first
+		and plot_averaged_vs_non_averaged_comparison
+		and non_averaged_signal_for_comparison is not None
+		and fps is not None
+		and thermal_fps is not None
+	):
+		plot_averaged_vs_non_averaged_signals(
+			non_averaged_signal=non_averaged_signal_for_comparison,
+			non_averaged_fps=float(fps),
+			averaged_signal=signal,
+			averaged_fps=float(thermal_fps),
+			title="Thermal Signal Comparison: Non-Averaged vs Averaged",
+		)
 
 	if create_video:
 		create_video_from_thermal_frames(
 			frames,
 			output_path=video_output_path,
-			fps=fps,
+			fps=thermal_fps,
 			normalization="global",
 			colormap="inferno",
 			roi=roi,
 			roi_per_frame=face_rois,
 			roi_mask_per_frame=selected_roi_masks_per_frame,
 		)
-	if fps is None or fps <= 0:
+	if thermal_fps is None or thermal_fps <= 0:
 		raise ValueError("`fps` must be > 0 for linked thermal/ground-truth plotting.")
-
-	ground_truth_time, ground_truth_signal, selected_ground_truth_key = load_ground_truth_segment_from_npz(
-		npz_path=ground_truth_path,
-		offset_seconds=offset_ground_truth_seconds,
-		recording_length_seconds=recording_length_seconds,
-		ground_truth_fps=ground_truth__fps,
-	)
-
-	button_time, button_signal, _ = load_button_segment_from_opensignals_txt(
-		txt_path=ground_truth_txt_path,
-		offset_seconds=offset_ground_truth_seconds,
-		recording_length_seconds=recording_length_seconds,
-	)
 
 	plot_thermal_and_ground_truth_linked(
 		thermal_signal=signal,
-		thermal_fps=fps,
+		thermal_fps=thermal_fps,
 		ground_truth_time=ground_truth_time,
 		ground_truth_signal=ground_truth_signal,
 		button_time=button_time,
@@ -1127,7 +1276,7 @@ def main() -> None:
 
 	plot_fft_thermal_and_ground_truth(
 		thermal_signal=signal,
-		thermal_fps=fps,
+		thermal_fps=thermal_fps,
 		ground_truth_signal=ground_truth_signal,
 		ground_truth_fps=ground_truth__fps,
 		ground_truth_label=selected_ground_truth_key,
@@ -1137,14 +1286,14 @@ def main() -> None:
 	if plot_bandpass_filtered_signal:
 		filtered_signal = apply_bandpass_filter(
 			signal=signal,
-			fps=fps,
+			fps=thermal_fps,
 			lowcut_hz=bandpass_lowcut_hz,
 			highcut_hz=bandpass_highcut_hz,
 			order=bandpass_order,
 		)
 		plot_thermal_and_ground_truth_linked(
 			thermal_signal=filtered_signal,
-			thermal_fps=fps,
+			thermal_fps=thermal_fps,
 			ground_truth_time=ground_truth_time,
 			ground_truth_signal=ground_truth_signal,
 			button_time=button_time,
@@ -1161,7 +1310,7 @@ def main() -> None:
 
 		plot_fft_thermal_and_ground_truth(
 			thermal_signal=filtered_signal,
-			thermal_fps=fps,
+			thermal_fps=thermal_fps,
 			ground_truth_signal=ground_truth_signal,
 			ground_truth_fps=ground_truth__fps,
 			ground_truth_label=selected_ground_truth_key,

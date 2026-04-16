@@ -9,3 +9,5 @@ File structure related:
 Camera tests:
 - `save_thermal_frames.py`: Records thermal frames to timestamped image files and analyzes frame timing/FPS from saved filenames.
 - `test_camera.py`: Minimal OpenCV camera sanity check that displays a live feed and exits on `q`.
+
+- "cut_video.py": Cut a video to a wanted length
