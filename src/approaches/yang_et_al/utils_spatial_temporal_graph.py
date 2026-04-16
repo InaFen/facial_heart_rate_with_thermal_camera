@@ -5,10 +5,13 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
 
-def compute_centroid(coords):
+def compute_centroid(coords: list[tuple[float, float]]) -> tuple[float, float] | None:
     """
-    coords: list of (x, y) tuples
-    returns: (cx, cy)
+    Compute centroid (mean x, mean y) from a list of (x, y) coordinates.
+
+    Parameters:
+        coords: list of (x, y) tuples
+    Returns: (cx, cy) tuple of centroid coordinates, or None if coords is empty
     """
     if len(coords) == 0:
         return None
@@ -18,21 +21,18 @@ def compute_centroid(coords):
     cy = arr[:, 1].mean()      # mean of y-values
     return (cx, cy)
 
-def add_centroids_to_roi_data(roi_pixel_data):
+def add_centroids_to_roi_data(roi_pixel_data: list) -> list:
     """
     Given roi_pixel_data, compute and add centroids for each ROI in each frame.
 
-    Parameters
-    ----------
+    Parameters:
     roi_pixel_data : list of dicts
         roi_pixel_data[frame_idx][roi_name] = {
             "coords": list of (x, y) tuples,
             ...
         }
 
-    Returns
-    -------
-    None (modifies roi_pixel_data in place)
+    Returns: modified roi_pixel_data with added "centroid" key for each ROI containing (cx, cy), also changed in place
     """
     for frame_idx, frame_data in enumerate(roi_pixel_data):
         for roi_name, roi_info in frame_data.items():
@@ -44,81 +44,20 @@ def add_centroids_to_roi_data(roi_pixel_data):
     
     return roi_pixel_data
 
-def build_spatiotemporal_graph(block_features, temporal_weight=0.1):
-    """
-    Build spatial-temporal adjacency matrix W and Laplacian L.
-
-    Parameters
-    ----------
-    block_features : list of arrays
-        block_features[t] is an NxD matrix (N blocks, D features)
-        one feature vector per subregion for each frame.
-    
-    temporal_weight : float
-        Weight for temporal edges (same block across frames)
-
-    Returns
-    -------
-    W : adjacency matrix (numpy array)
-    L : graph Laplacian matrix
-    """
-
-    T = len(block_features)      # number of frames
-    N, D = block_features[0].shape  # number of blocks, feature length
-
-    total_nodes = N * T
-    W = np.zeros((total_nodes, total_nodes))
-
-    # Simple Mahalanobis metric (identity)
-    M = np.eye(D)
-
-    # ---- SPATIAL EDGES ----
-    for t in range(T):
-        features_t = block_features[t]
-
-        # Compute Mahalanobis distance between blocks
-        diffs = cdist(features_t @ M, features_t @ M, metric='euclidean')
-
-        # Weight function from the paper (Eq. 3)
-        W_spatial = np.exp(-diffs)
-
-        # Insert into the global adjacency matrix
-        start = t * N
-        W[start:start+N, start:start+N] = W_spatial
-
-    # ---- TEMPORAL EDGES ----
-    for t in range(T-1):
-        idx_curr = t * N
-        idx_next = (t+1) * N
-
-        # same block → next frame
-        for b in range(N):
-            i = idx_curr + b
-            j = idx_next + b
-
-            W[i, j] = temporal_weight
-            W[j, i] = temporal_weight
-
-    # Degree matrix
-    D_mat = np.diag(W.sum(axis=1))
-
-    # Laplacian
-    L = D_mat - W
-
-    return W, L
-
-
 def build_block_features_from_roi_pixel_data(roi_pixel_data):
     """ Build block features from roi_pixel_data.
     Each block feature vector contains:
     - Mean pixel value
     - Centroid x-coordinate
     - Centroid y-coordinate
+
     Parameters:
-        roi_pixel_data: list per frame: dict {roi_name: {'coords':..., 'adc_values':..., 'mean_adc':...}}
+        roi_pixel_data: list per frame: dict {roi_name: {'coords':..., 'adc_values':..., 'mean_kelvin_multiplied_100':...}}
+
     Returns:
         block_features: list of length T; each element is an (N, 3) array of features for N blocks at frame t.
-        roi_names: list of ROI names in order"""
+        roi_names: list of ROI names in order
+    """
     T = len(roi_pixel_data)
     roi_names = list(roi_pixel_data[0].keys())
     N = len(roi_names)
@@ -137,7 +76,7 @@ def build_block_features_from_roi_pixel_data(roi_pixel_data):
         block_features.append(np.array(feats_t))  # N x 3
     return block_features, roi_names
 
-def build_spatiotemporal_graph_2(block_features, temporal_weight=0.1, sigma_spatial=None, temporal_mode='similarity'):
+def build_spatiotemporal_graph(block_features, temporal_weight=0.1, sigma_spatial=None, temporal_mode='similarity'):
     """
     block_features: list of length T; each element is an (N, D) array of features for N blocks at frame t.
     temporal_weight: default weight for same-block across adjacent frames (if temporal_mode == 'const').
