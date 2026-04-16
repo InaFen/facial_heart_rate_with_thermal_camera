@@ -1,27 +1,24 @@
 """
 Configuration loader for heart rate detection pipeline.
 
-Reads configuration from JSON file and provides easy access to all settings.
+Reads configuration from YAML file and provides easy access to all settings.
 """
 
-import json
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
+import yaml
 
 
-def load_config_from_json(config_path: str = None) -> Dict[str, Any]:
-    """Load configuration from JSON file."""
-    if config_path is None:
-        config_path = Path(__file__).parent.parent / "configs.json"
-    
+def load_config_from_yaml(config_path: str = None) -> Dict[str, Any]:
+    """Load configuration from YAML file."""
     config_path = Path(config_path)
-    
+
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
-    
+
     with open(config_path, 'r') as f:
-        return json.load(f)
+        return yaml.safe_load(f)
 
 
 @dataclass
@@ -29,10 +26,10 @@ class Config:
     """
     Configuration manager for the heart rate detection pipeline.
     
-    Reads configuration from JSON file and provides direct access to all settings as instance variables.
+    Reads configuration from YAML file and provides direct access to all settings as instance variables.
     
     Example:
-        config = Config.from_json()
+        config = Config.from_yaml()
         print(config.fps)
         print(config.path_video)
         print(config.forehead)
@@ -80,28 +77,14 @@ class Config:
     config_path: Path = field(default=None, repr=False)
 
     @classmethod
-    def from_json(cls, config_path: str = None) -> "Config":
-        """
-        Load configuration from JSON file.
-        
-        Args:
-            config_path: Path to config.json file. If None, uses default location.
-            
-        Returns:
-            Config instance with all values loaded from JSON
-        """
-        if config_path is None:
-            config_path = Path(__file__).parent.parent / "configs.json"
-        
-        config_path = Path(config_path)
-        data = load_config_from_json(config_path)
-        
+    def _from_data(cls, data: Dict[str, Any], config_path: Path) -> "Config":
+        """Build Config from parsed dictionary data."""
         # Extract nested data
         paths_data = data['paths']
         processing_data = data['processing']
         timing_data = data['timing']
         roi_data = data['roi_landmarks']
-        
+
         return cls(
             # Paths
             path_gray_frames=paths_data['gray_frames'],
@@ -144,4 +127,11 @@ class Config:
             # Config path
             config_path=config_path
         )
+
+    @classmethod
+    def from_yaml(cls, config_path: str = None) -> "Config":
+        """Load configuration from YAML file."""
+        config_path = Path(config_path)
+        data = load_config_from_yaml(config_path)
+        return cls._from_data(data, config_path)
 
