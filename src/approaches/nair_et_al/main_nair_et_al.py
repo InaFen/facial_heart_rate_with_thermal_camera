@@ -7,9 +7,11 @@ from preprocessing import preprocessing_pipeline
 from src.approaches.new_approach.classes.user_input import Config
 
 
-CONFIGS_PATH = "src/approaches/nair_et_al/configs_nair_et_al.json"
+CONFIGS_PATH = "src/approaches/nair_et_al/configs_nair_et_al.yaml"
 
-configs = Config.from_json(CONFIGS_PATH)
+configs = Config.from_yaml(CONFIGS_PATH)
+output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
+apply_dlib_landmark_detection = True
 
 filtered_signal_matrix_path = "data/saved_data/nair_et_al/filtered_signal_matrix.npy"
 normalized_signal_matrix_path = "data/saved_data/nair_et_al/normalized_signal_matrix.npy"
@@ -23,7 +25,7 @@ filtered_mean_values_subregions_matrix_path = "data/saved_data/nair_et_al/filter
 # Preprocessing 
 #############
 
-preprocessing_pipeline(configs.video, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, configs.fps, [configs.bandpass_lowcut, configs.bandpass_highcut], frames_dir=configs.path_gray_frames, raw_pixel_data_path = raw_pixel_data_path, output_dir=output_dir)
+preprocessing_pipeline(configs.path_video, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, configs.fps, [configs.bandpass_lowcut, configs.bandpass_highcut], frames_dir=configs.path_gray_frames, raw_pixel_data_path = configs.path_roi_pixel_data, output_dir=output_dir)
 
 ############
 # Landmark detection & denoising 
@@ -71,12 +73,12 @@ plot_Vh_components(Vh, num_components=5) # TODO double-check why way smoother th
 # Apply signal quality indices to select the best component
 normal_hr_freq = 1.683  # in Hz (101 bpm) - was during testing
 
-optimal_vh_components = generate_ppg_signal(signals = Vh, fs = fps, normal_hr_freq = normal_hr_freq, quality_threshold=0.379)
+optimal_vh_components = generate_ppg_signal(signals = Vh, fs = configs.fps, normal_hr_freq = normal_hr_freq, quality_threshold=0.379)
 
 plot_Vh_components(optimal_vh_components[np.newaxis, :], num_components=1)
 
 # Short-Time-Fourier-Transform
-frequencies, times, short_fourier_ppg = stft(optimal_vh_components, fs=fps)
+frequencies, times, short_fourier_ppg = stft(optimal_vh_components, fs=configs.fps)
 short_time_fourier_ppg_magnitude = np.abs(short_fourier_ppg) 
 
 # TODO following steps
