@@ -1,3 +1,5 @@
+import sys
+
 from utils import *
 from helpers_landmark_detection import *
 import numpy as np
@@ -5,6 +7,11 @@ import os
 from scipy.signal import stft
 from preprocessing import preprocessing_pipeline
 from src.approaches.new_approach.classes.user_input import Config
+
+project_root = "/home/arbeit/Dokumente/master_thesis/"
+sys.path.insert(0, project_root)
+
+from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 
 
 CONFIGS_PATH = "src/approaches/nair_et_al/configs_nair_et_al.yaml"
@@ -21,14 +28,9 @@ mean_of_subregions_path = "data/saved_data/nair_et_al/mean_values_subregions.npy
 path_save_video_with_landmarks = "data/recorded_videos/video_with_landmarks.avi"
 filtered_mean_values_subregions_matrix_path = "data/saved_data/nair_et_al/filtered_mean_values_subregions.npy"
 
-#############
-# Preprocessing 
-#############
-
-preprocessing_pipeline(configs.path_video, filtered_signal_matrix_path, normalized_signal_matrix_path, first_derivative_matrix_path, second_derivative_matrix_path, configs.fps, [configs.bandpass_lowcut, configs.bandpass_highcut], frames_dir=configs.path_gray_frames, raw_pixel_data_path = configs.path_roi_pixel_data, output_dir=output_dir)
 
 ############
-# Landmark detection & denoising 
+# Preprocessing: Landmark detection & denoising 
 ############
 #apply_facemesh_to_thermal_video(input_path=video_path, output_path=path_save_video_with_landmarks)
 
