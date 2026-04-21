@@ -1,11 +1,11 @@
 import sys
-
-from utils import *
-from helpers_landmark_detection import *
+from collections import defaultdict
 import numpy as np
 import os
 from scipy.signal import stft
-from preprocessing import preprocessing_pipeline
+
+from utils import *
+from helpers_landmark_detection import *
 from src.approaches.new_approach.classes.user_input import Config
 
 project_root = "/home/arbeit/Dokumente/master_thesis/"
@@ -18,7 +18,7 @@ CONFIGS_PATH = "src/approaches/nair_et_al/configs_nair_et_al.yaml"
 
 configs = Config.from_yaml(CONFIGS_PATH)
 output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
-apply_dlib_landmark_detection = True
+apply_dlib_landmark_detection = False
 
 filtered_signal_matrix_path = "data/saved_data/nair_et_al/filtered_signal_matrix.npy"
 normalized_signal_matrix_path = "data/saved_data/nair_et_al/normalized_signal_matrix.npy"
@@ -32,11 +32,11 @@ filtered_mean_values_subregions_matrix_path = "data/saved_data/nair_et_al/filter
 ############
 # Preprocessing: Landmark detection & denoising 
 ############
-#apply_facemesh_to_thermal_video(input_path=video_path, output_path=path_save_video_with_landmarks)
-
-# TODO try face detection with dlib but with image transferred to RGB, see yang et al.
+print("IMPORTANT: If mediapipe is applied, each ROI will not be split further so needs to be defined accordingly in configs.")
 
 if apply_dlib_landmark_detection:
+    # TODO try face detection with dlib but with image transferred to RGB, see yang et al.
+    # TODO see whether works
     if not(os.path.exists(mean_of_subregions_path)):
         mean_values_subregions_matrix = get_facial_dlib_landmarks_regions_and_save_their_mean(video_path=video_path, path_save_video_with_landmarks=path_save_video_with_landmarks, upsample=2, resize_frame = True)
         np.save(mean_of_subregions_path, mean_values_subregions_matrix)
@@ -49,11 +49,26 @@ else:
 
 # Apply bandpass filter
 if not(os.path.exists(filtered_mean_values_subregions_matrix_path)):
+        #TODO continue code preparation here
+        #TODO and then follow pipeline as described here VI. HEART RATE AND BP ESTIMATION in paper
+
     print("Applying bandpass filter to mean values of subregions...")
-    subregions, frames = mean_values_subregions_matrix.shape
+
+    # Create matrix with columns: subregions, rows: time frames
+    result = defaultdict(list)
+    subregions = []
+
+    for frame in roi_pixel_data:
+        for roi, values in frame.items():
+            if roi not in result:
+                subregions.append(roi)  # remember first-seen order
+            result[roi].append(values["mean_kelvin_multiplied_100"])
+
+    # build matrix in the same order
+    mean_values_subregions_matrix = [result[roi] for roi in subregions]
     filtered_mean_values_subregions_matrix = np.zeros_like(mean_values_subregions_matrix, dtype=np.float32)
 
-    for subregion in range(subregions):
+    for subregion in range(len(subregions)):
         filtered_mean_values_subregions_matrix[subregion, :] = bandpass_filter(mean_values_subregions_matrix[subregion, :], edges=[0.4,4.4], sample_rate=9.0, poles=5)
 
     # Save uncompressed
