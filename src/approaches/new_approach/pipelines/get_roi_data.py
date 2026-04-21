@@ -18,12 +18,15 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
 
-def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_files = False) -> tuple:
+def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_files: bool = False) -> tuple:
     """
     Extract ROI data from thermal video and gray frames (raw data).
     ROI can be defined via manual user input (drawing on first frame) or via facemesh-based landmark detection.
     The ROI masks are applied to either the video frames or the original gray frames to extract pixel data for each ROI over time.
 
+    Parameters:
+    - configs: Config object containing all necessary paths and parameters
+    - extract_from_video_instead_of_gray_files: If True, applies ROI masks to video, else applies to gray frames (default: False)
     
     Returns:
         Tuple of (roi_pixel_data, roi_pixel_log) where:
@@ -96,7 +99,8 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
                     grid_cols=grid_cols,
                 )
     
-    # If manual ROI not enabled, use facemesh-based ROI detection: detects landmarks on thermal video, applies ROI mask then on gray frames (so raw data)
+    # If manual ROI not enabled, use facemesh-based ROI detection: 
+    # detects landmarks on thermal video, applies ROI mask then on gray frames (so raw data)
     else:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
             roi_pixel_log = apply_facemesh_to_thermal_video(
@@ -143,7 +147,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
         if (
             not os.path.isfile(configs.path_roi_pixel_data)
             or configs.overwrite_existing_files
-            or split_single_manual_roi
+            or split_single_manual_roi # Each ROI is treated as a sub-ROI so ROIs need to be defined accordingly in config
         ):
             roi_pixel_data = apply_roi_masks_to_gray_frames(
                 gray_dir=configs.path_gray_frames,
@@ -151,7 +155,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
                 output_npz=None,
                 start_frame=start_frame if limit_to_timespan else 0,
                 end_frame=end_frame if limit_to_timespan else None,
-            ) # saved as npy in step below (has only one array)
+            )
             os.makedirs(os.path.dirname(configs.path_roi_pixel_data), exist_ok=True)
             np.save(configs.path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
         else:
@@ -182,7 +186,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, f"roi_first_frame_{start_frame:06d}.png")
 
-            display_frame = True
+            # If extracting from video, read the first frame of the video for visualization, else read the corresponding gray frame
             if extract_from_video_instead_of_gray_files:
                 cap = cv2.VideoCapture(configs.path_video)
                 if cap.isOpened():
@@ -215,6 +219,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
                         frame_clipped = np.clip(frame, vmin, vmax)
                         display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
+            # Overlay ROI masks on the frame for visualization and save
             if display_frame is not None and roi_masks:
                 if display_frame.ndim == 2:
                     overlay = cv2.cvtColor(display_frame, cv2.COLOR_GRAY2BGR)
