@@ -3,6 +3,8 @@ from collections import defaultdict
 import numpy as np
 import os
 from scipy.signal import stft
+import matplotlib.pyplot as plt
+import numpy as np
 
 from utils import *
 from helpers_landmark_detection import *
@@ -12,7 +14,7 @@ project_root = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, project_root)
 
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
-
+from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 
 CONFIGS_PATH = "src/approaches/nair_et_al/configs_nair_et_al.yaml"
 
@@ -26,7 +28,7 @@ first_derivative_matrix_path = "data/saved_data/nair_et_al/first_derivative_matr
 second_derivative_matrix_path = "data/saved_data/nair_et_al/second_derivative_matrix.npy"
 mean_of_subregions_path = "data/saved_data/nair_et_al/mean_values_subregions.npy"
 path_save_video_with_landmarks = "data/recorded_videos/video_with_landmarks.avi"
-filtered_mean_values_subregions_matrix_path = "data/saved_data/nair_et_al/filtered_mean_values_subregions.npy"
+bandpassed_mean_values_subregions_path = "data/saved_data/nair_et_al/bandpassed_mean_values_subregions.npy"
 
 
 ############
@@ -48,47 +50,75 @@ else:
 
 
 # Apply bandpass filter
-if not(os.path.exists(filtered_mean_values_subregions_matrix_path)):
-        #TODO continue code preparation here
-        #TODO and then follow pipeline as described here VI. HEART RATE AND BP ESTIMATION in paper
-
+if not(os.path.exists(bandpassed_mean_values_subregions_path)):
     print("Applying bandpass filter to mean values of subregions...")
 
-    # Create matrix with columns: subregions, rows: time frames
+    # Create matrix with columns: subregions, rows: time frames, values: mean pixel intensity of the subregion in the frame
     result = defaultdict(list)
-    subregions = []
+    subregions_names = []
 
     for frame in roi_pixel_data:
         for roi, values in frame.items():
             if roi not in result:
-                subregions.append(roi)  # remember first-seen order
+                subregions_names.append(roi)  # remember first-seen order
             result[roi].append(values["mean_kelvin_multiplied_100"])
 
-    # build matrix in the same order
-    mean_values_subregions_matrix = [result[roi] for roi in subregions]
-    filtered_mean_values_subregions_matrix = np.zeros_like(mean_values_subregions_matrix, dtype=np.float32)
+    mean_values_subregions = [result[roi] for roi in subregions_names]
+    bandpassed_mean_values_subregions = np.zeros_like(mean_values_subregions, dtype=np.float32)
 
-    for subregion in range(len(subregions)):
-        filtered_mean_values_subregions_matrix[subregion, :] = bandpass_filter(mean_values_subregions_matrix[subregion, :], edges=[0.4,4.4], sample_rate=9.0, poles=5)
+    for subregion in range(len(subregions_names)):
+        bandpassed_mean_values_subregions[subregion] = apply_butterworth_bandpass_filter(signal = mean_values_subregions[subregion], lowcut = configs.bandpass_lowcut, highcut = configs.bandpass_highcut, fs = configs.fps, order = configs.bandpass_order)
 
-    # Save uncompressed
-    np.save(filtered_mean_values_subregions_matrix_path, filtered_mean_values_subregions_matrix)
+    np.save(bandpassed_mean_values_subregions_path, bandpassed_mean_values_subregions)
+
+
+    if configs.plot_steps:
+        # Plot signal before and after bandpass filtering for all subregions
+        # ODO maybe move to own function
+        bandpassed = np.array(bandpassed_mean_values_subregions)
+        raw = np.array(mean_values_subregions)
+        
+        t = np.arange(raw.shape[1])
+
+        fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+        # ---- Axis 0: raw ----
+        for i in range(raw.shape[0]):
+            axes[0].plot(t, raw[i], label=subregions_names[i])
+
+        axes[0].set_title("Mean values subregions")
+        axes[0].set_ylabel("Amplitude")
+        axes[0].legend(loc='upper right', fontsize=8)
+
+        # ---- Axis 1: bandpassed ----
+        for i in range(bandpassed.shape[0]):
+            axes[1].plot(t, bandpassed[i], label=subregions_names[i])
+
+        axes[1].set_title("Bandpassed mean values subregions")
+        axes[1].set_xlabel("Time")
+        axes[1].set_ylabel("Amplitude")
+        axes[1].legend(loc='upper right', fontsize=8)
+
+        plt.tight_layout()
+        plt.show()
+
 else:
-    filtered_mean_values_subregions_matrix = np.load(filtered_mean_values_subregions_matrix_path)
+    bandpassed_mean_values_subregions = np.load(bandpassed_mean_values_subregions_path)
 
-# TODO plot signal before SVD
-
+#TODO continue code preparation here
+#TODO and then follow pipeline as described here VI. HEART RATE AND BP ESTIMATION in paper
+#TODO double-check code from here on
 # Dimensionality Reduction
 # Apply SVD
 # Should be:
 # Rows = regions -> weight of the signals in the spatial location in U
 # Columns = time frames -> siginificant temporal signals in V
-U, S, Vh = np.linalg.svd(filtered_mean_values_subregions_matrix, full_matrices=False)
+U, S, Vh = np.linalg.svd(bandpassed_mean_values_subregions, full_matrices=False)
 
-plot_Vh_components(Vh, num_components=5) # TODO double-check why way smoother than in line 68 plot
+plot_Vh_components(Vh, num_components=3) 
 
 # Apply signal quality indices to select the best component
-normal_hr_freq = 1.683  # in Hz (101 bpm) - was during testing
+normal_hr_freq = 1.683  # in Hz (101 bpm) - was during testing #TODO
 
 optimal_vh_components = generate_ppg_signal(signals = Vh, fs = configs.fps, normal_hr_freq = normal_hr_freq, quality_threshold=0.379)
 

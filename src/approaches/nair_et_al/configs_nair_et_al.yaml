@@ -12,9 +12,9 @@ processing:
   overwrite_existing_files: true
   plot_steps: true
   fps: 8.767701401175636 
-  bandpass_lowcut: 0.667
-  bandpass_highcut: 3.0
-  bandpass_order: 4
+  bandpass_lowcut: 0.4
+  bandpass_highcut: 4.0 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
+  bandpass_order: 5
   use_ema: true
   ema_alpha: 0.15
   manual_roi_enabled: false

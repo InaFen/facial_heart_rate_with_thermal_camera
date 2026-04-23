@@ -191,24 +191,6 @@ def extract_pixel_data_from_gray_frames(
     return frame_pixel_data
 
 
-def bandpass_filter(data: np.ndarray, edges: list[float], sample_rate: float, poles: int = 5):
-    """Based on example from scipy documentation.
-    Applies a Butterworth bandpass filter to the data.
-
-    :param data: 1D numpy array of the signal to be filtered.
-    :param edges: List containing the low and high cutoff frequencies [low, high].
-    :param sample_rate: Sampling rate of the signal.
-    :param poles: Number of poles for the Butterworth filter.
-    :return: Filtered signal as a 1D numpy array."""
-
-    assert data.ndim == 1
-    assert len(data) > 2 * poles 
-
-    sos = scipy.signal.butter(poles, edges, 'bandpass', fs=sample_rate, output='sos')
-    filtered_data = scipy.signal.sosfiltfilt(sos, data)
-    return filtered_data
-
-
 def min_max_normalization(signal: np.ndarray) -> np.ndarray:
     """
     Applies min-max normalization to the signal.
