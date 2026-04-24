@@ -17,6 +17,9 @@ import numpy as np
 import cv2
 from scipy.signal import butter, filtfilt
 
+project_root = "/home/arbeit/Dokumente/master_thesis/"
+sys.path.insert(0, project_root)
+
 try:
 	import mediapipe as mp
 except ImportError:  # pragma: no cover - optional dependency
@@ -33,12 +36,17 @@ except ImportError:  # pragma: no cover - allows running the file directly
 	from netd_analysis import average_consecutive_frames
 
 try:
-	from ..ground_truth_methods.offset_detection_ground_truth import read_opensignals_txt, read_opensignals_txt_converted
+	from .experiments_config import load_experiment_from_yaml
+except ImportError:  # pragma: no cover - allows running the file directly
+	from experiments_config import load_experiment_from_yaml
+
+try:
+	from ..ground_truth_methods.offset_detection_ground_truth import read_opensignals_txt, read_opensignals_txt_converted, offset_and_saving_pipeline
 except ImportError:  # pragma: no cover - allows running the file directly
 	project_root = Path(__file__).resolve().parents[2]
 	if str(project_root) not in sys.path:
 		sys.path.insert(0, str(project_root))
-	from src.ground_truth_methods.offset_detection_ground_truth import read_opensignals_txt, read_opensignals_txt_converted
+	from src.ground_truth_methods.offset_detection_ground_truth import read_opensignals_txt, read_opensignals_txt_converted, offset_and_saving_pipeline
 
 
 def discover_asc_files(directory: str | Path, recursive: bool = False) -> list[Path]:
@@ -1010,72 +1018,21 @@ def create_video_from_thermal_frames(
 
 
 def main() -> None:
-	# Temple before sport
-	asc_directory_1 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii/")
-	cache_path_1 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii.npy")
-	ground_truth_path_1 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_1/opensignals_0007800F7623_2026-03-31_16-24-55.npz")
-	ground_truth_txt_path_1 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_1/opensignals_0007800F7623_2026-03-31_16-24-55.txt")
-	offset_ground_truth_seconds_1 = 110.1
-	video_output_path_1 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_1_Ascii.mp4")
-	
-	# Temple after sport
-	asc_directory_4 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii/")
-	cache_path_4 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii.npy")
-	ground_truth_path_4 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.npz")
-	ground_truth_txt_path_4 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_4/opensignals_0007800F7623_2026-03-31_16-48-40.txt")
-	offset_ground_truth_seconds_4 = 14.25
-	video_output_path_4 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_4_Ascii.mp4")
-	
-	# Face befor sport
-	asc_directory_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii/")
-	cache_path_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii.npy")
-	ground_truth_path_2 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_2/opensignals_0007800F7623_2026-03-31_16-37-56.npz")
-	ground_truth_txt_path_2 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_2/opensignals_0007800F7623_16-37-56_converted.txt")
-	offset_ground_truth_seconds_2 = 45.5
-	video_output_path_2 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_2_Ascii.mp4")
-	
-	# Face after sport
-	asc_directory_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii/")
-	cache_path_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii.npy")
-	ground_truth_path_3 = Path("data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_3/opensignals_0007800F7623_2026-03-31_16-42-26.npz")
-	ground_truth_txt_path_3 = Path("data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_3/opensignals_0007800F7623_2026-03-31_16-42-26.txt")
-	offset_ground_truth_seconds_3 = 9.25
-	video_output_path_3 = Path("/mnt/wwn-0x50000398325009f6-part1/Julian_31_03_3_Ascii.mp4")
+	experiments_yaml_path = Path("src/cameras_pipelines/mwir/experiments_mwir.yaml")
+	selected_person = "paulo"
+	selected_region: Literal["temple", "face"] = "temple"
+	selected_phase: Literal["before", "after"] = "before"
 
-	recording_number = 1
-
-	if recording_number == 1:
-		asc_directory = asc_directory_1
-		cache_path = cache_path_1
-		ground_truth_path = ground_truth_path_1
-		ground_truth_txt_path = ground_truth_txt_path_1
-		offset_ground_truth_seconds = offset_ground_truth_seconds_1
-		video_output_path = video_output_path_1
-		print("Using recording 1: Temple before sport")
-	elif recording_number == 4:
-		asc_directory = asc_directory_4
-		cache_path = cache_path_4
-		ground_truth_path = ground_truth_path_4
-		ground_truth_txt_path = ground_truth_txt_path_4
-		offset_ground_truth_seconds = offset_ground_truth_seconds_4
-		video_output_path = video_output_path_4
-		print("Using recording 4: Temple after sport")
-	elif recording_number == 2:
-		asc_directory = asc_directory_2
-		cache_path = cache_path_2
-		ground_truth_path = ground_truth_path_2
-		ground_truth_txt_path = ground_truth_txt_path_2
-		offset_ground_truth_seconds = offset_ground_truth_seconds_2
-		video_output_path = video_output_path_2
-		print("Using recording 2: Face before sport")
-	elif recording_number == 3:
-		asc_directory = asc_directory_3
-		cache_path = cache_path_3
-		ground_truth_path = ground_truth_path_3
-		ground_truth_txt_path = ground_truth_txt_path_3
-		offset_ground_truth_seconds = offset_ground_truth_seconds_3
-		video_output_path = video_output_path_3
-		print("Using recording 3: Face after sport")
+	selected_experiment = load_experiment_from_yaml(
+		yaml_path=experiments_yaml_path,
+		person=selected_person,
+		region=selected_region,
+		phase=selected_phase,
+	)
+	print(
+		"Using experiment: "
+		f"person={selected_person}, region={selected_region}, phase={selected_phase}"
+	)
 
 	recording_length_seconds = 60.0
 	ground_truth__fps = 1000.0
@@ -1083,7 +1040,7 @@ def main() -> None:
 
 	recursive = False
 	overwrite_cache = False
-	build_cache_if_missing = False
+	build_cache_if_missing = True
 	create_video = True
 	fps: float | None = 100.0
 	apply_average_consecutive_frames_first = False
@@ -1114,36 +1071,45 @@ def main() -> None:
 	non_averaged_signal_for_comparison: np.ndarray | None = None
 	reducer: Literal["mean", "median"] = "mean"
 
+	npz_path = selected_experiment.ground_truth_path.parent
+	npz_filename = selected_experiment.ground_truth_path.name
+	if not selected_experiment.ground_truth_path.exists():
+		offset_and_saving_pipeline(
+			signal_path=selected_experiment.ground_truth_txt_path,
+			npz_path=npz_path,
+			npz_filename=npz_filename,
+		)
+
 	ground_truth_time, ground_truth_signal, selected_ground_truth_key = load_ground_truth_segment_from_npz(
-		npz_path=ground_truth_path,
-		offset_seconds=offset_ground_truth_seconds,
+		npz_path=selected_experiment.ground_truth_path,
+		offset_seconds=selected_experiment.offset_ground_truth_seconds,
 		recording_length_seconds=recording_length_seconds,
 		ground_truth_fps=ground_truth__fps,
 	)
 
-	if recording_number == 2:
+	if str(selected_experiment.ground_truth_txt_path).lower().endswith("_converted.txt"):
 		button_time, button_signal, _ = load_button_segment_from_opensignals_txt_converted(
-			txt_path=ground_truth_txt_path,
-			offset_seconds=offset_ground_truth_seconds,
+			txt_path=selected_experiment.ground_truth_txt_path,
+			offset_seconds=selected_experiment.offset_ground_truth_seconds,
 			recording_length_seconds=recording_length_seconds,
 		)
 	else:
 		button_time, button_signal, _ = load_button_segment_from_opensignals_txt(
-			txt_path=ground_truth_txt_path,
-			offset_seconds=offset_ground_truth_seconds,
+			txt_path=selected_experiment.ground_truth_txt_path,
+			offset_seconds=selected_experiment.offset_ground_truth_seconds,
 			recording_length_seconds=recording_length_seconds,
 		)
 
-	if build_cache_if_missing and not cache_path.exists():
+	if build_cache_if_missing and not selected_experiment.cache_path.exists():
 		build_thermal_cache_npy(
-			asc_directory=asc_directory,
-			cache_path=cache_path,
+			asc_directory=selected_experiment.asc_directory,
+			cache_path=selected_experiment.cache_path,
 			recursive=recursive,
 			overwrite=overwrite_cache,
 			progress_every=100,
 		)
 
-	original_frames = load_thermal_cache_npy(cache_path, mmap_mode="r")
+	original_frames = load_thermal_cache_npy(selected_experiment.cache_path, mmap_mode="r")
 	frames = original_frames
 	print(f"Loaded cached frames with shape: {frames.shape}")
 
@@ -1249,7 +1215,7 @@ def main() -> None:
 	if create_video:
 		create_video_from_thermal_frames(
 			frames,
-			output_path=video_output_path,
+			output_path=selected_experiment.video_output_path,
 			fps=thermal_fps,
 			normalization="global",
 			colormap="inferno",
@@ -1267,9 +1233,9 @@ def main() -> None:
 		ground_truth_signal=ground_truth_signal,
 		button_time=button_time,
 		button_signal=button_signal,
-		offset_seconds=offset_ground_truth_seconds,
+		offset_seconds=selected_experiment.offset_ground_truth_seconds,
 		recording_length_seconds=recording_length_seconds,
-		thermal_start_seconds=offset_ground_truth_seconds,
+		thermal_start_seconds=selected_experiment.offset_ground_truth_seconds,
 		ground_truth_label=selected_ground_truth_key,
 		thermal_title="Thermal Signal (Raw)",
 	)
@@ -1298,9 +1264,9 @@ def main() -> None:
 			ground_truth_signal=ground_truth_signal,
 			button_time=button_time,
 			button_signal=button_signal,
-			offset_seconds=offset_ground_truth_seconds,
+			offset_seconds=selected_experiment.offset_ground_truth_seconds,
 			recording_length_seconds=recording_length_seconds,
-			thermal_start_seconds=offset_ground_truth_seconds,
+			thermal_start_seconds=selected_experiment.offset_ground_truth_seconds,
 			ground_truth_label=selected_ground_truth_key,
 			thermal_title=(
 				"Thermal Signal (Bandpass "
