@@ -206,13 +206,8 @@ def save_signal_to_npz(target_path: str, filename: str, signal: npt.NDArray[np.f
     
     print("Signal saved to", os.path.join(target_path, filename))
 
-
-if __name__ == "__main__":
-    signal_path = "data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_3/opensignals_0007800F7623_2026-03-31_16-42-26.txt"
-    npz_filename = "opensignals_0007800F7623_2026-03-31_16-42-26.npz"
-    npz_path = "data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_3/"
-    
-    
+def offset_and_saving_pipeline(signal_path: str, npz_path: str, npz_filename: str):
+    """Pipeline to read OpenSignals text file, extract signal and button data, and save to .npz format."""
     # Read signal and button pressed data
     record_data, button_data, fs = read_opensignals_txt(signal_path)
     
@@ -251,3 +246,14 @@ if __name__ == "__main__":
     
     # Save to npz
     save_signal_to_npz(target_path=npz_path, filename=npz_filename, signal=record_data, sampling_rate=fs, units="mV")
+
+
+if __name__ == "__main__":
+    signal_path = "data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_3/opensignals_0007800F7623_2026-03-31_16-42-26.txt"
+    npz_filename = "opensignals_0007800F7623_2026-03-31_16-42-26.npz"
+    npz_path = "data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_3/"
+
+    offset_and_saving_pipeline(signal_path=signal_path, npz_path=npz_path, npz_filename=npz_filename)
+    
+    
+    
