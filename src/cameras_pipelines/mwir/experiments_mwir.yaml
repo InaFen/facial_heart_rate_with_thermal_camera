@@ -40,12 +40,12 @@ paulo:
   offset_ground_truth_seconds_temple_before: 0.0 #todo
   video_output_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_2.mp4"
 
-  # Temple after sport
+  # Temple after sport #todo
   asc_directory_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_4/" #fix
   cache_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_4.npy"
   ground_truth_path_temple_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Paulo_4/opensignals_0007800F80FA_2026-04-20_14-32-38.npz"
   ground_truth_txt_path_temple_after: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_4/opensignals_0007800F80FA_2026-04-20_14-32-38.txt"
-  offset_ground_truth_seconds_temple_after: 14.25 #todo
+  offset_ground_truth_seconds_temple_after: 0.0 #todo
   video_output_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_4.mp4"
 
   # Face before sport
@@ -53,7 +53,7 @@ paulo:
   cache_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_1.npy"
   ground_truth_path_face_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Paulo_1/opensignals_0007800F80FA_2026-04-20_14-09-21.npz"
   ground_truth_txt_path_face_before: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_1/opensignals_0007800F80FA_2026-04-20_14-09-21.txt"
-  offset_ground_truth_seconds_face_before: 45.5 #todo
+  offset_ground_truth_seconds_face_before: 0.0 #todo
   video_output_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_1.mp4"
 
   # Face after sport
@@ -61,71 +61,71 @@ paulo:
   cache_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_3.npy"
   ground_truth_path_face_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Paulo_3/opensignals_0007800F80FA_2026-04-20_14-25-07.npz" # double-check
   ground_truth_txt_path_face_after: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_3/opensignals_0007800F80FA_2026-04-20_14-25-07.txt" # double-check
-  offset_ground_truth_seconds_face_after: 9.25 #todo
+  offset_ground_truth_seconds_face_after: 0.0 #todo
   video_output_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_3.mp4"
 
 ina:
   # Temple before sport
-  asc_directory_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_2/"
-  cache_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_2.npy"
-  ground_truth_path_temple_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Ina_2/opensignals_0007800F80FA_2026-04-20_15-10-18.npz"
-  ground_truth_txt_path_temple_before: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_2/opensignals_0007800F80FA_2026-04-20_15-10-18.txt"
-  offset_ground_truth_seconds_temple_before: 110.1 #todo
-  video_output_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_2.mp4"
+  asc_directory_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_2/"
+  cache_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_Ascii/Ina_20_4_2.npy"
+  ground_truth_path_temple_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Ina/Ina_2/opensignals_0007800F80FA_2026-04-20_15-10-18.npz"
+  ground_truth_txt_path_temple_before: "data/ground_truth/opensignals/original_signal/20042026/Ina/Ina_2/opensignals_0007800F80FA_2026-04-20_15-10-18.txt"
+  offset_ground_truth_seconds_temple_before: 0.0 #todo
+  video_output_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_Ascii/Ina_20_4_2.mp4"
 
   # Temple after sport
-  asc_directory_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_4/"
-  cache_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_4.npy"
-  ground_truth_path_temple_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Ina_4/opensignals_0007800F80FA_2026-04-20_16-18-00.npz"
-  ground_truth_txt_path_temple_after: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_4/opensignals_0007800F80FA_2026-04-20_16-18-00.txt"
-  offset_ground_truth_seconds_temple_after: 14.25 #todo
-  video_output_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_4.mp4"
+  asc_directory_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_4/"
+  cache_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_Ascii/Ina_20_4_4.npy"
+  ground_truth_path_temple_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Ina/Ina_4/opensignals_0007800F80FA_2026-04-20_16-18-00.npz"
+  ground_truth_txt_path_temple_after: "data/ground_truth/opensignals/original_signal/20042026/Ina/Ina_4/opensignals_0007800F80FA_2026-04-20_16-18-00.txt"
+  offset_ground_truth_seconds_temple_after: 0.0 #todo
+  video_output_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_Ascii/Ina_20_4_4.mp4"
 
   # Face before sport
-  asc_directory_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_1/"
-  cache_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_1.npy"
-  ground_truth_path_face_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Ina_1/opensignals_0007800F80FA_2026-04-20_15-04-49.npz"
-  ground_truth_txt_path_face_before: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_1/opensignals_0007800F80FA_2026-04-20_15-04-49.txt"
-  offset_ground_truth_seconds_face_before: 45.5 #todo
-  video_output_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_1.mp4"
+  asc_directory_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_1/"
+  cache_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_Ascii/Ina_20_4_1.npy"
+  ground_truth_path_face_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Ina/Ina_1/opensignals_0007800F80FA_2026-04-20_15-04-49.npz"
+  ground_truth_txt_path_face_before: "data/ground_truth/opensignals/original_signal/20042026/Ina/Ina_1/opensignals_0007800F80FA_2026-04-20_15-04-49.txt"
+  offset_ground_truth_seconds_face_before: 0.0 #todo
+  video_output_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_Ascii/Ina_20_4_1.mp4"
 
   # Face after sport
-  asc_directory_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_3/"
-  cache_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_3.npy"
-  ground_truth_path_face_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Ina_3/opensignals_0007800F80FA_2026-04-20_15-14-22.npz" # double-check
-  ground_truth_txt_path_face_after: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_3/opensignals_0007800F80FA_2026-04-20_15-14-22.txt" # double-check
-  offset_ground_truth_seconds_face_after: 9.25 #todo
-  video_output_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_3.mp4"
+  asc_directory_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_3/"
+  cache_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_Ascii/Ina_20_4_3.npy"
+  ground_truth_path_face_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Ina/Ina_3/opensignals_0007800F80FA_2026-04-20_15-14-22.npz" # double-check
+  ground_truth_txt_path_face_after: "data/ground_truth/opensignals/original_signal/20042026/Ina/Ina_3/opensignals_0007800F80FA_2026-04-20_15-14-22.txt" # double-check
+  offset_ground_truth_seconds_face_after: 0.0 #todo
+  video_output_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Ina_20_4_Ascii/Ina_20_4_3.mp4"
 
 melissa:
   # Temple before sport
-  asc_directory_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_2/"
-  cache_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_2.npy"
-  ground_truth_path_temple_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Melissa_2/opensignals_0007800F80FA_2026-04-20_14-45-21.npz"
-  ground_truth_txt_path_temple_before: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_2/opensignals_0007800F80FA_2026-04-20_14-45-21.txt"
-  offset_ground_truth_seconds_temple_before: 110.1 #todo
-  video_output_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_2.mp4"
+  asc_directory_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_2/"
+  cache_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_Ascii/Melissa_20_4_2.npy"
+  ground_truth_path_temple_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Melissa/Melissa_2/opensignals_0007800F80FA_2026-04-20_14-45-21.npz"
+  ground_truth_txt_path_temple_before: "data/ground_truth/opensignals/original_signal/20042026/Melissa/Melissa_2/opensignals_0007800F80FA_2026-04-20_14-45-21.txt"
+  offset_ground_truth_seconds_temple_before: 0.0 #todo
+  video_output_path_temple_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_Ascii/Melissa_20_4_2.mp4"
 
   # Temple after sport
-  asc_directory_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_4/" # move Melissa 1 here
-  cache_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_4.npy"
-  ground_truth_path_temple_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Melissa_4/opensignals_0007800F80FA_2026-04-20_14-52-24.npz"
-  ground_truth_txt_path_temple_after: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_4/opensignals_0007800F80FA_2026-04-20_14-52-24.txt"
-  offset_ground_truth_seconds_temple_after: 14.25 #todo
-  video_output_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_4.mp4"
+  asc_directory_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_4/" 
+  cache_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_Ascii/Melissa_20_4_4.npy"
+  ground_truth_path_temple_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Melissa/Melissa_4/opensignals_0007800F80FA_2026-04-20_14-52-24.npz"
+  ground_truth_txt_path_temple_after: "data/ground_truth/opensignals/original_signal/20042026/Melissa/Melissa_4/opensignals_0007800F80FA_2026-04-20_14-52-24.txt"
+  offset_ground_truth_seconds_temple_after: 0.0 #todo
+  video_output_path_temple_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_Ascii/Melissa_20_4_4.mp4"
 
-  # Face before sport
-  asc_directory_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_1/"
-  cache_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_1.npy"
-  ground_truth_path_face_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Melissa_1/opensignals_0007800F80FA_2026-04-20_14-40-02.npz"
-  ground_truth_txt_path_face_before: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_1/opensignals_0007800F80FA_2026-04-20_14-40-02.txt"
-  offset_ground_truth_seconds_face_before: 45.5 #todo
-  video_output_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_1.mp4"
+  # Face before sport # move Melissa 1 here
+  asc_directory_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_1/"
+  cache_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_Ascii/Melissa_20_4_1.npy"
+  ground_truth_path_face_before: "data/ground_truth/opensignals/extracted_npy_files/20042026/Melissa/Melissa_1/opensignals_0007800F80FA_2026-04-20_14-40-02.npz"
+  ground_truth_txt_path_face_before: "data/ground_truth/opensignals/original_signal/20042026/Melissa/Melissa_1/opensignals_0007800F80FA_2026-04-20_14-40-02.txt"
+  offset_ground_truth_seconds_face_before: 0.0 #todo
+  video_output_path_face_before: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2₀₂₆_MWIR/Melissa_20_4_Ascii/Melissa_20_4_1.mp4"
 
   # Face after sport
-  asc_directory_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_3/"
-  cache_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_3.npy"
-  ground_truth_path_face_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Paulo/Melissa_3/opensignals_0007800F80FA_2026-04-20_14-49-38.npz"
-  ground_truth_txt_path_face_after: "data/ground_truth/opensignals/original_signal/20042026/Paulo/Paulo_3/opensignals_0007800F80FA_2026-04-20_14-49-38.txt"
-  offset_ground_truth_seconds_face_after: 9.25 #todo
-  video_output_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_Ascii/Paulo_20_4_3.mp4"
+  asc_directory_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_3/"
+  cache_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_Ascii/Melissa_20_4_3.npy"
+  ground_truth_path_face_after: "data/ground_truth/opensignals/extracted_npy_files/20042026/Melissa/Melissa_3/opensignals_0007800F80FA_2026-04-20_14-49-38.npz"
+  ground_truth_txt_path_face_after: "data/ground_truth/opensignals/original_signal/20042026/Melissa/Melissa_3/opensignals_0007800F80FA_2026-04-20_14-49-38.txt"
+  offset_ground_truth_seconds_face_after: 0.0 #todo
+  video_output_path_face_after: "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Melissa_20_4_Ascii/Melissa_20_4_3.mp4"
