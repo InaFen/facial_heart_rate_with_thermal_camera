@@ -6,7 +6,11 @@ from scipy.sparse.linalg import spsolve
 # Toggle advanced metric-learning path. When True, the M-aware graph construction
 # and alternating metric learning routines will be used. Default: False (keep
 # previous behavior).
-optimize_with_M = False
+optimize_with_M = True
+
+# Toggle scalable metric-learning path. When True, uses paper-correct form with
+# proximal nuclear norm and PSD+trace constraints. Default: False (keep previous).
+optimize_with_M_not_scalable = False
 
 
 def compute_centroid(coords: list[tuple[float, float]]) -> tuple[float, float] | None:
@@ -335,4 +339,140 @@ def alternating_glr_metric_learning(block_features,
         print(f"Iter {it+1}: trace(M) = {np.trace(M):.4f}")
 
     return V, M
+
+
+# ========================================
+# Scalable M-aware graph & metric learning
+# (Paper-correct form with nuclear norm)
+# ========================================
+
+def mahalanobis_distances(X, M):
+	"""Compute pairwise Mahalanobis distances using metric M."""
+	diff = X[:, None, :] - X[None, :, :]
+	Md = diff @ M
+	dist = np.sum(Md * diff, axis=-1)
+	return np.sqrt(np.maximum(dist, 1e-12))
+
+
+def build_graph(block_features, M):
+	"""Build spatio-temporal graph adjacency and Laplacian from metric M.
+	
+	Simplified version: only spatial edges (no temporal), each frame independent.
+	"""
+	T = len(block_features)
+	N = block_features[0].shape[0]
+	total = T * N
+
+	W = np.zeros((total, total))
+
+	for t in range(T):
+		X = np.nan_to_num(block_features[t])
+
+		D = mahalanobis_distances(X, M)
+		Wt = np.exp(-D)
+
+		start = t * N
+		W[start:start+N, start:start+N] = Wt
+
+	Dg = np.diag(W.sum(axis=1))
+	L = Dg - W
+
+	return W, L
+
+
+def update_V(Y, L, alpha):
+	"""V-step: exact solve (I + alpha*L) V = Y."""
+	n = L.shape[0]
+	A = sparse.eye(n, format='csr') + alpha * sparse.csr_matrix(L)
+	return spsolve(A, Y)
+
+
+def svt_proximal(X, tau):
+	"""Singular Value Thresholding (proximal operator for nuclear norm).
+	
+	Solves: argmin ||Z||_* + (1/(2*tau))||Z - X||_F^2
+	"""
+	U, S, Vt = np.linalg.svd(X, full_matrices=False)
+
+	S_shrink = np.maximum(S - tau, 0)
+
+	return U @ np.diag(S_shrink) @ Vt
+
+
+def project_psd_trace(M, C):
+	"""Project matrix M onto PSD cone with trace <= C."""
+	eigvals, eigvecs = np.linalg.eigh(M)
+
+	eigvals = np.clip(eigvals, 0, None)
+
+	if eigvals.sum() > C:
+		eigvals *= C / eigvals.sum()
+
+	return eigvecs @ np.diag(eigvals) @ eigvecs.T
+
+
+def update_M(block_features, V, M, beta, C, lr=1.0):
+	"""M-step: gradient descent + proximal nuclear norm + PSD+trace projection.
+	
+	This follows the paper-correct form with SVT and projection.
+	"""
+	d = M.shape[0]
+	grad = np.zeros((d, d))
+
+	T = len(block_features)
+	N = block_features[0].shape[0]
+
+	# smoothness-driven gradient
+	for t in range(T):
+		X = np.nan_to_num(block_features[t])
+
+		for i in range(N):
+			for j in range(N):
+				dv = V[t*N + i] - V[t*N + j]
+				dx = (X[i] - X[j]).reshape(-1, 1)
+
+				grad += (dv ** 2) * (dx @ dx.T)
+
+	# gradient step
+	M_tilde = M - lr * grad
+
+	# nuclear norm proximal operator (key paper step)
+	M_hat = svt_proximal(M_tilde, beta * lr)
+
+	# projection onto feasible set
+	M_proj = project_psd_trace(M_hat, C)
+
+	return M_proj
+
+
+def paper_glr_metric_learning(block_features, Y,
+                              alpha=1.0,
+                              beta=0.1,
+                              C=10.0,
+                              num_iters=10):
+	"""Full alternating algorithm (paper version).
+	
+	Alternates between:
+	  - V-step: exact solve with graph Laplacian
+	  - M-step: proximal nuclear norm + PSD+trace projection
+	"""
+	d = block_features[0].shape[1]
+	M = np.eye(d)
+
+	V = Y.copy()
+
+	for it in range(num_iters):
+
+		# ---- build graph ----
+		W, L = build_graph(block_features, M)
+
+		# ---- V update (exact solve) ----
+		V = update_V(Y, L, alpha)
+
+		# ---- M update (proximal nuclear norm) ----
+		M = update_M(block_features, V, M, beta, C)
+
+		print(f"iter {it+1}: trace(M)={np.trace(M):.4f}")
+
+	return V, M
 
