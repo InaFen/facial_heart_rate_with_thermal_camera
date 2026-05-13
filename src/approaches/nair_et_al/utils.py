@@ -497,18 +497,21 @@ def show_preprocessed_signal_as_video(
         cv2.destroyAllWindows()
 
 
-def plot_Vh_components(Vh: np.ndarray, num_components: int):
+def plot_Vh_components(Vh: np.ndarray, num_components: int) -> None:
     """
-    Plots the first 'num_components' temporal components from Vh matrix.
+    Plots the first 'num_components' components from Vh matrix.
 
-    :param Vh: 2D numpy array from SVD (shape: num_components, num_frames).
-    :param num_components: Number of components to plot.
+    Parameters:
+        Vh: 2D numpy array from SVD (shape: (total amount of components, time frames))
+        num_components: number of components to plot
+    Returns:
+        None (displays the plot)
     """
     plt.figure(figsize=(12, 6))
     for i in range(num_components):
         plt.subplot(num_components, 1, i + 1)
         plt.plot(Vh[i, :])
-        plt.title(f'Temporal Component {i + 1}')
+        plt.title(f'Component {i + 1}')
         plt.xlabel('Frame')
         plt.ylabel('Amplitude')
         plt.grid()
@@ -559,7 +562,7 @@ def compute_quality_index(signal, fs, normal_hr_freq):
     return quality_index
 
 
-def generate_ppg_signal(signals, fs, normal_hr_freq, quality_threshold):
+def generate_ppg_signal(signals, fs, normal_hr_freq):
     """
     Generate PPG signal by selecting and summing high-quality components.
 
@@ -567,7 +570,6 @@ def generate_ppg_signal(signals, fs, normal_hr_freq, quality_threshold):
     - signals: list or array of candidate signals (e.g., from SVD components)
     - fs: sampling frequency
     - normal_hr_freq: normal heart rate frequency in Hz
-    - quality_threshold: minimum quality index to stop summing signals
 
     Returns:
     - ppg_signal: combined PPG signal
@@ -581,39 +583,118 @@ def generate_ppg_signal(signals, fs, normal_hr_freq, quality_threshold):
     # Step 2: Rank signals by quality (descending)
     sorted_indices = np.argsort(quality_indexs)[::-1]
 
-    # Step 3: Sum signals until a good quality is reached
+    # Step 3: Sum signals until quality decreases
     cumulative_signal = np.zeros_like(signals[0])
-    cumulative_quality = 0
+    quality_previous = 0
+    signal_previous = np.zeros_like(signals[0])
+
     for idx in sorted_indices:
         cumulative_signal += signals[idx]
         cumulative_quality = compute_quality_index(cumulative_signal, fs, normal_hr_freq)
+        if cumulative_quality < quality_previous:
+            break  # Stop if adding this component decreases quality
+        signal_previous = cumulative_signal.copy()
+        quality_previous = cumulative_quality
         print(f"Added component {idx}, Cumulative Quality Index = {cumulative_quality}")
-        if cumulative_quality >= quality_threshold:
-            break
+        
 
-    return cumulative_signal
+    return signal_previous
 
 
-def extract_curve(S_PPG_abs, lambda_reg=0.1, max_iter=100):
-    n_freq, n_time = S_PPG_abs.shape
-    cc = np.zeros(n_time)
+def extract_curve(stft_magnitude, heart_rate_candidates,smoothness_penalty =0.1):
+    n_time_windows, n_hr_candidates = stft_magnitude.shape
 
-    # Initialize cc(t) with the frequency of maximum magnitude at each time
-    for t in range(n_time):
-        cc[t] = np.argmax(S_PPG_abs[:, t])
+    # From formula: log|S_PPG|
+    log_spectral_energy = np.log(
+        stft_magnitude + 1e-12
+    )  # Add small constant to avoid log(0)
 
-    # Iterative optimization to find the best curve
-    for _ in range(max_iter):
-        new_cc = np.zeros(n_time)
-        for t in range(n_time):
-            if t > 0:
-                # Cost function: log|S_PPG| - λ * |cc(t) - cc(t-1)|
-                cost = np.log(S_PPG_abs[:, t] + 1e-10) - lambda_reg * np.abs(np.arange(n_freq) - cc[t-1])
-            else:
-                cost = np.log(S_PPG_abs[:, t] + 1e-10)
-            new_cc[t] = np.argmax(cost)
-        if np.allclose(cc, new_cc):
-            break
-        cc = new_cc
+    # Initialize
+    best_path_score = np.zeros(
+        (n_time_windows, n_hr_candidates)
+    )
+    best_previous_candidate = np.zeros(
+        (n_time_windows, n_hr_candidates),
+        dtype=int
+    )
 
-    return cc
+    best_path_score[0] = log_spectral_energy[0]
+
+    for time_index in range(1, n_time_windows):
+        for current_hr_index in range(n_hr_candidates):
+            current_hr_value = heart_rate_candidates[
+                current_hr_index
+            ]
+
+            # from formula: λ∣cc(t)−cc(t−1)∣
+            transition_scores = (
+                best_path_score[time_index - 1]
+                - smoothness_penalty
+                * np.abs(
+                    current_hr_value
+                    - heart_rate_candidates
+                )
+            )
+
+            best_previous_index = np.argmax(
+                transition_scores
+            )
+
+            # From formula: Indirectly compute sum of log|S_PPG|
+            best_path_score[
+                time_index,
+                current_hr_index
+            ] = (
+                log_spectral_energy[
+                    time_index,
+                    current_hr_index
+                ]
+                + transition_scores[
+                    best_previous_index
+                ]
+            )
+
+            best_previous_candidate[
+                time_index,
+                current_hr_index
+            ] = best_previous_index
+
+    # Find best ending HR candidate
+    best_final_hr_index = np.argmax(
+        best_path_score[-1]
+    )
+
+    # Store optimal HR indices over time
+    optimal_hr_indices = np.zeros(
+        n_time_windows,
+        dtype=int
+    )
+
+    # Set final HR candidate
+    optimal_hr_indices[-1] = best_final_hr_index
+
+    # Move backward through time
+    #
+    # Follow stored pointers to reconstruct
+    # globally optimal HR trajectory
+    for time_index in range(
+        n_time_windows - 1,
+        0,
+        -1
+    ):
+
+        optimal_hr_indices[
+            time_index - 1
+        ] = best_previous_candidate[
+            time_index,
+            optimal_hr_indices[time_index]
+        ]
+
+    # Convert candidate indices -> BPM values
+    estimated_heart_rate = (
+        heart_rate_candidates[
+            optimal_hr_indices
+        ]
+    )
+
+    return estimated_heart_rate
