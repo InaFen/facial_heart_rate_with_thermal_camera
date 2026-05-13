@@ -365,27 +365,6 @@ def show_preprocessed_signal_as_video(
         cv2.destroyAllWindows()
 
 
-def plot_Vh_components(Vh: np.ndarray, num_components: int) -> None:
-    """
-    Plots the first 'num_components' components from Vh matrix.
-
-    Parameters:
-        Vh: 2D numpy array from SVD (shape: (total amount of components, time frames))
-        num_components: number of components to plot
-    Returns:
-        None (displays the plot)
-    """
-    plt.figure(figsize=(12, 6))
-    for i in range(num_components):
-        plt.subplot(num_components, 1, i + 1)
-        plt.plot(Vh[i, :])
-        plt.title(f'Component {i + 1}')
-        plt.xlabel('Frame')
-        plt.ylabel('Amplitude')
-        plt.grid()
-    plt.tight_layout()
-    plt.show()
-
 
 def compute_quality_index(signal, fs, normal_hr_freq):
     """
@@ -469,7 +448,18 @@ def generate_ppg_signal(signals, fs, normal_hr_freq):
     return signal_previous
 
 
-def extract_curve(stft_magnitude, heart_rate_candidates,smoothness_penalty =0.1):
+def extract_curve(stft_magnitude, heart_rate_candidates,smoothness_penalty):
+    """  
+    Extract the heart rate curve from the STFT magnitude.
+    Maximum-likelihood path estimation with temporal smoothness constraint in time-frequency space
+    
+    Parameters:
+    - stft_magnitude: 2D array of shape (time_windows, hr_candidates (amplitudes of frequencies at time window)) representing the magnitude of the STFT for each heart rate candidate at each time window.
+    - heart_rate_candidates: 1D array of heart rate candidate values corresponding to the columns of stft_magnitude.
+    - smoothness_penalty: scalar value that controls the penalty for large changes in heart rate between consecutive time windows (default: 0.1).
+    
+    Returns:
+    - estimated_heart_rate: 1D array of the estimated heart rate curve over time,"""
     n_time_windows, n_hr_candidates = stft_magnitude.shape
 
     # From formula: log|S_PPG|
