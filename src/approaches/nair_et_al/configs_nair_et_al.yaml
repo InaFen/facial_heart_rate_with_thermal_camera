@@ -34,9 +34,7 @@ processing:
 timing:
   time_first_frame_signal: 10.5
   time_first_frame_ecg: 0.0
-  timespan_signal_to_look_at:
-  - 33
-  - 57
+  timespan_signal_to_look_at: [0.0, 60.0]
   notes:
     time_first_frame_signal_expected: null
     time_first_frame_ecg_expected: null
