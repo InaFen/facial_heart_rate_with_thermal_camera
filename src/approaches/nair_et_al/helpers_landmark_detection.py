@@ -80,48 +80,89 @@ def annotate_video_with_landmarks(input_video_path: str, output_video_path: str,
     print(f"Annotated video saved to: {output_video_path}")
 
 
-def get_facial_dlib_landmarks_regions_and_save_their_mean(video_path: str, path_save_video_with_landmarks: str, upsample: int , resize_frame: bool) -> np.ndarray:
+def get_facial_dlib_landmarks_regions_and_save_their_mean(
+    video_path: str,
+    path_save_video_with_landmarks: str,
+    upsample: int,
+    resize_frame: bool,
+    fps: float | None = None,
+    show_display: bool = False,
+    display_delay_ms: int | None = None,
+    start_frame: int = 0,
+    end_frame: int | None = None,
+    flip_upside_down: bool = True,
+) -> list[dict]:
     """
     Detects facial landmarks, divides face into 5 subregions, visualizes them, 
     and calculates mean values for each subregion per frame.
     """
+    print("[IMPORTANT] Ensure that the input video is properly aligned with the original .gray frames (same order, not flipped) for correct ROI mapping later on.")
+
+    if flip_upside_down:
+        print("[Warning] Flipping frames vertically for Dlib; masks/output will be flipped back to match original orientation.")
+            
     # Load detector and predictor
     detector = dlib.simple_object_detector("external/thermal-facial-landmarks-detection/models/dlib_face_detector.svm")
     predictor = dlib.shape_predictor("external/thermal-facial-landmarks-detection/models/dlib_landmark_predictor.dat")
 
     vs = cv2.VideoCapture(video_path)
-    input_fps = vs.get(cv2.CAP_PROP_FPS)
+    input_fps = fps 
     delay = int(1000 / input_fps)
 
     writer = None
     (W, H) = (None, None)
     frame_counter = 0
 
-    all_means = []  # will store mean values for all frames (5 x num_frames)
+    roi_pixel_data = []
+    roi_names = ["forehead", "left_cheek", "right_cheek", "nose", "chin"]
+
+    if start_frame > 0:
+        for _ in range(start_frame):
+            grabbed, _ = vs.read()
+            if not grabbed:
+                break
+
+    frame_idx = 0
+    max_frames = None
+    if end_frame is not None:
+        max_frames = max(0, end_frame - start_frame)
 
     while True:
+        if max_frames is not None and frame_idx >= max_frames:
+            break
+
         grabbed, frame = vs.read()
         if not grabbed:
             break
+
         frame_counter += 1
 
         if resize_frame:
             frame = imutils_resize(frame, width=300)
 
-        frame_thermal = frame.copy()
-        frame_gray = cv2.cvtColor(frame_thermal, cv2.COLOR_BGRA2GRAY)
+        frame_display = frame.copy()
+        if flip_upside_down:
+            frame = cv2.flip(frame, 0)
+
+        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
+        frame_gray_original = cv2.cvtColor(frame_display, cv2.COLOR_BGRA2GRAY)
 
         rects = detector(frame_gray, upsample_num_times=upsample)
 
-        frame_means = np.zeros(5)  # forehead, left cheek, right cheek, nose, chin
+        frame_roi_data = {}
 
         for rect in rects:
             shape = predictor(frame_gray, rect)
             shape = face_utils.shape_to_np(shape)
 
             # Draw landmarks
-            for (sx, sy) in shape:
-                cv2.circle(frame_thermal, (sx, sy), 2, (255, 0, 0), -1)
+            if flip_upside_down:
+                h = frame_display.shape[0]
+                for (sx, sy) in shape:
+                    cv2.circle(frame_display, (sx, h - 1 - sy), 2, (255, 0, 0), -1)
+            else:
+                for (sx, sy) in shape:
+                    cv2.circle(frame_display, (sx, sy), 2, (255, 0, 0), -1)
 
             # Define subregions using landmarks
             # These indices assume a standard 68-point dlib predictor
@@ -159,36 +200,57 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(video_path: str, path_
                 mask = np.zeros(frame_gray.shape, dtype=np.uint8)
                 hull = cv2.convexHull(pts)
                 cv2.drawContours(mask, [hull], -1, 255, -1)  # fill the polygon
-                mean_val = cv2.mean(frame_gray, mask=mask)[0]
-                frame_means[i] = mean_val
+                if flip_upside_down:
+                    # Flip mask back to match original orientation for correct coordinate mapping
+                    mask = cv2.flip(mask, 0)
+                ys, xs = np.where(mask == 255)
+                coords = list(zip(xs.tolist(), ys.tolist()))
+                values = frame_gray_original[ys, xs]
+                frame_roi_data[roi_names[i]] = {
+                    "coords": coords,
+                    "values": values.tolist(),
+                    "mean_value": float(np.mean(values)) if values.size > 0 else float("nan"),
+                }
 
                 # Draw subregion overlay
                 overlay_color = [(0,255,255), (255,0,255), (0,255,0), (255,255,0), (0,0,255)]
-                cv2.drawContours(frame_thermal, [hull], -1, overlay_color[i], 2)
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(frame_display, contours, -1, overlay_color[i], 2)
 
-        all_means.append(frame_means)
+        if not frame_roi_data:
+            frame_roi_data = {
+                name: {"coords": [], "values": [], "mean_value": float("nan")}
+                for name in roi_names
+            }
+
+        roi_pixel_data.append(frame_roi_data)
 
         if W is None or H is None:
             (H, W) = frame_gray.shape[:2]
 
         if writer is None:
-            fourcc = cv2.VideoWriter_fourcc(*"XVID")
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             writer = cv2.VideoWriter(path_save_video_with_landmarks, fourcc, input_fps,
-                                     (frame_thermal.shape[1], frame_thermal.shape[0]), True)
+                                     (frame_display.shape[1], frame_display.shape[0]), True)
 
-        writer.write(frame_thermal)
-        cv2.imshow("Frame", frame_thermal)
-        key = cv2.waitKey(delay) & 0xFF
-        if key == ord("q"):
-            break
+        output_frame = cv2.flip(frame_display, 0) if flip_upside_down else frame_display
+        writer.write(output_frame)
+        if show_display:
+            cv2.imshow("Frame", output_frame)
+            display_delay = 1 if display_delay_ms is None else display_delay_ms
+            key = cv2.waitKey(display_delay) & 0xFF
+            if key == ord("q"):
+                break
 
-    cv2.destroyAllWindows()
+        frame_idx += 1
+
+    if show_display:
+        cv2.destroyAllWindows()
     vs.release()
     writer.release()
 
-    all_means = np.array(all_means).T  # 5 x num_frames
-    print("Shape of mean values matrix:", all_means.shape)
-    return all_means
+    print("Collected ROI pixel data for", len(roi_pixel_data), "frames")
+    return roi_pixel_data
 
 
 

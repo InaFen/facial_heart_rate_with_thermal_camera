@@ -32,8 +32,8 @@ bandpassed_mean_values_subregions_path = "data/saved_data/nair_et_al/bandpassed_
 
 STFT_WINDOW_SIZE = 64
 STFT_OVERLAP = 56
-SMOOTHNESS_PENALTY = 0.1
-NORMAL_HR_FREQ = 1.3 #Hz, 80 bpm
+SMOOTHNESS_PENALTY = 0.1 # used in curve extraction, higher values lead to smoother curve but less accurate, lower values lead to more accurate but less smooth curve
+NORMAL_HR_FREQ = 1.3 #Hz, 80 bpm # used for signal quality indices, only consider frequencies around normal heart rate frequency
 
 
 ############
@@ -42,13 +42,22 @@ NORMAL_HR_FREQ = 1.3 #Hz, 80 bpm
 print("IMPORTANT: If mediapipe is applied, each ROI will not be split further so needs to be defined accordingly in configs.")
 
 if apply_dlib_landmark_detection:
-    # TODO try face detection with dlib but with image transferred to RGB, see yang et al.
     # TODO see whether works
     if not(os.path.exists(mean_of_subregions_path)):
-        mean_values_subregions_matrix = get_facial_dlib_landmarks_regions_and_save_their_mean(video_path=video_path, path_save_video_with_landmarks=path_save_video_with_landmarks, upsample=2, resize_frame = True)
-        np.save(mean_of_subregions_path, mean_values_subregions_matrix)
+        roi_pixel_data = get_facial_dlib_landmarks_regions_and_save_their_mean(
+            video_path=configs.path_video,
+            path_save_video_with_landmarks=path_save_video_with_landmarks,
+            upsample=2,
+            resize_frame=False,
+            fps=configs.fps,
+            show_display=True,
+            start_frame=0,
+            end_frame=None,
+            flip_upside_down=True,
+        )
+        np.save(mean_of_subregions_path, np.array(roi_pixel_data, dtype=object))
     else:
-        mean_values_subregions_matrix = np.load(mean_of_subregions_path)
+        roi_pixel_data = np.load(mean_of_subregions_path, allow_pickle=True).tolist()
 else:
     # Apply Facemesh landmark detection
     roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
