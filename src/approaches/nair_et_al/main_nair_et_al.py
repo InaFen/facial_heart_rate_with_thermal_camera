@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from utils import generate_ppg_signal, extract_curve
-from helpers_landmark_detection import get_facial_dlib_landmarks_regions_and_save_their_mean
 from src.approaches.new_approach.classes.user_input import Config
 
 project_root = "/home/arbeit/Dokumente/master_thesis/"
@@ -20,28 +19,26 @@ CONFIGS_PATH = "src/approaches/nair_et_al/configs_nair_et_al.yaml"
 
 configs = Config.from_yaml(CONFIGS_PATH)
 output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
-apply_dlib_landmark_detection = True
 
-filtered_signal_matrix_path = "data/saved_data/nair_et_al/filtered_signal_matrix.npy"
-normalized_signal_matrix_path = "data/saved_data/nair_et_al/normalized_signal_matrix.npy"
-first_derivative_matrix_path = "data/saved_data/nair_et_al/first_derivative_matrix.npy"
-second_derivative_matrix_path = "data/saved_data/nair_et_al/second_derivative_matrix.npy"
-mean_of_subregions_path = "data/saved_data/nair_et_al/mean_values_subregions.npy"
-path_save_video_with_landmarks = "data/recorded_videos/video_with_landmarks.avi"
-bandpassed_mean_values_subregions_path = "data/saved_data/nair_et_al/bandpassed_mean_values_subregions.npy"
-
+APPLY_DLIB_LANDMARK_DETECTION = True
 STFT_WINDOW_SIZE = 64
 STFT_OVERLAP = 56
 SMOOTHNESS_PENALTY = 0.1 # used in curve extraction, higher values lead to smoother curve but less accurate, lower values lead to more accurate but less smooth curve
 NORMAL_HR_FREQ = 1.3 #Hz, 80 bpm # used for signal quality indices, only consider frequencies around normal heart rate frequency
 
+print("Hardcoded parameters in main_nair_et_al.py:")
+print(f"APPLY_DLIB_LANDMARK_DETECTION: {APPLY_DLIB_LANDMARK_DETECTION}")
+print(f"STFT_WINDOW_SIZE: {STFT_WINDOW_SIZE}")
+print(f"STFT_OVERLAP: {STFT_OVERLAP}")
+print(f"SMOOTHNESS_PENALTY: {SMOOTHNESS_PENALTY}")
+print(f"NORMAL_HR_FREQ: {NORMAL_HR_FREQ}")
 
 ############
 # Preprocessing: Landmark detection & denoising 
 ############
 print("IMPORTANT: If mediapipe is applied, each ROI will not be split further so needs to be defined accordingly in configs.")
 
-if apply_dlib_landmark_detection:
+if APPLY_DLIB_LANDMARK_DETECTION:
     roi_pixel_data, _ = get_roi_data_pipeline(configs=configs, roi_detection_method="dlib")
 else:
     # Apply Facemesh landmark detection
@@ -49,27 +46,23 @@ else:
 
 
 # Apply bandpass filter
-if not(os.path.exists(bandpassed_mean_values_subregions_path)) or configs.overwrite_existing_files:
-    print("Applying bandpass filter to mean values of subregions...")
+print("Applying bandpass filter to mean values of subregions...")
 
-    # Create matrix with rows: subregions, columns: time frames, values: mean pixel intensity of the subregion in the frame
-    result = defaultdict(list)
-    subregions_names = []
+# Create matrix with rows: subregions, columns: time frames, values: mean pixel intensity of the subregion in the frame
+result = defaultdict(list)
+subregions_names = []
 
-    for frame in roi_pixel_data:
-        for roi, values in frame.items():
-            if roi not in result:
-                subregions_names.append(roi)  # remember first-seen order
-            result[roi].append(values["mean_kelvin_multiplied_100"])
+for frame in roi_pixel_data:
+    for roi, values in frame.items():
+        if roi not in result:
+            subregions_names.append(roi)  # remember first-seen order
+        result[roi].append(values["mean_kelvin_multiplied_100"])
 
-    mean_values_subregions = [result[roi] for roi in subregions_names]
-    bandpassed_mean_values_subregions = np.zeros_like(mean_values_subregions, dtype=np.float32)
+mean_values_subregions = [result[roi] for roi in subregions_names]
+bandpassed_mean_values_subregions = np.zeros_like(mean_values_subregions, dtype=np.float32)
 
-    for subregion in range(len(subregions_names)):
-        bandpassed_mean_values_subregions[subregion] = apply_butterworth_bandpass_filter(signal = mean_values_subregions[subregion], lowcut = configs.bandpass_lowcut, highcut = configs.bandpass_highcut, fs = configs.fps, order = configs.bandpass_order)
-
-    np.save(bandpassed_mean_values_subregions_path, bandpassed_mean_values_subregions)
-
+for subregion in range(len(subregions_names)):
+    bandpassed_mean_values_subregions[subregion] = apply_butterworth_bandpass_filter(signal = mean_values_subregions[subregion], lowcut = configs.bandpass_lowcut, highcut = configs.bandpass_highcut, fs = configs.fps, order = configs.bandpass_order)
 
     if configs.plot_steps:
         # Plot signal before and after bandpass filtering for all subregions
@@ -99,9 +92,6 @@ if not(os.path.exists(bandpassed_mean_values_subregions_path)) or configs.overwr
 
         plt.tight_layout()
         plt.show()
-
-else:
-    bandpassed_mean_values_subregions = np.load(bandpassed_mean_values_subregions_path)
 
 # Apply SVD
 # Should be:
