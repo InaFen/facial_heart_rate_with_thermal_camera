@@ -15,10 +15,13 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     write_roi_tracked_video_from_gray_frames,
     split_manual_roi_into_subrois
 )
+from src.approaches.nair_et_al.helpers_landmark_detection import (
+    get_facial_dlib_landmarks_regions_and_save_their_mean,
+)
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
 
-def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_files: bool = False) -> tuple:
+def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh', extract_from_video_instead_of_gray_files: bool = False) -> tuple:
     """
     Extract ROI data from thermal video and gray frames (raw data).
     ROI can be defined via manual user input (drawing on first frame) or via facemesh-based landmark detection.
@@ -26,6 +29,7 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
 
     Parameters:
     - configs: Config object containing all necessary paths and parameters
+    - roi_detection_method: Method to use for ROI detection ('dlib' or 'facemesh')
     - extract_from_video_instead_of_gray_files: If True, applies ROI masks to video, else applies to gray frames (default: False)
     
     Returns:
@@ -103,16 +107,30 @@ def get_roi_data_pipeline(configs: Config, extract_from_video_instead_of_gray_fi
     # detects landmarks on thermal video, applies ROI mask then on gray frames (so raw data)
     else:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
-            roi_pixel_log = apply_facemesh_to_thermal_video(
-                input_path=configs.path_video,
-                output_path=configs.path_video_facemesh,
-                roi_landmarks=configs.roi_landmarks_subgrid_face,
-                fps=configs.fps,
-                use_ema=configs.use_ema,
-                ema_alpha=configs.ema_alpha,
-                start_frame=start_frame if limit_to_timespan else 0,
-                end_frame=end_frame if limit_to_timespan else None,
-            )
+            if roi_detection_method == "dlib":
+                print("Use Dlib-based landmark detection for ROI definition (instead of Facemesh).")
+                roi_pixel_log = get_facial_dlib_landmarks_regions_and_save_their_mean(
+                    video_path=configs.path_video,
+                    path_save_video_with_landmarks=configs.path_video_facemesh,
+                    upsample=0,
+                    resize_frame=False,
+                    fps=configs.fps,
+                    show_display=True,
+                    start_frame=start_frame if limit_to_timespan else 0,
+                    end_frame=end_frame if limit_to_timespan else None,
+                    flip_upside_down=True,
+                )
+            else: # Standard method is facemesh-based
+                roi_pixel_log = apply_facemesh_to_thermal_video(
+                    input_path=configs.path_video,
+                    output_path=configs.path_video_facemesh,
+                    roi_landmarks=configs.roi_landmarks_subgrid_face,
+                    fps=configs.fps,
+                    use_ema=configs.use_ema,
+                    ema_alpha=configs.ema_alpha,
+                    start_frame=start_frame if limit_to_timespan else 0,
+                    end_frame=end_frame if limit_to_timespan else None,
+                )
             os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
             np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)
         else:

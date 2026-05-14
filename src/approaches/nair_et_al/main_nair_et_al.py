@@ -42,29 +42,14 @@ NORMAL_HR_FREQ = 1.3 #Hz, 80 bpm # used for signal quality indices, only conside
 print("IMPORTANT: If mediapipe is applied, each ROI will not be split further so needs to be defined accordingly in configs.")
 
 if apply_dlib_landmark_detection:
-    # TODO see whether works
-    if not(os.path.exists(mean_of_subregions_path)):
-        roi_pixel_data = get_facial_dlib_landmarks_regions_and_save_their_mean(
-            video_path=configs.path_video,
-            path_save_video_with_landmarks=path_save_video_with_landmarks,
-            upsample=2,
-            resize_frame=False,
-            fps=configs.fps,
-            show_display=True,
-            start_frame=0,
-            end_frame=None,
-            flip_upside_down=True,
-        )
-        np.save(mean_of_subregions_path, np.array(roi_pixel_data, dtype=object))
-    else:
-        roi_pixel_data = np.load(mean_of_subregions_path, allow_pickle=True).tolist()
+    roi_pixel_data, _ = get_roi_data_pipeline(configs=configs, roi_detection_method="dlib")
 else:
     # Apply Facemesh landmark detection
     roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 
 
 # Apply bandpass filter
-if not(os.path.exists(bandpassed_mean_values_subregions_path)):
+if not(os.path.exists(bandpassed_mean_values_subregions_path)) or configs.overwrite_existing_files:
     print("Applying bandpass filter to mean values of subregions...")
 
     # Create matrix with rows: subregions, columns: time frames, values: mean pixel intensity of the subregion in the frame
