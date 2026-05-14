@@ -7,6 +7,7 @@ Reads configuration from YAML file and provides easy access to all settings.
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
+import json
 import yaml
 
 
@@ -19,6 +20,17 @@ def load_config_from_yaml(config_path: str = None) -> Dict[str, Any]:
 
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
+
+
+def load_config_from_json(config_path: str = None) -> Dict[str, Any]:
+    """Load configuration from JSON file."""
+    config_path = Path(config_path)
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
 
 @dataclass
@@ -133,5 +145,12 @@ class Config:
         """Load configuration from YAML file."""
         config_path = Path(config_path)
         data = load_config_from_yaml(config_path)
+        return cls._from_data(data, config_path)
+
+    @classmethod
+    def from_json(cls, config_path: str = None) -> "Config":
+        """Load configuration from JSON file."""
+        config_path = Path(config_path)
+        data = load_config_from_json(config_path)
         return cls._from_data(data, config_path)
 
