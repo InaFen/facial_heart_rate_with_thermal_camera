@@ -87,14 +87,13 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(
     resize_frame: bool,
     fps: float | None = None,
     show_display: bool = False,
-    display_delay_ms: int | None = None,
     start_frame: int = 0,
     end_frame: int | None = None,
     flip_upside_down: bool = True,
 ) -> list[dict]:
     """
-    Detects facial landmarks, divides face into 5 subregions, visualizes them, 
-    and calculates mean values for each subregion per frame.
+    Detects facial landmarks, divides face into 5 subregions, visualizes them,
+    and returns ROI masks per frame (same format as apply_facemesh_to_thermal_video).
     """
     print("[IMPORTANT] Ensure that the input video is properly aligned with the original .gray frames (same order, not flipped) for correct ROI mapping later on.")
 
@@ -113,7 +112,7 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(
     (W, H) = (None, None)
     frame_counter = 0
 
-    roi_pixel_data = []
+    roi_mask_log = []
     roi_names = ["forehead", "left_cheek", "right_cheek", "nose", "chin"]
 
     if start_frame > 0:
@@ -149,7 +148,7 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(
 
         rects = detector(frame_gray, upsample_num_times=upsample)
 
-        frame_roi_data = {}
+        frame_roi_masks = {}
 
         for rect in rects:
             shape = predictor(frame_gray, rect)
@@ -203,27 +202,20 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(
                 if flip_upside_down:
                     # Flip mask back to match original orientation for correct coordinate mapping
                     mask = cv2.flip(mask, 0)
-                ys, xs = np.where(mask == 255)
-                coords = list(zip(xs.tolist(), ys.tolist()))
-                values = frame_gray_original[ys, xs]
-                frame_roi_data[roi_names[i]] = {
-                    "coords": coords,
-                    "values": values.tolist(),
-                    "mean_value": float(np.mean(values)) if values.size > 0 else float("nan"),
-                }
+                frame_roi_masks[roi_names[i]] = mask
 
                 # Draw subregion overlay
                 overlay_color = [(0,255,255), (255,0,255), (0,255,0), (255,255,0), (0,0,255)]
                 contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 cv2.drawContours(frame_display, contours, -1, overlay_color[i], 2)
 
-        if not frame_roi_data:
-            frame_roi_data = {
-                name: {"coords": [], "values": [], "mean_value": float("nan")}
+        if not frame_roi_masks:
+            frame_roi_masks = {
+                name: np.zeros(frame_gray.shape, dtype=np.uint8)
                 for name in roi_names
             }
 
-        roi_pixel_data.append(frame_roi_data)
+        roi_mask_log.append(frame_roi_masks)
 
         if W is None or H is None:
             (H, W) = frame_gray.shape[:2]
@@ -237,7 +229,7 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(
         writer.write(output_frame)
         if show_display:
             cv2.imshow("Frame", output_frame)
-            display_delay = 1 if display_delay_ms is None else display_delay_ms
+            display_delay = 1
             key = cv2.waitKey(display_delay) & 0xFF
             if key == ord("q"):
                 break
@@ -249,8 +241,8 @@ def get_facial_dlib_landmarks_regions_and_save_their_mean(
     vs.release()
     writer.release()
 
-    print("Collected ROI pixel data for", len(roi_pixel_data), "frames")
-    return roi_pixel_data
+    print("Collected ROI masks for", len(roi_mask_log), "frames")
+    return roi_mask_log
 
 
 
