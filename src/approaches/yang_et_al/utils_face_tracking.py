@@ -697,10 +697,10 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
                     filtered_coords.append(coord)
                     filtered_values.append(value)
 
-            if filtered_values:
-                mean_val = float(np.mean(filtered_values))
-            else:
-                mean_val = float("nan")
+            if not filtered_values:
+                continue
+
+            mean_val = float(np.mean(filtered_values))
 
             filtered_frame[roi_name] = {
                 "coords": filtered_coords,
