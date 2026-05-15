@@ -13,6 +13,8 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     plot_roi_temperature_means,
     create_manual_roi_mask_log_from_gray_frames,
     create_manual_roi_mask_log_from_asc_frames,
+    _parse_asc_file,
+    _asc_to_kelvin_x100,
     load_gray_frame,
     write_roi_tracked_video_from_gray_frames,
     split_manual_roi_into_subrois
@@ -260,23 +262,46 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                             display_frame = frame.copy()
                     cap.release()
             else:
-                _, gray_files = sort_grayfiles_with_interpolations(configs.path_gray_frames)
-                if 0 <= start_frame < len(gray_files):
-                    frame_path = os.path.join(configs.path_gray_frames, gray_files[start_frame])
-                    if roi_masks:
-                        first_mask = next(iter(roi_masks.values()))
-                        drop_telemetry = first_mask.shape[0] <= 120
-                        raw_height = first_mask.shape[0] + (2 if drop_telemetry else 0)
-                        raw_width = first_mask.shape[1]
-                        frame = load_gray_frame(
-                            frame_path,
-                            width=raw_width,
-                            height=raw_height,
-                            drop_telemetry=drop_telemetry,
-                        )
-                        vmin, vmax = np.percentile(frame, [1, 99])
-                        frame_clipped = np.clip(frame, vmin, vmax)
-                        display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                files_in_dir = [
+                    f for f in os.listdir(configs.path_gray_frames)
+                    if os.path.isfile(os.path.join(configs.path_gray_frames, f))
+                ]
+                if not files_in_dir:
+                    raise ValueError(f"No files found in {configs.path_gray_frames}")
+
+                sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
+                if sample_ext == ".asc":
+                    # Read the corresponding ASC frame for visualization
+                    asc_files = sorted(
+                        [f for f in files_in_dir if f.lower().endswith(".asc")]
+                    )
+                    if 0 <= start_frame < len(asc_files):
+                        frame_path = os.path.join(configs.path_gray_frames, asc_files[start_frame])
+                        if roi_masks:
+                            frame = _parse_asc_file(frame_path)
+                            frame = _asc_to_kelvin_x100(frame, configs.asc_unit)
+                            vmin, vmax = np.percentile(frame, [1, 99])
+                            frame_clipped = np.clip(frame, vmin, vmax)
+                            display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                else:
+                    # Read the corresponding gray frame for visualization
+                    _, gray_files = sort_grayfiles_with_interpolations(configs.path_gray_frames)
+                    if 0 <= start_frame < len(gray_files):
+                        frame_path = os.path.join(configs.path_gray_frames, gray_files[start_frame])
+                        if roi_masks:
+                            first_mask = next(iter(roi_masks.values()))
+                            drop_telemetry = first_mask.shape[0] <= 120
+                            raw_height = first_mask.shape[0] + (2 if drop_telemetry else 0)
+                            raw_width = first_mask.shape[1]
+                            frame = load_gray_frame(
+                                frame_path,
+                                width=raw_width,
+                                height=raw_height,
+                                drop_telemetry=drop_telemetry,
+                            )
+                            vmin, vmax = np.percentile(frame, [1, 99])
+                            frame_clipped = np.clip(frame, vmin, vmax)
+                            display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
             # Overlay ROI masks on the frame for visualization and save
             if display_frame is not None and roi_masks:
