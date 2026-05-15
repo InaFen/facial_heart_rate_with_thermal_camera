@@ -368,24 +368,27 @@ def extract_block_means(
 def track_face(
     in_path: str,
     out_path: str,
+    fps: float,
     grid_size: int = 5,
     block_size: int = 16,
     show_display: bool = True,
+    flip_upside_down: bool = True,
 ):
     """
     Full thermal head tracking pipeline.
 
     Returns:
-        centers
-        Y (N x M temporal signal matrix)
+        roi_pixel_log
     """
+    print("[IMPORTANT] Ensure that the input video is properly aligned with the original .gray frames (same order, not flipped) for correct ROI mapping later on.")
+
+    if flip_upside_down:
+        print("[Warning] Flipping frames vertically for tracker; masks/output will be flipped back to match original orientation.")
 
     cap = cv2.VideoCapture(in_path)
 
     if not cap.isOpened():
         raise RuntimeError("Cannot open video.")
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
 
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 
@@ -400,8 +403,7 @@ def track_face(
     frame_idx = 0
 
     centers = []
-
-    signals = []
+    roi_pixel_log = []
 
     initialized = False
 
@@ -412,14 +414,17 @@ def track_face(
         if not ret:
             break
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame_display = frame.copy()
+        frame_proc = cv2.flip(frame, 0) if flip_upside_down else frame
+
+        gray_raw = cv2.cvtColor(frame_display, cv2.COLOR_BGR2GRAY)
+        gray_raw_proc = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2GRAY)
 
         # ----------------------------------------
         # THERMAL PREPROCESSING
         # ----------------------------------------
 
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-
+        gray = cv2.GaussianBlur(gray_raw_proc, (5, 5), 0)
         gray = cv2.equalizeHist(gray)
 
         # ----------------------------------------
@@ -461,7 +466,11 @@ def track_face(
 
         x, y, w, h = bbox
 
-        center = (x + w // 2, y + h // 2)
+        center_proc = (x + w // 2, y + h // 2)
+        if flip_upside_down:
+            center = (center_proc[0], (H - 1) - center_proc[1])
+        else:
+            center = center_proc
 
         centers.append(center)
 
@@ -469,9 +478,47 @@ def track_face(
         # SIGNAL EXTRACTION
         # ----------------------------------------
 
-        block_means = extract_block_means(gray, center, grid_size, block_size)
+        frame_roi_data = {}
+        frame_roi_masks = {}
+        half_grid = grid_size // 2
 
-        signals.append(block_means)
+        for gy in range(-half_grid, half_grid + 1):
+            for gx in range(-half_grid, half_grid + 1):
+                roi_name = f"roi_r{gy + half_grid + 1}c{gx + half_grid + 1}"
+                x0 = int(center[0] + gx * block_size - block_size // 2)
+                y0 = int(center[1] + gy * block_size - block_size // 2)
+                x1 = x0 + block_size
+                y1 = y0 + block_size
+
+                x0c = max(0, x0)
+                y0c = max(0, y0)
+                x1c = min(gray_raw.shape[1], x1)
+                y1c = min(gray_raw.shape[0], y1)
+
+                if x1c <= x0c or y1c <= y0c:
+                    coords = []
+                    values = []
+                    mean_val = float("nan")
+                else:
+                    ys, xs = np.mgrid[y0c:y1c, x0c:x1c]
+                    coords = list(zip(xs.ravel().tolist(), ys.ravel().tolist()))
+                    values_array = gray_raw[y0c:y1c, x0c:x1c].astype(np.float32)
+                    values = values_array.ravel().tolist()
+                    mean_val = float(np.mean(values_array))
+
+                frame_roi_data[roi_name] = {
+                    "coords": coords,
+                    "values": values,
+                    "mean_value": mean_val,
+                    "mean_kelvin_multiplied_100": mean_val,
+                }
+
+                mask = np.zeros(gray_raw.shape, dtype=np.uint8)
+                if x1c > x0c and y1c > y0c:
+                    mask[y0c:y1c, x0c:x1c] = 255
+                frame_roi_masks[roi_name] = mask
+
+        roi_pixel_log.append(frame_roi_masks)
 
         # ----------------------------------------
         # VISUALIZATION
@@ -483,15 +530,15 @@ def track_face(
 
         ry = int(center[1] - roi_size // 2)
 
-        cv2.rectangle(frame, (rx, ry), (rx + roi_size, ry + roi_size), (0, 255, 0), 2)
+        cv2.rectangle(frame_display, (rx, ry), (rx + roi_size, ry + roi_size), (0, 255, 0), 2)
 
-        cv2.circle(frame, center, 3, (0, 0, 255), -1)
+        cv2.circle(frame_display, center, 3, (0, 0, 255), -1)
 
-        writer.write(frame)
+        writer.write(frame_display)
 
         if show_display:
 
-            cv2.imshow("Tracking", frame)
+            cv2.imshow("Tracking", frame_display)
 
             key = cv2.waitKey(1)
 
@@ -507,16 +554,10 @@ def track_face(
     if show_display:
         cv2.destroyAllWindows()
 
-    if len(signals) > 0:
-        Y = np.vstack(signals)
-    else:
-        Y = np.zeros((0, grid_size * grid_size), dtype=np.float32)
-
     print("Output saved:", out_path)
+    print("Frames processed:", len(roi_pixel_log))
 
-    print("Signal matrix shape:", Y.shape)
-
-    return centers, Y
+    return roi_pixel_log
 
 
 def filter_out_pixels_below_threshold(video_path, output_path="threshold_output.mp4", threshold_value=150):
@@ -571,3 +612,46 @@ def filter_out_pixels_below_threshold(video_path, output_path="threshold_output.
     writer.release()
     print(f"Processed video saved to: {output_path}")
     return output_path
+
+
+def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshold_value=150):
+    """
+    Filter ROI pixel values below a threshold and recompute means.
+
+    Parameters:
+        roi_pixel_data: list of dicts (per frame) with keys per ROI
+        threshold_value: Pixel intensity threshold (0-255)
+
+    Returns:
+        filtered_roi_pixel_data: same structure with values filtered and mean_value updated
+    """
+    filtered_roi_pixel_data = []
+
+    for frame_data in roi_pixel_data:
+        filtered_frame = {}
+        for roi_name, roi_info in frame_data.items():
+            values = roi_info.get("values", [])
+            coords = roi_info.get("coords", [])
+
+            filtered_values = []
+            filtered_coords = []
+            for coord, value in zip(coords, values):
+                if value >= threshold_value:
+                    filtered_coords.append(coord)
+                    filtered_values.append(value)
+
+            if filtered_values:
+                mean_val = float(np.mean(filtered_values))
+            else:
+                mean_val = float("nan")
+
+            filtered_frame[roi_name] = {
+                "coords": filtered_coords,
+                "values": filtered_values,
+                "mean_value": mean_val,
+                "mean_kelvin_multiplied_100": mean_val,
+            }
+
+        filtered_roi_pixel_data.append(filtered_frame)
+
+    return filtered_roi_pixel_data
