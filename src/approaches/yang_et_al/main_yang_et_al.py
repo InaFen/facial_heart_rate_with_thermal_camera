@@ -42,10 +42,15 @@ print(f"THRESHOLD_VALUE: {THRESHOLD_VALUE}")
 
 
 # Face detection and ROI extraction--------------------------------------------------------------------
-# original pipeline for face detection # TODO
 if APPLY_TRACKER_LANDMARK_DETECTION:
 	roi_pixel_data, _ = get_roi_data_pipeline(configs=configs, roi_detection_method="tracker")
-	roi_pixel_data = filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshold_value=THRESHOLD_VALUE)
+	roi_pixel_data = filter_out_pixels_below_threshold_in_roi_pixel_data(
+		roi_pixel_data,
+		threshold_value=THRESHOLD_VALUE,
+		output_video_path=configs.path_video_thresholded_pixel,
+		fps=configs.fps,
+	)
+	
 else:
 	# Get face with mediapipe
 	roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)

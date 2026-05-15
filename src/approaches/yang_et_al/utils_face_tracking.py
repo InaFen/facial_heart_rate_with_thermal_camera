@@ -373,6 +373,8 @@ def track_face(
     block_size: int = 21,
     show_display: bool = True,
     flip_upside_down: bool = True,
+    start_frame: int = 0,
+    end_frame: int | None = None,
 ):
     """
     Full thermal head tracking pipeline.
@@ -407,7 +409,19 @@ def track_face(
 
     initialized = False
 
+    if start_frame > 0:
+        for _ in range(start_frame):
+            ret, _ = cap.read()
+            if not ret:
+                break
+
+    max_frames = None
+    if end_frame is not None:
+        max_frames = max(0, end_frame - start_frame)
+
     while True:
+        if max_frames is not None and frame_idx >= max_frames:
+            break
 
         ret, frame = cap.read()
 
@@ -631,7 +645,7 @@ def filter_out_pixels_below_threshold(video_path, output_path="threshold_output.
     return output_path
 
 
-def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshold_value=150):
+def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshold_value=150, output_video_path=None, fps=None):
     """
     Filter ROI pixel values below a threshold and recompute means.
 
@@ -642,10 +656,36 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
     Returns:
         filtered_roi_pixel_data: same structure with values filtered and mean_value updated
     """
+    if output_video_path is not None and fps is None:
+        raise ValueError("fps must be provided when output_video_path is set")
+
+    frame_width = 0
+    frame_height = 0
+    if output_video_path is not None:
+        for frame_data in roi_pixel_data:
+            for roi_info in frame_data.values():
+                coords = roi_info.get("coords", [])
+                for x, y in coords:
+                    if x + 1 > frame_width:
+                        frame_width = x + 1
+                    if y + 1 > frame_height:
+                        frame_height = y + 1
+
+    writer = None
+    if output_video_path is not None and frame_width > 0 and frame_height > 0:
+        writer = cv2.VideoWriter(
+            output_video_path,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            fps,
+            (frame_width, frame_height),
+        )
+
     filtered_roi_pixel_data = []
 
     for frame_data in roi_pixel_data:
         filtered_frame = {}
+        if writer is not None:
+            output_frame = np.zeros((frame_height, frame_width), dtype=np.uint8)
         for roi_name, roi_info in frame_data.items():
             values = roi_info.get("values", [])
             coords = roi_info.get("coords", [])
@@ -669,6 +709,17 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
                 "mean_kelvin_multiplied_100": mean_val,
             }
 
+            if writer is not None:
+                for (x, y), value in zip(filtered_coords, filtered_values):
+                    if 0 <= x < frame_width and 0 <= y < frame_height:
+                        output_frame[y, x] = np.uint8(np.clip(value, 0, 255))
+
         filtered_roi_pixel_data.append(filtered_frame)
+        if writer is not None:
+            output_frame_bgr = cv2.cvtColor(output_frame, cv2.COLOR_GRAY2BGR)
+            writer.write(output_frame_bgr)
+
+    if writer is not None:
+        writer.release()
 
     return filtered_roi_pixel_data
