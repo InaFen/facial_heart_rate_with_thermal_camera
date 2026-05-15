@@ -711,6 +711,227 @@ def create_manual_roi_mask_log_from_gray_frames(
     return roi_mask_log
 
 
+def create_manual_roi_mask_log_from_asc_frames(
+    asc_dir: str,
+    roi_name: str = "manual_roi",
+    display_title: str = "Draw ROI (press ENTER to confirm)",
+    mode: str = "rectangle",
+    frame_index: int = 0,
+    mask_load_path: str = None,
+    mask_save_path: str = None,
+    use_colormap: bool = True,
+    unit: str = "celsius",
+) -> List[Dict[str, np.ndarray]]:
+    """Create a fixed ROI mask for all .asc frames by manually drawing on the first ASC frame.
+
+    Parameters:
+        asc_dir: Directory containing .asc frames
+        roi_name: Name of the ROI (used as key in output log)
+        display_title: Window title for ROI drawing interface
+        mode: "rectangle", "polygon", "point", "point_surrounding"
+        frame_index: Index of the frame to use for ROI drawing (default: 0)
+        mask_load_path: Optional path to load an existing ROI mask
+        mask_save_path: Optional path to save the drawn ROI mask for future reuse
+        use_colormap: If True, apply a colormap to the frame for easier visualization
+
+    Returns:
+        roi_mask_log: list of per-frame ROI masks (same mask reused for all frames)
+    """
+    asc_files = sorted([f for f in os.listdir(asc_dir) if f.lower().endswith(".asc")])
+    if not asc_files:
+        raise ValueError(f"No .asc files found in {asc_dir}")
+
+    # Load mask if path provided
+    if mask_load_path:
+        loaded_mask = np.load(mask_load_path)
+        if loaded_mask.ndim != 2:
+            raise ValueError(f"Loaded mask must be 2D, got shape {loaded_mask.shape}")
+        first_frame_check = _parse_asc_file(os.path.join(asc_dir, asc_files[0]))
+        if loaded_mask.shape != first_frame_check.shape:
+            raise ValueError(f"Loaded mask shape {loaded_mask.shape} does not match frame shape {first_frame_check.shape}")
+        mask = loaded_mask.astype(np.uint8)
+        roi_mask_log = [{roi_name: mask} for _ in range(len(asc_files))]
+        return roi_mask_log
+
+    # Load first frame for ROI drawing
+    frame_index = max(0, min(frame_index, len(asc_files) - 1))
+    first_frame_path = os.path.join(asc_dir, asc_files[frame_index])
+    first_frame = _parse_asc_file(first_frame_path)
+    first_frame = _asc_to_kelvin_x100(first_frame, unit)
+
+    vmin, vmax = np.percentile(first_frame, [1, 99])
+    frame_clipped = np.clip(first_frame, vmin, vmax)
+    frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    if use_colormap:
+        frame_display = cv2.applyColorMap(frame_norm, cv2.COLORMAP_TURBO)
+    else:
+        frame_display = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+
+    height, width = first_frame.shape
+    mask = np.zeros(first_frame.shape, dtype=np.uint8)
+
+    if mode == "rectangle":
+        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
+        roi_rect = cv2.selectROI(display_title, frame_display, fromCenter=False, showCrosshair=True)
+        cv2.destroyWindow(display_title)
+
+        x, y, w, h = roi_rect
+        if w <= 0 or h <= 0:
+            raise ValueError("No ROI selected. Please draw a rectangle ROI and press ENTER.")
+
+        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, thickness=-1)
+    elif mode == "polygon":
+        points = []
+        display = frame_display.copy()
+
+        def draw_overlay(img, pts):
+            canvas = img.copy()
+            if pts:
+                cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, (0, 255, 255), 1)
+                for p in pts:
+                    cv2.circle(canvas, p, 2, (0, 255, 255), -1)
+            return canvas
+
+        def on_mouse(event, x, y, flags, param):
+            nonlocal points
+            if event == cv2.EVENT_LBUTTONDOWN:
+                points.append((x, y))
+            elif event == cv2.EVENT_RBUTTONDOWN and points:
+                points.pop()
+
+        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(display_title, on_mouse)
+
+        while True:
+            canvas = draw_overlay(display, points)
+            cv2.imshow(display_title, canvas)
+            key = cv2.waitKey(20) & 0xFF
+
+            if key == 13:  # Enter
+                break
+            if key == ord('c'):
+                points = []
+
+        cv2.destroyWindow(display_title)
+
+        if len(points) < 3:
+            raise ValueError("Polygon ROI needs at least 3 points. Please try again.")
+
+        poly = np.array(points, dtype=np.int32)
+        cv2.fillPoly(mask, [poly], 255)
+    elif mode == "point":
+        point = []
+        display = frame_display.copy()
+
+        def on_mouse(event, x, y, flags, param):
+            nonlocal point
+            if event == cv2.EVENT_LBUTTONDOWN:
+                point = [(x, y)]
+
+        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(display_title, on_mouse)
+
+        while True:
+            canvas = display.copy()
+            if point:
+                cv2.circle(canvas, point[0], 2, (0, 255, 255), -1)
+            cv2.imshow(display_title, canvas)
+            key = cv2.waitKey(20) & 0xFF
+
+            if key == 13:  # Enter
+                break
+            if key == ord('c'):
+                point = []
+
+        cv2.destroyWindow(display_title)
+
+        if len(point) != 1:
+            raise ValueError("Point ROI needs a single click. Please try again.")
+
+        x, y = point[0]
+        if not (0 <= x < width and 0 <= y < height):
+            raise ValueError("Point ROI is out of bounds. Please try again.")
+
+        mask[y, x] = 255
+    elif mode == "point_surrounding":
+        point = []
+        display = frame_display.copy()
+
+        def on_mouse(event, x, y, flags, param):
+            nonlocal point
+            if event == cv2.EVENT_LBUTTONDOWN:
+                point = [(x, y)]
+
+        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback(display_title, on_mouse)
+
+        while True:
+            canvas = display.copy()
+            if point:
+                cv2.circle(canvas, point[0], 2, (0, 255, 255), -1)
+            cv2.imshow(display_title, canvas)
+            key = cv2.waitKey(20) & 0xFF
+
+            if key == 13:  # Enter
+                break
+            if key == ord('c'):
+                point = []
+
+        cv2.destroyWindow(display_title)
+
+        if len(point) != 1:
+            raise ValueError("Point ROI needs a single click. Please try again.")
+
+        x, y = point[0]
+        if not (0 <= x < width and 0 <= y < height):
+            raise ValueError("Point ROI is out of bounds. Please try again.")
+
+        offsets = [
+            (0, 0, "center"),
+            (-1, 0, "left"),
+            (1, 0, "right"),
+            (0, -1, "up"),
+            (0, 1, "down"),
+            (-1, -1, "up_left"),
+            (1, -1, "up_right"),
+            (-1, 1, "down_left"),
+            (1, 1, "down_right"),
+        ]
+        masks = {}
+        for dx, dy, suffix in offsets:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < width and 0 <= ny < height:
+                sub_mask = np.zeros(first_frame.shape, dtype=np.uint8)
+                sub_mask[ny, nx] = 255
+                masks[f"{roi_name}_{suffix}"] = sub_mask
+        if not masks:
+            raise ValueError("No valid surrounding pixels found for the selected point.")
+        mask = masks
+    else:
+        raise ValueError(f"Unknown manual ROI mode: {mode}")
+
+    if mask_save_path and isinstance(mask, np.ndarray):
+        save_dir = os.path.dirname(mask_save_path)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        np.save(mask_save_path, mask)
+
+    if mask_save_path and isinstance(mask, dict):
+        save_dir = os.path.dirname(mask_save_path)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        base, ext = os.path.splitext(mask_save_path)
+        ext = ext if ext else ".npy"
+        for name, sub_mask in mask.items():
+            np.save(f"{base}_{name}{ext}", sub_mask)
+
+    if isinstance(mask, dict):
+        roi_mask_log = [mask for _ in range(len(asc_files))]
+    else:
+        roi_mask_log = [{roi_name: mask} for _ in range(len(asc_files))]
+    return roi_mask_log
+
+
 def apply_roi_masks_to_gray_frames(
     gray_dir: str,
     roi_mask_log: List[Dict[str, np.ndarray]],
