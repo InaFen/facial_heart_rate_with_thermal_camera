@@ -20,7 +20,7 @@ CONFIGS_PATH = "src/approaches/nair_et_al/configs_nair_et_al.yaml"
 configs = Config.from_yaml(CONFIGS_PATH)
 output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
 
-APPLY_DLIB_LANDMARK_DETECTION = True
+APPLY_DLIB_LANDMARK_DETECTION = False
 STFT_WINDOW_SIZE = 64
 STFT_OVERLAP = 56
 SMOOTHNESS_PENALTY = 0.1 # used in curve extraction, higher values lead to smoother curve but less accurate, lower values lead to more accurate but less smooth curve

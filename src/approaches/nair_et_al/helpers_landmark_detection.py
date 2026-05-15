@@ -80,7 +80,7 @@ def annotate_video_with_landmarks(input_video_path: str, output_video_path: str,
     print(f"Annotated video saved to: {output_video_path}")
 
 
-def get_facial_dlib_landmarks_regions_and_save_their_mean(
+def apply_dlib_to_thermal_video(
     video_path: str,
     path_save_video_with_landmarks: str,
     upsample: int,

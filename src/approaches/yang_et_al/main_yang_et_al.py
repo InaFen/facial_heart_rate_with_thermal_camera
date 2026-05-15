@@ -76,7 +76,7 @@ signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
 # Denoise signal via laplacian
 denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, laplacian=laplacian)
 #plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
-#plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
+plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
 
 random_selected_pca_component = None
 if run_random_parallel:

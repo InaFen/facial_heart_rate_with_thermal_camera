@@ -123,7 +123,7 @@ def save_thermal_image(thermal_data, output_path, title="Thermal Image", cmap='h
 
 if __name__ == "__main__":
     # Example usage
-    filepath = "data/infratec_mwir/Julian_31_03_1_Ascii/ISM_Infratec_31162925_0019_1801.asc"
+    filepath = "/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/20_04_2026_MWIR/Paulo_20_4_1/ISM_Infratec_20141354_0001_001.asc"
     thermal_data = extract_thermal_data(filepath)
     print(thermal_data.shape)  # Should print (512, 640)
     display_thermal_image(thermal_data, title="Thermal Image from MWIR Data")

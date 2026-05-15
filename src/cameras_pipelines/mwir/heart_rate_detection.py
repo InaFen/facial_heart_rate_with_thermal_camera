@@ -1019,8 +1019,8 @@ def create_video_from_thermal_frames(
 
 def main() -> None:
 	experiments_yaml_path = Path("src/cameras_pipelines/mwir/experiments_mwir.yaml")
-	selected_person = "paulo"
-	selected_region: Literal["temple", "face"] = "temple"
+	selected_person = "melissa"
+	selected_region: Literal["temple", "face"] = "face"
 	selected_phase: Literal["before", "after"] = "before"
 
 	selected_experiment = load_experiment_from_yaml(
@@ -1041,12 +1041,12 @@ def main() -> None:
 	recursive = False
 	overwrite_cache = False
 	build_cache_if_missing = True
-	create_video = True
+	create_video = False
 	fps: float | None = 100.0
 	apply_average_consecutive_frames_first = False
 	frame_average_window_size = 10
 	plot_averaged_vs_non_averaged_comparison = False
-	plot_bandpass_filtered_signal = True
+	plot_bandpass_filtered_signal = False
 	bandpass_lowcut_hz = 0.5
 	bandpass_highcut_hz = 3.0
 	bandpass_order = 4
@@ -1073,7 +1073,7 @@ def main() -> None:
 
 	npz_path = selected_experiment.ground_truth_path.parent
 	npz_filename = selected_experiment.ground_truth_path.name
-	if not selected_experiment.ground_truth_path.exists():
+	if not selected_experiment.ground_truth_path.exists() or True:
 		offset_and_saving_pipeline(
 			signal_path=selected_experiment.ground_truth_txt_path,
 			npz_path=npz_path,

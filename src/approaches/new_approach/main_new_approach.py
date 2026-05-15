@@ -16,7 +16,7 @@ from src.approaches.new_approach.utils.utils_denoised_baseline import add_random
 from src.approaches.new_approach.utils.utils_stft import get_frequencies_over_time_spectrogram, get_frequencies_over_time_cwt
 from src.approaches.new_approach.utils.utils_detrend import detrend_signal
 from src.approaches.new_approach.utils.utils_fft import plot_fft_each_roi, get_dominant_frequency_per_roi, print_dominant_frequencies
-from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph_2, denoise_via_laplacian
+from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph, denoise_via_laplacian
 import numpy as np
 
 def main():
