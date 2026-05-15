@@ -3,6 +3,8 @@ import numpy as np
 import mediapipe as mp
 import matplotlib.pyplot as plt
 import os
+import re
+from pathlib import Path
 from typing import List, Dict
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 
@@ -104,7 +106,7 @@ def apply_facemesh_to_thermal_video(
 
         # Apply perceptual colormap once; keep BGR for drawing, RGB for MediaPipe
         pseudo_bgr = cv2.applyColorMap(frame_norm, cv2.COLORMAP_TURBO)
-        mesh_input = cv2.cvtColor(pseudo_bgr, cv2.COLOR_BGR2RGB)
+        mesh_input = cv2.cvtColor(pseudo_bgr, cv2.COLOR_BGR2RGB) # convert to RGB for MediaPipe
         pseudo_rgb = pseudo_bgr
 
         results = face_mesh.process(mesh_input)
@@ -371,6 +373,56 @@ def load_gray_frame(filepath: str, width: int = 160, height: int = 122, drop_tel
     if drop_telemetry and height > 120:
         frame = frame[:-2]  # remove last 2 lines
     return frame
+
+
+def _parse_asc_file(filepath: str) -> np.ndarray:
+    text = Path(filepath).read_text(encoding="utf-8", errors="ignore")
+    lines = text.splitlines()
+
+    data_started = False
+    data_rows: List[List[float]] = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            data_started = line.lower() == "[data]"
+            continue
+        if not data_started:
+            continue
+
+        normalized = line.replace(",", ".")
+        parts = re.findall(r"[-+]?\d*\.?\d+", normalized)
+        if parts:
+            data_rows.append([float(p) for p in parts])
+
+    if not data_rows:
+        raise ValueError(f"No data rows found in {filepath}")
+
+    return np.array(data_rows, dtype=np.float32)
+
+
+def _asc_to_kelvin_x100(data: np.ndarray, unit: str) -> np.ndarray:
+    unit = unit.lower()
+    if unit == "celsius":
+        values = (data + 273.15) * 100.0
+    elif unit == "kelvin":
+        values = data * 100.0
+    elif unit == "kelvin100":
+        values = data
+    elif unit == "raw":
+        values = data
+    else:
+        raise ValueError(f"Unsupported unit: {unit}")
+    return values.astype(np.float64)
+
+
+def _resize_mask_to_shape(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
+    target_h, target_w = target_shape
+    if mask.shape == (target_h, target_w):
+        return mask
+    return cv2.resize(mask, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
 
 
 def split_manual_roi_into_subrois(
@@ -737,6 +789,59 @@ def apply_roi_masks_to_gray_frames(
         os.makedirs(os.path.dirname(output_npz), exist_ok=True)
         np.savez(output_npz, roi_pixel_data=roi_pixel_data)
         print(f"Saved ROI pixel data to {output_npz}")
+
+    return roi_pixel_data
+
+
+def apply_roi_masks_to_asc_frames(
+    asc_paths: List[str],
+    roi_mask_log: List[Dict[str, np.ndarray]],
+    unit: str = "celsius",
+) -> List[Dict[str, Dict[str, object]]]:
+    """Apply ROI masks to .asc frames to extract temperatures.
+
+    Parameters:
+        asc_paths: list of .asc file paths, one per frame
+        roi_mask_log: list of per-frame ROI masks
+        unit: unit of values in ASC (celsius|kelvin|kelvin100|raw)
+
+    Returns:
+        roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "values", "mean_kelvin_multiplied_100"}}
+    """
+    if not asc_paths:
+        raise ValueError("asc_paths is empty")
+
+    if len(asc_paths) != len(roi_mask_log):
+        raise ValueError(f"Mismatch between asc files ({len(asc_paths)}) and masks ({len(roi_mask_log)})")
+
+    roi_pixel_data: List[Dict[str, Dict[str, object]]] = []
+
+    for idx, (path, masks) in enumerate(zip(asc_paths, roi_mask_log)):
+        frame = _parse_asc_file(path)
+        frame_values = _asc_to_kelvin_x100(frame, unit)
+
+        frame_data: Dict[str, Dict[str, object]] = {}
+        for roi_name, mask in masks.items():
+            if mask.shape != frame_values.shape:
+                mask = _resize_mask_to_shape(mask, frame_values.shape)
+            if mask.shape != frame_values.shape:
+                raise ValueError(
+                    f"Mask shape {mask.shape} does not match frame shape {frame_values.shape} for ROI {roi_name}"
+                )
+
+            ys, xs = np.where(mask == 255)
+            coords = list(zip(xs.tolist(), ys.tolist()))
+            values = frame_values[ys, xs]
+            frame_data[roi_name] = {
+                "coords": coords,
+                "adc_values": values.tolist(),
+                "mean_kelvin_multiplied_100": float(np.mean(values)) if values.size > 0 else float("nan"),
+            }
+
+        roi_pixel_data.append(frame_data)
+
+        if (idx + 1) % 100 == 0 or idx == len(asc_paths) - 1:
+            print(f"Processed {idx+1}/{len(asc_paths)} frames")
 
     return roi_pixel_data
 
