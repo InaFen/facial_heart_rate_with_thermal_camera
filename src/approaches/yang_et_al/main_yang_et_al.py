@@ -28,14 +28,18 @@ CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.yaml"
 # Get configurations
 configs = Config.from_yaml(CONFIGS_PATH)
 
-# TODO move to configs
-run_random_parallel = False
-random_seed = 42
+RUN_RANDOM_PARALLEL = False
+RANDOM_SEED = 42
+print("Hardcoded parameters in main_yang_et_al.py:")
+print(f"RUN_RANDOM_PARALLEL: {RUN_RANDOM_PARALLEL}")
+print(f"RANDOM_SEED: {RANDOM_SEED}")
 
 # IMPORTANT: Each ROI represents one building block in the graph
 # If ROIs are detected with mediapipe, they have to be set accordingly (e.g. 16 ROIs for 16 building blocks)
 # If ROI is manually defined, manual_roi_split_enabled = True so the ROI is split in sub-ROIs
 
+
+# Face detection and ROI extraction--------------------------------------------------------------------
 # original pipeline for face detection # TODO
 #track_face(in_path= path_video, out_path=path_video_tracked_face)
 #filter_out_pixels_below_threshold(video_path=path_video, output_path=path_video_thresholded_pixel, threshold_value=160)
@@ -48,7 +52,7 @@ roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 _ = add_centroids_to_roi_data(roi_pixel_data)
 
 
-# Create graph and get laplacian
+# Create graph and get laplacian--------------------------------------------------------------------
 # Each block is one ROI (see information above), and features for each block include:
 # - Mean pixel value
 # - Centroid x-coordinate
@@ -56,8 +60,6 @@ _ = add_centroids_to_roi_data(roi_pixel_data)
 block_features, roi_names = build_block_features_from_roi_pixel_data(roi_pixel_data)
 
 adjacency_matrix, laplacian = build_spatiotemporal_graph(block_features=block_features)
-# TODO double-check that everything is similar to paper
-#TODO graph creation with optimal feature metric
 
 signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
 # plot each ROI signal seperately
@@ -79,7 +81,7 @@ denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans,
 plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
 
 random_selected_pca_component = None
-if run_random_parallel:
+if RUN_RANDOM_PARALLEL:
 		random_selected_pca_component = run_random_baseline(
 		signal_all_rois_without_nans=signal_all_rois_without_nans,
 		signal_each_roi_seperate=signal_each_roi_seperate,
@@ -87,10 +89,10 @@ if run_random_parallel:
 		laplacian=laplacian,
 		fps=configs.fps,
 			plot_steps=bool(configs.plot_steps),
-		random_seed=random_seed,
+		random_seed=RANDOM_SEED,
 	)
 
-# Bandpass filter
+# Bandpass filter--------------------------------------------------------------
 denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
 #plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
 
@@ -98,7 +100,7 @@ bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=d
 #plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names, fps = configs.fps, title="Denoised and Bandpassed Signals per ROI")
 
 
-# PCA 
+# PCA ---------------------------------------------------------------------
 prinicpal_components = pca(data=bandpassed_signal_each_roi_seperate, num_components=4)
 plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
 
@@ -112,7 +114,7 @@ if random_selected_pca_component is not None:
 		random_selected_pca_component = random_selected_pca_component * (selected_scale / random_selected_scale)
 #plot_chosen_component(chosen_component=selected_pca_component, fps = configs.fps)
 
-# ground truth steps
+# Ground truth steps---------------------------------------------------------
 if configs.timespan_signal_to_look_at is not None:
 	start_time, end_time = configs.timespan_signal_to_look_at
 	signal_offset = float(configs.time_first_frame_signal or 0.0)
@@ -204,13 +206,13 @@ if configs.timespan_signal_to_look_at is not None:
 
 
 
-# Apply FFT to the selected PCA component (positive frequencies only)
+# Apply FFT to the selected PCA component (positive frequencies only)---------------------------------------
 fft_selected = np.abs(np.fft.rfft(selected_pca_component, n=502))
 
 # Calculate the frequencies corresponding to the FFT bins (non-negative)
 frequencies = np.fft.rfftfreq(502, d=1/configs.fps)
 
-# Find the dominant frequency
+# Find the dominant frequency----------------------------------------------------------------------------------
 dominant_frequency_index = np.argmax(fft_selected)
 dominant_frequency = frequencies[dominant_frequency_index]
 
@@ -230,7 +232,7 @@ if configs.plot_steps:
 	plt.tight_layout()
 	plt.show()
 
-# Estimate heart rate
+# Estimate heart rate--------------------------------------------------------------------------------
 heart_rate_estimate = dominant_frequency * 60
 print(f"Estimated heart rate: {heart_rate_estimate:.2f} beats per minute")
 
