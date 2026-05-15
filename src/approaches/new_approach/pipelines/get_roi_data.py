@@ -23,6 +23,7 @@ from src.approaches.nair_et_al.helpers_landmark_detection import (
     apply_dlib_to_thermal_video,
 )
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+from src.approaches.yang_et_al.utils_face_tracking import track_face
 
 
 def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh', extract_from_video_instead_of_gray_files: bool = False) -> tuple:
@@ -33,7 +34,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
 
     Parameters:
     - configs: Config object containing all necessary paths and parameters
-    - roi_detection_method: Method to use for ROI detection ('dlib' or 'facemesh')
+    - roi_detection_method: Method to use for ROI detection ('dlib', 'facemesh', or 'tracker')
     - extract_from_video_instead_of_gray_files: If True, applies ROI masks to video, else applies to gray frames (default: False)
     
     Returns:
@@ -133,7 +134,14 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
     # detects landmarks on thermal video, applies ROI mask then on gray frames (so raw data)
     else:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
-            if roi_detection_method == "dlib":
+            if roi_detection_method == "tracker":
+                roi_pixel_log = track_face(
+                    in_path=configs.path_video,
+                    out_path=configs.path_video_tracked_face,
+                    fps=configs.fps,
+                    flip_upside_down=True,
+                )
+            elif roi_detection_method == "dlib":
                 print("Use Dlib-based landmark detection for ROI definition (instead of Facemesh).")
                 roi_pixel_log = apply_dlib_to_thermal_video(
                     video_path=configs.path_video,
