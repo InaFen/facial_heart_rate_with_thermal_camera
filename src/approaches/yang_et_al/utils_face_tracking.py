@@ -370,7 +370,7 @@ def track_face(
     out_path: str,
     fps: float,
     grid_size: int = 5,
-    block_size: int = 16,
+    block_size: int = 21,
     show_display: bool = True,
     flip_upside_down: bool = True,
 ):
@@ -472,6 +472,25 @@ def track_face(
         else:
             center = center_proc
 
+        roi_size = (grid_size * block_size)
+        roi_half = roi_size // 2
+        rx0 = max(0, int(center[0] - roi_half))
+        ry0 = max(0, int(center[1] - roi_half))
+        rx1 = min(gray_raw.shape[1], int(center[0] + roi_half))
+        ry1 = min(gray_raw.shape[0], int(center[1] + roi_half))
+
+        if rx1 > rx0 and ry1 > ry0:
+            roi_patch = gray_raw[ry0:ry1, rx0:rx1].astype(np.float32)
+            weights = roi_patch - float(np.min(roi_patch))
+            weight_sum = float(np.sum(weights))
+            if weight_sum > 0:
+                ys, xs = np.mgrid[0:roi_patch.shape[0], 0:roi_patch.shape[1]]
+                cx = float(np.sum(xs * weights) / weight_sum)
+                cy = float(np.sum(ys * weights) / weight_sum)
+                center = (int(rx0 + cx), int(ry0 + cy))
+
+        center = (center[0], min(H - 1, center[1] - int(0.1 * roi_size)))
+
         centers.append(center)
 
         # ----------------------------------------
@@ -523,8 +542,6 @@ def track_face(
         # ----------------------------------------
         # VISUALIZATION
         # ----------------------------------------
-
-        roi_size = (grid_size * block_size)
 
         rx = int(center[0] - roi_size // 2)
 

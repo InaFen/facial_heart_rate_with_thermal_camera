@@ -7,10 +7,8 @@ from scipy.signal import find_peaks
 project_root = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, project_root)
 
-from src.approaches.new_approach.utils.utils_landmark_detection import apply_facemesh_to_thermal_video, apply_roi_masks_to_video, plot_roi_mean_signals, apply_roi_masks_to_gray_frames, plot_roi_temperature_means
-from src.approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold
+from src.approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold_in_roi_pixel_data
 from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph, add_centroids_to_roi_data, denoise_via_laplacian
-from src.approaches.yang_et_al.utils_spatial_temporal_graph_with_optimal_feature_metric import *
 from src.approaches.yang_et_al.utils_plotting import plot_signal_each_roi_seperately, plot_flattened_signal_each_roi, plot_denoised_signal_unflat, plot_original_vs_denoised, plot_principal_components_in_seperate_plots, plot_chosen_component
 from src.approaches.yang_et_al.utils_post_processing import pca, apply_butterworth_bandpass_filter, transform_flatten_signal_to_original_shape, find_most_periodic_pca_component
 from src.approaches.yang_et_al.utils_ground_truth import (
@@ -30,9 +28,13 @@ configs = Config.from_yaml(CONFIGS_PATH)
 
 RUN_RANDOM_PARALLEL = False
 RANDOM_SEED = 42
+APPLY_TRACKER_LANDMARK_DETECTION = True
+THRESHOLD_VALUE = 160
 print("Hardcoded parameters in main_yang_et_al.py:")
 print(f"RUN_RANDOM_PARALLEL: {RUN_RANDOM_PARALLEL}")
 print(f"RANDOM_SEED: {RANDOM_SEED}")
+print(f"APPLY_TRACKER_LANDMARK_DETECTION: {APPLY_TRACKER_LANDMARK_DETECTION}")
+print(f"THRESHOLD_VALUE: {THRESHOLD_VALUE}")
 
 # IMPORTANT: Each ROI represents one building block in the graph
 # If ROIs are detected with mediapipe, they have to be set accordingly (e.g. 16 ROIs for 16 building blocks)
@@ -41,11 +43,12 @@ print(f"RANDOM_SEED: {RANDOM_SEED}")
 
 # Face detection and ROI extraction--------------------------------------------------------------------
 # original pipeline for face detection # TODO
-#track_face(in_path= path_video, out_path=path_video_tracked_face)
-#filter_out_pixels_below_threshold(video_path=path_video, output_path=path_video_thresholded_pixel, threshold_value=160)
-
-# Get face with mediapipe (not original pipeline)
-roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
+if APPLY_TRACKER_LANDMARK_DETECTION:
+	roi_pixel_data, _ = get_roi_data_pipeline(configs=configs, roi_detection_method="tracker")
+	roi_pixel_data = filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshold_value=THRESHOLD_VALUE)
+else:
+	# Get face with mediapipe
+	roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 
 
 # Calculate centroids of each ROI in each frame (change in place)
