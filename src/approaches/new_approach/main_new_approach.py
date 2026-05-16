@@ -1,112 +1,86 @@
-"""
-Based on Yang et al. """
-
 import sys
-
-PROJECT_ROOT = "/home/arbeit/Dokumente/master_thesis/"
-sys.path.insert(0, PROJECT_ROOT)
-
-from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
-from src.approaches.new_approach.pipelines.denoising_graph_application import apply_denoising_graph_pipeline
-from src.approaches.yang_et_al.utils_post_processing import transform_flatten_signal_to_original_shape, apply_butterworth_bandpass_filter
-from src.approaches.yang_et_al.utils_plotting import plot_denoised_signal_unflat
-from src.approaches.new_approach.pipelines.comparison_to_ground_truth import compare_signal_to_ground_truth_pipeline
-from src.approaches.new_approach.classes.user_input import Config
-from src.approaches.new_approach.utils.utils_denoised_baseline import add_random_baseline_signal
-from src.approaches.new_approach.utils.utils_stft import get_frequencies_over_time_spectrogram, get_frequencies_over_time_cwt
-from src.approaches.new_approach.utils.utils_detrend import detrend_signal
-from src.approaches.new_approach.utils.utils_fft import plot_fft_each_roi, get_dominant_frequency_per_roi, print_dominant_frequencies
-from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph, denoise_via_laplacian
+from collections import defaultdict
+import os
+import matplotlib.pyplot as plt
 import numpy as np
 
-def main():
-    configs = Config.from_json(CONFIGS_PATH)
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, project_root)
 
-    # Get ROI data
-    roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
+from src.approaches.new_approach.classes.user_input import Config
 
-    # Apply graph denoising
-    denoised_signal_all_rois, signal_each_roi_seperate, roi_names = apply_denoising_graph_pipeline(roi_pixel_data=roi_pixel_data, configs=configs)
-    
-    denoised_signal_each_roi_seperate = transform_flatten_signal_to_original_shape(block_features=signal_each_roi_seperate, flattened_signal=denoised_signal_all_rois)
-    
-    # Remove mean (remove DC component - constant offset) before dual ROI subtraction
-    denoised_signal_each_roi_seperate = detrend_signal(denoised_signal_each_roi_seperate, roi_names, plot=configs.plot_steps)
-    
-    if configs.plot_steps:
-        plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names, title="Detrended Signal per ROI", fps=configs.fps, show_seconds=True)
-    
-    # Dual ROI subtraction if two manual ROIs are selected
-    if configs.manual_roi_enabled and len(configs.manual_roi_names) == 2:
-        # Find indices for the two manual ROIs
-        roi1_name, roi2_name = configs.manual_roi_names
-        try:
-            idx1 = roi_names.index(roi1_name)
-            idx2 = roi_names.index(roi2_name)
-        except ValueError:
-            raise ValueError(f"Manual ROI names {roi1_name} and/or {roi2_name} not found in roi_names: {roi_names}")
-        # Subtract roi_noise (ROI 2) from roi_signal (ROI 1)
-        dual_roi_signal = denoised_signal_each_roi_seperate[:, idx1] - denoised_signal_each_roi_seperate[:, idx2]
-        denoised_signal_each_roi_seperate = dual_roi_signal[:, None]  # shape (T, 1)
-        roi_names = [f"{roi1_name} - {roi2_name}"]
+from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 
-    # Add random baseline ROI to denoised signal (control signal for validation)
-    #denoised_signal_each_roi_seperate, baseline_names = add_random_baseline_signal(
-    #    denoised_signal_each_roi_seperate, seed=42, amplitude_scale=0.2
-    #)
-    #roi_names = list(roi_names) + baseline_names  # Append baseline to ROI names list
+CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
 
-    #if configs.plot_steps:
-    #    plot_denoised_signal_unflat(denoised_signal_unflat=denoised_signal_each_roi_seperate, roi_names=roi_names)
-
-    # Get frequencies over time using STFT and CWT
-    #get_frequencies_over_time_spectrogram(denoised_signal_each_roi_seperate, fps=configs.fps, window_seconds=5.0, roi_names=roi_names, save_path=None, plot=True)
-
-    get_frequencies_over_time_cwt(denoised_signal_each_roi_seperate, fps=configs.fps, roi_names=roi_names, save_path=None, plot=True)
-
-    # Apply bandpass filter
-    bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=denoised_signal_each_roi_seperate, lowcut=configs.bandpass_lowcut, highcut=configs.bandpass_highcut, fs=configs.fps, order=configs.bandpass_order)
-    #bandpassed_signal_each_roi_seperate = denoised_signal_each_roi_seperate  # No additional filtering for now
-
-    if configs.plot_steps:
-        plot_denoised_signal_unflat(denoised_signal_unflat=bandpassed_signal_each_roi_seperate, roi_names=roi_names, title="Bandpassed Denoised Signal per ROI", fps=configs.fps, show_seconds=True)
-
-    # Plot FFT for each ROI
-    #plot_fft_each_roi(bandpassed_signal_each_roi_seperate, roi_names, fps=configs.fps, show_peaks=True)
-    
-    # Get and print dominant frequencies and heart rate estimates
-    dominant_frequencies, heart_rates = get_dominant_frequency_per_roi(bandpassed_signal_each_roi_seperate, roi_names, fps=configs.fps)
-    print_dominant_frequencies(dominant_frequencies, heart_rates)
-
-    # Compare to ground truth signal
-    compare_signal_to_ground_truth_pipeline(configs=configs, bandpassed_signal_each_roi_seperate=bandpassed_signal_each_roi_seperate, roi_names=roi_names, timespan_filter=configs.timespan_signal_to_look_at)
+configs = Config.from_yaml(CONFIGS_PATH)
+output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
 
 
-"""
+roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 
-# PCA 
-prinicpal_components = pca(data=bandpassed_signal_each_roi_seperate, num_components=4)
-#plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
+# Spatial averaging of each ROI (should be very small ROIs)
+# to average random noise out (by sqrt(n))
+# Create matrix with rows: subregions, columns: time frames, values: mean pixel intensity of the subregion in the frame
+result = defaultdict(list)
+subregions_names = []
 
-# Find most periodic component
-selected_pca_component = find_most_periodic_pca_component(principal_components=prinicpal_components)
-#plot_chosen_component(chosen_component=selected_pca_component, fps = fps)
+for frame in roi_pixel_data:
+    for roi, values in frame.items():
+        if roi not in result:
+            subregions_names.append(roi)  # remember first-seen order
+        result[roi].append(values["mean_kelvin_multiplied_100"])
 
-# Apply FFT to the selected PCA component
-fft_selected = np.abs(np.fft.fft(selected_pca_component, n=502))
+mean_values_subregions = [result[roi] for roi in subregions_names]
+raw_before_averaging = np.array(mean_values_subregions)
 
-# Calculate the frequencies corresponding to the FFT bins
-frequencies = np.fft.fftfreq(502, d=1/fps)
+# Temporal averaging over ROI as much as FPS allows by applying moving average
+minimum_effective_fps = 4
+input_fps = float(configs.fps)
+averaging_window_size_frames = max(1, int(np.floor(input_fps / minimum_effective_fps)))
 
-# Find the dominant frequency
-dominant_frequency_index = np.argmax(fft_selected)
-dominant_frequency = frequencies[dominant_frequency_index]
+if averaging_window_size_frames > 1:
+    temporally_averaged_values_subregions = []
+    for roi_signal_values in mean_values_subregions:
+        roi_signal_array = np.asarray(roi_signal_values)
+        if roi_signal_array.size == 0:
+            temporally_averaged_values_subregions.append(roi_signal_array.tolist())
+            continue
+        averaging_kernel = np.ones(averaging_window_size_frames) / averaging_window_size_frames
+        smoothed_roi_signal = np.convolve(roi_signal_array, averaging_kernel, mode="same")
+        temporally_averaged_values_subregions.append(smoothed_roi_signal.tolist())
+    mean_values_subregions = temporally_averaged_values_subregions
 
-# Estimate heart rate
-heart_rate_estimate = dominant_frequency * 60
-print(f"Estimated heart rate: {heart_rate_estimate:.2f} beats per minute")
-"""
+if configs.plot_steps:
+    raw_after_averaging = np.array(mean_values_subregions)
 
-if __name__ == "__main__":
-    CONFIGS_PATH = "src/approaches/new_approach/configs.json"
-    main()
+    t = np.arange(raw_before_averaging.shape[1])
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+
+    for i in range(raw_before_averaging.shape[0]):
+        ax.plot(
+            t,
+            raw_before_averaging[i],
+            label=f"{subregions_names[i]} (before)",
+            alpha=0.4,
+        )
+        ax.plot(
+            t,
+            raw_after_averaging[i],
+            label=f"{subregions_names[i]} (after)",
+            linewidth=2,
+        )
+
+    ax.set_title("Mean values subregions (before vs after averaging)")
+    ax.set_ylabel("Amplitude")
+    ax.legend(loc='upper right', fontsize=8, ncol=2)
+
+    plt.tight_layout()
+    plt.show()
+
+# Bandpass filter in area of NETD -> needs to be determined first
+
+# Wiener filter, Wavelet denoising
+
+# Peak detection, Peakt ot peak
