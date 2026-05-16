@@ -259,3 +259,4 @@ def evaluate_against_ground_truth(
 
 if __name__ == "__main__":
     print("This module provides evaluation utilities for ground truth comparison.")
+# TODO test metric pipelien
