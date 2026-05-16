@@ -656,11 +656,13 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
     Returns:
         filtered_roi_pixel_data: same structure with values filtered and mean_value updated
     """
+    # Validate video settings
     if output_video_path is not None and fps is None:
         raise ValueError("fps must be provided when output_video_path is set")
 
     frame_width = 0
     frame_height = 0
+    # Determine output frame size from ROI coordinates
     if output_video_path is not None:
         for frame_data in roi_pixel_data:
             for roi_info in frame_data.values():
@@ -672,6 +674,7 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
                         frame_height = y + 1
 
     writer = None
+    # Initialize video writer if requested
     if output_video_path is not None and frame_width > 0 and frame_height > 0:
         writer = cv2.VideoWriter(
             output_video_path,
@@ -681,13 +684,15 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
         )
 
     filtered_roi_pixel_data = []
+    roi_has_values = {}
 
+    # Filter values per ROI and optionally render kept pixels
     for frame_data in roi_pixel_data:
         filtered_frame = {}
         if writer is not None:
             output_frame = np.zeros((frame_height, frame_width), dtype=np.uint8)
         for roi_name, roi_info in frame_data.items():
-            values = roi_info.get("values", [])
+            values = roi_info.get("adc_values", [])
             coords = roi_info.get("coords", [])
 
             filtered_values = []
@@ -697,15 +702,16 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
                     filtered_coords.append(coord)
                     filtered_values.append(value)
 
-            if not filtered_values:
-                continue
-
-            mean_val = float(np.mean(filtered_values))
+            if filtered_values:
+                mean_val = float(np.mean(filtered_values))
+                roi_has_values[roi_name] = True
+            else:
+                mean_val = float("nan")
+                roi_has_values.setdefault(roi_name, False)
 
             filtered_frame[roi_name] = {
                 "coords": filtered_coords,
-                "values": filtered_values,
-                "mean_value": mean_val,
+                "adc_values": filtered_values,
                 "mean_kelvin_multiplied_100": mean_val,
             }
 
@@ -719,7 +725,16 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
             output_frame_bgr = cv2.cvtColor(output_frame, cv2.COLOR_GRAY2BGR)
             writer.write(output_frame_bgr)
 
+    # Finalize video output
     if writer is not None:
         writer.release()
+
+    # Drop ROIs that never had any values across all frames
+    if roi_has_values:
+        roi_to_keep = {name for name, has_values in roi_has_values.items() if has_values}
+        filtered_roi_pixel_data = [
+            {name: info for name, info in frame.items() if name in roi_to_keep}
+            for frame in filtered_roi_pixel_data
+        ]
 
     return filtered_roi_pixel_data
