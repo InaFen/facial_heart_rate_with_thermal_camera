@@ -651,7 +651,7 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
 
     Parameters:
         roi_pixel_data: list of dicts (per frame) with keys per ROI
-        threshold_value: Pixel intensity threshold (0-255)
+        threshold_value: Pixel intensity threshold 
 
     Returns:
         filtered_roi_pixel_data: same structure with values filtered and mean_value updated
@@ -682,6 +682,20 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
             fps,
             (frame_width, frame_height),
         )
+
+    # Compute global min/max for normalization (across filtered values only)
+    global_min = None
+    global_max = None
+    for frame_data in roi_pixel_data:
+        for roi_info in frame_data.values():
+            values = roi_info.get("adc_values", [])
+            for value in values:
+                if value < threshold_value:
+                    continue
+                if global_min is None or value < global_min:
+                    global_min = value
+                if global_max is None or value > global_max:
+                    global_max = value
 
     filtered_roi_pixel_data = []
     roi_has_values = {}
@@ -718,7 +732,11 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
             if writer is not None:
                 for (x, y), value in zip(filtered_coords, filtered_values):
                     if 0 <= x < frame_width and 0 <= y < frame_height:
-                        output_frame[y, x] = np.uint8(np.clip(value, 0, 255))
+                        if global_min is not None and global_max is not None and global_max > global_min:
+                            norm_val = (value - global_min) / (global_max - global_min)
+                            output_frame[y, x] = np.uint8(np.clip(norm_val * 255.0, 0, 255))
+                        else:
+                            output_frame[y, x] = 0
 
         filtered_roi_pixel_data.append(filtered_frame)
         if writer is not None:

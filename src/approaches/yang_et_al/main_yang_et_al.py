@@ -29,7 +29,7 @@ configs = Config.from_yaml(CONFIGS_PATH)
 RUN_RANDOM_PARALLEL = False
 RANDOM_SEED = 42
 APPLY_TRACKER_LANDMARK_DETECTION = True
-THRESHOLD_VALUE = 160
+THRESHOLD_VALUE = 30000 # only keep pixels above 30 degrees, if tracker landmark detection used
 print("Hardcoded parameters in main_yang_et_al.py:")
 print(f"RUN_RANDOM_PARALLEL: {RUN_RANDOM_PARALLEL}")
 print(f"RANDOM_SEED: {RANDOM_SEED}")

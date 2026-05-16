@@ -140,6 +140,8 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     out_path=configs.path_video_tracked_face,
                     fps=configs.fps,
                     flip_upside_down=True,
+                    start_frame=start_frame if limit_to_timespan else 0,
+                    end_frame=end_frame if limit_to_timespan else None,
                 )
             elif roi_detection_method == "dlib":
                 print("Use Dlib-based landmark detection for ROI definition (instead of Facemesh).")
