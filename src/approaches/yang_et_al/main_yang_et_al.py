@@ -20,6 +20,7 @@ from src.approaches.yang_et_al.utils_ground_truth import (
 from src.approaches.yang_et_al.utils_random_baseline import run_random_baseline
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
+from src.ground_truth_methods.metric_pipeline import evaluate_instantaneous_hr_against_ground_truth
 
 CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.yaml"
 
@@ -28,7 +29,7 @@ configs = Config.from_yaml(CONFIGS_PATH)
 
 RUN_RANDOM_PARALLEL = False
 RANDOM_SEED = 42
-APPLY_TRACKER_LANDMARK_DETECTION = True
+APPLY_TRACKER_LANDMARK_DETECTION = False
 THRESHOLD_VALUE = 30000 # only keep pixels above 30 degrees, if tracker landmark detection used
 print("Hardcoded parameters in main_yang_et_al.py:")
 print(f"RUN_RANDOM_PARALLEL: {RUN_RANDOM_PARALLEL}")
@@ -76,10 +77,30 @@ plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_nam
 signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
 #plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
 
-# compute mean ignoring NaNs
+# compute mean ignoring NaNs (used as fallback if a ROI is fully NaN)
 mean_val = np.nanmean(signal_all_rois)
-# replace NaNs
-signal_all_rois_without_nans = np.nan_to_num(signal_all_rois, nan=mean_val)
+if np.isnan(mean_val):
+	mean_val = 0.0
+
+signal_all_rois_unflat = transform_flatten_signal_to_original_shape(
+	block_features=signal_each_roi_seperate,
+	flattened_signal=signal_all_rois,
+)
+signal_all_rois_unflat = signal_all_rois_unflat.astype(float)
+
+# Replace NaNs via per-ROI temporal interpolation (fallback to global mean if a ROI is fully NaN)
+for roi_index in range(signal_all_rois_unflat.shape[1]):
+	y = signal_all_rois_unflat[:, roi_index]
+	mask = ~np.isnan(y)
+	if mask.sum() == 0:
+		signal_all_rois_unflat[:, roi_index] = mean_val
+	elif mask.sum() == 1:
+		signal_all_rois_unflat[:, roi_index] = y[mask][0]
+	else:
+		x = np.arange(y.size)
+		signal_all_rois_unflat[:, roi_index] = np.interp(x, x[mask], y[mask])
+
+signal_all_rois_without_nans = signal_all_rois_unflat.reshape(-1, 1)
 #plot_flattened_signal_each_roi(signal_flattened=signal_all_rois_without_nans, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising with NaNs replaced")
 
 
@@ -211,6 +232,31 @@ if configs.timespan_signal_to_look_at is not None:
 	plt.legend()
 	plt.tight_layout()
 	plt.show()
+
+	# Instantaneous HR evaluation with timestamp-based matching (step-by-step plots enabled)
+	ihr_eval = evaluate_instantaneous_hr_against_ground_truth(
+		predicted_signal=selected_pca_component,
+		predicted_fs=float(configs.fps),
+		path_ground_truth=configs.path_ground_truth,
+		timespan=configs.timespan_signal_to_look_at,
+		time_first_frame_signal=float(configs.time_first_frame_signal or 0.0),
+		time_first_frame_ecg=float(configs.time_first_frame_ecg or 0.0),
+		flip_ground_truth=False,
+		tolerance_ms=150.0,
+		plot_steps=bool(configs.plot_steps),
+		plot_bland_altman=bool(configs.plot_steps),
+	)
+
+	metrics_ihr = ihr_eval["metrics"]
+	print("\nInstantaneous HR metrics (timestamp matched):")
+	print(f"Matched pairs: {metrics_ihr.get('num_matched')}")
+	print(f"RMSE: {metrics_ihr.get('rmse'):.4f}")
+	print(f"MAE: {metrics_ihr.get('mae'):.4f}")
+	print(f"R2: {metrics_ihr.get('r2'):.4f}")
+	print(f"KS p-value: {metrics_ihr.get('ks_pvalue'):.4e}")
+	print(f"Mean diff: {metrics_ihr.get('mean_diff'):.4f}")
+	print(f"LoA low: {metrics_ihr.get('loa_low'):.4f}")
+	print(f"LoA high: {metrics_ihr.get('loa_high'):.4f}")
 
 
 
