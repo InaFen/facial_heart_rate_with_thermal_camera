@@ -59,6 +59,32 @@ for frame in roi_pixel_data:
         result[roi].append(values["mean_kelvin_multiplied_100"])
 
 mean_values_subregions = [result[roi] for roi in subregions_names]
+
+# Interpolate NaNs per subregion over time (fallback to global mean if fully NaN)
+flat_values = np.concatenate([np.asarray(values, dtype=float) for values in mean_values_subregions])
+global_mean = np.nanmean(flat_values) if flat_values.size else 0.0
+if np.isnan(global_mean):
+    global_mean = 0.0
+
+interpolated_values_subregions = []
+for values in mean_values_subregions:
+    signal = np.asarray(values, dtype=float)
+    if signal.size == 0:
+        interpolated_values_subregions.append(signal.tolist())
+        continue
+
+    mask = ~np.isnan(signal)
+    if mask.sum() == 0:
+        signal = np.full_like(signal, fill_value=global_mean, dtype=float)
+    elif mask.sum() == 1:
+        signal[:] = signal[mask][0]
+    else:
+        x = np.arange(signal.size)
+        signal[~mask] = np.interp(x[~mask], x[mask], signal[mask])
+
+    interpolated_values_subregions.append(signal.tolist())
+
+mean_values_subregions = interpolated_values_subregions
 bandpassed_mean_values_subregions = np.zeros_like(mean_values_subregions, dtype=np.float32)
 
 for subregion in range(len(subregions_names)):
