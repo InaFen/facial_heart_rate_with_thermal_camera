@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import savgol_filter
+from scipy.signal import butter, filtfilt
 import pywt
 
 
@@ -20,11 +21,19 @@ CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
 configs = Config.from_yaml(CONFIGS_PATH)
 output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
 
+TEMPORAL_FILTER_TYPE = 'savitzky_golay' #'moving_average' or 'savitzky_golay'
+FILTER_TYPE = 'highpass'  # 'none', 'highpass', or 'bandpass'
+HIGHPASS_CUTOFF_HZ = 0.7
+BANDPASS_LOW_HZ = 0.7
+BANDPASS_HIGH_HZ = 4.0
+FILTER_ORDER = 3
 
+# Get ROIs----------------------------------------------------------------------------
 roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 
-# Spatial averaging of each ROI (should be very small ROIs)
+# Spatial averaging of each ROI (should be very small ROIs)----------------------------
 # to average random noise out (by sqrt(n))
+
 # Create matrix with rows: subregions, columns: time frames, values: mean pixel intensity of the subregion in the frame
 result = defaultdict(list)
 subregions_names = []
@@ -40,10 +49,8 @@ raw_before_averaging = np.array(mean_values_subregions)
 
 # Temporal filtering over ROI to remove NETD noise while preserving heart rate
 # Can use either moving average or Savitzky-Golay filter (preserves peaks better)
-input_fps = float(configs.fps)
 
-# Choose filter type: 'moving_average' or 'savitzky_golay'
-temporal_filter_type = 'moving_average'  # Change to 'moving_average' to use simple moving average
+# TODO look at details of temporal filtering
 
 # Savitzky-Golay acts as a low-pass filter. Set target cutoff frequency in Hz
 # Larger window = lower cutoff frequency (more smoothing)
@@ -52,7 +59,7 @@ target_cutoff_hz = 8.0  # Hz (tune this for desired noise reduction)
 
 # Approximate window size for target cutoff frequency
 # Rule of thumb: window_length ≈ fps / cutoff_hz
-filtering_window_size_frames = max(3, int(input_fps / target_cutoff_hz))
+filtering_window_size_frames = max(3, int(configs.fps / target_cutoff_hz))
 # Make odd for savgol_filter
 if filtering_window_size_frames % 2 == 0:
     filtering_window_size_frames += 1
@@ -65,7 +72,7 @@ if filtering_window_size_frames > 1:
             temporally_filtered_values_subregions.append(roi_signal_array.tolist())
             continue
         
-        if temporal_filter_type == 'savitzky_golay':
+        if TEMPORAL_FILTER_TYPE == 'savitzky_golay':
             # Savitzky-Golay filter: preserves peaks and valleys
             # window_length must be odd and <= signal length
             window_length = min(len(roi_signal_array), filtering_window_size_frames)
@@ -109,62 +116,100 @@ if configs.plot_steps:
     plt.tight_layout()
     plt.show()
 
+# Interpolate NaNs per subregion over time (fallback to global mean if a subregion is fully NaN)
+mean_values_series = [np.asarray(series, dtype=float) for series in mean_values_subregions]
+flat_values = np.concatenate([series for series in mean_values_series if series.size])
+global_mean = np.nanmean(flat_values) if flat_values.size else 0.0
+if np.isnan(global_mean):
+    global_mean = 0.0
+
+interpolated_series = []
+for series in mean_values_series:
+    if series.size == 0:
+        interpolated_series.append(series)
+        continue
+
+    mask = ~np.isnan(series)
+    if mask.sum() == 0:
+        series = np.full_like(series, fill_value=global_mean, dtype=float)
+    elif mask.sum() == 1:
+        series[:] = series[mask][0]
+    else:
+        x = np.arange(series.size)
+        series[~mask] = np.interp(x[~mask], x[mask], series[mask])
+
+    interpolated_series.append(series)
+
+mean_values_subregions = [series.tolist() for series in interpolated_series]
+
+
+def apply_butterworth_highpass_filter(signal, cutoff, fs, order):
+    if fs <= 0:
+        raise ValueError(f"Sampling frequency must be positive. Got fs={fs}.")
+
+    nyquist = 0.5 * fs
+    if not (0 < cutoff < nyquist):
+        raise ValueError(
+            "Highpass cutoff must satisfy 0 < cutoff < Nyquist. "
+            f"Got cutoff={cutoff}, Nyquist={nyquist}."
+        )
+
+    normalized_cutoff = cutoff / nyquist
+    b, a = butter(order, normalized_cutoff, btype='high')
+    return filtfilt(b, a, signal, axis=0)
+
+
+if FILTER_TYPE != 'none':
+    filtered_series = [np.asarray(series, dtype=float) for series in mean_values_subregions]
+    if not filtered_series:
+        raise ValueError("No data available for filtering.")
+
+    min_length = min(series.size for series in filtered_series)
+    if min_length < 2:
+        raise ValueError("Not enough samples for FFT/filtering.")
+
+    filtered_input = np.vstack([series[:min_length] for series in filtered_series])
+
+    signal_for_filter = filtered_input.T
+    if configs.plot_steps:
+        n_samples = signal_for_filter.shape[0]
+        freqs = np.fft.rfftfreq(n_samples, d=1.0 / configs.fps)
+        fig, ax = plt.subplots(figsize=(10, 4))
+        for i in range(filtered_input.shape[0]):
+            spectrum = np.abs(np.fft.rfft(filtered_input[i]))
+            ax.plot(freqs, spectrum, alpha=0.4)
+        ax.set_title("FFT before filtering")
+        ax.set_xlabel("Frequency (Hz)")
+        ax.set_ylabel("Magnitude")
+        plt.tight_layout()
+        plt.show()
+    if FILTER_TYPE == 'highpass':
+        filtered_signal = apply_butterworth_highpass_filter(
+            signal_for_filter, HIGHPASS_CUTOFF_HZ, configs.fps, FILTER_ORDER
+        )
+    elif FILTER_TYPE == 'bandpass':
+        filtered_signal = apply_butterworth_bandpass_filter(
+            signal_for_filter, BANDPASS_LOW_HZ, BANDPASS_HIGH_HZ, configs.fps, FILTER_ORDER
+        )
+    else:
+        raise ValueError(f"Unsupported FILTER_TYPE: {FILTER_TYPE}")
+
+    mean_values_subregions = filtered_signal.T
+
+    if configs.plot_steps:
+        t = np.arange(mean_values_subregions.shape[1])
+        fig, ax = plt.subplots(figsize=(10, 4))
+        for i in range(filtered_input.shape[0]):
+            ax.plot(t, filtered_input[i], alpha=0.4, color='C0')
+            ax.plot(t, mean_values_subregions[i], color='C1', linewidth=1.5)
+        ax.set_title(f"Filter ({FILTER_TYPE}) before vs after")
+        ax.set_xlabel("Frames")
+        ax.set_ylabel("Amplitude")
+        plt.tight_layout()
+        plt.show()
+
 # Butterworth Bandpass filter to isolate heart rate frequencies
 #TODO fix
-bandpass = False
-if bandpass:
-    # TODO check again based on NETD values
-    # After Savitzky-Golay at 4Hz cutoff, effective fs is 4Hz
-    # Nyquist frequency is target_cutoff_hz/2 = 2Hz
-    bandpass_lowcut = 0.5  # Hz (min heart rate: 30 BPM)
-    bandpass_highcut = 1.9  # Hz (stay safely below Nyquist of 2Hz)
-    bandpass_order = 4
-
-    # Apply bandpass filter to all ROI signals
-    # Create matrix with rows: subregions, columns: time frames, values: mean pixel intensity of the subregion in the frame
-    result = defaultdict(list)
-    subregions_names = []
-
-    for frame in roi_pixel_data:
-        for roi, values in frame.items():
-            if roi not in result:
-                subregions_names.append(roi)  # remember first-seen order
-            result[roi].append(values["mean_kelvin_multiplied_100"])
-
-    mean_values_subregions = [result[roi] for roi in subregions_names]
-    bandpassed_mean_values_subregions = np.zeros_like(mean_values_subregions, dtype=np.float32)
-
-    for subregion in range(len(subregions_names)):
-        bandpassed_mean_values_subregions[subregion] = apply_butterworth_bandpass_filter(signal = mean_values_subregions[subregion], lowcut = configs.bandpass_lowcut, highcut = configs.bandpass_highcut, fs = configs.fps, order = configs.bandpass_order)
-
-        if configs.plot_steps:
-            # Plot signal before and after bandpass filtering for all subregions
-            bandpassed = np.array(bandpassed_mean_values_subregions)
-            raw = np.array(mean_values_subregions)
-            
-            t = np.arange(raw.shape[1])
-
-            fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-
-            # ---- Axis 0: raw ----
-            for i in range(raw.shape[0]):
-                axes[0].plot(t, raw[i], label=subregions_names[i])
-
-            axes[0].set_title("Mean values subregions")
-            axes[0].set_ylabel("Amplitude")
-            axes[0].legend(loc='upper right', fontsize=8)
-
-            # ---- Axis 1: bandpassed ----
-            for i in range(bandpassed.shape[0]):
-                axes[1].plot(t, bandpassed[i], label=subregions_names[i])
-
-            axes[1].set_title("Bandpassed mean values subregions")
-            axes[1].set_xlabel("Time")
-            axes[1].set_ylabel("Amplitude")
-            axes[1].legend(loc='upper right', fontsize=8)
-
-            plt.tight_layout()
-            plt.show()
 
 # Wavelet denoising
 def wavelet_denoise_signal(sig, wavelet='db4', level=None, mode='soft'):
