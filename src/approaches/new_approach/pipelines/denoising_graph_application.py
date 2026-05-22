@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph_2, denoise_via_laplacian
+from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph, denoise_via_laplacian
 from src.approaches.yang_et_al.utils_plotting import plot_signal_each_roi_seperately, plot_flattened_signal_each_roi, plot_original_vs_denoised
 from src.approaches.new_approach.classes.user_input import Config
 
@@ -20,7 +20,7 @@ def apply_denoising_graph_pipeline(roi_pixel_data, configs: Config):
     # Create graph and get laplacian
     block_features, roi_names = build_block_features_from_roi_pixel_data(roi_pixel_data)
 
-    adjacency_matrix, laplacian = build_spatiotemporal_graph_2(block_features=block_features)
+    adjacency_matrix, laplacian = build_spatiotemporal_graph(block_features=block_features)
 
     # Prepare signal for denoising: Take block features and flatten
     signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)

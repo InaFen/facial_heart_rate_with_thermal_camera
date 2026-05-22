@@ -75,6 +75,7 @@ class Config:
     manual_roi_selection_colormap: bool = True
     manual_roi_split_enabled: bool = False
     manual_roi_subroi_grid: List[int] = field(default_factory=lambda: [2, 2])
+    asc_unit: str = "celsius"
     
     # Timing
     time_first_frame_signal: Optional[str] = None
@@ -126,6 +127,7 @@ class Config:
             manual_roi_selection_colormap=processing_data.get('manual_roi_selection_colormap', True),
             manual_roi_split_enabled=processing_data.get('manual_roi_split_enabled', False),
             manual_roi_subroi_grid=processing_data.get('manual_roi_subroi_grid', [2, 2]),
+            asc_unit=processing_data.get('asc_unit', 'celsius'),
 
             # Timing
             time_first_frame_signal=timing_data['time_first_frame_signal'],

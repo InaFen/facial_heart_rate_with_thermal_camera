@@ -3,7 +3,7 @@
 Live thermal viewer - displays .gray frames as they are captured.
 
 Usage:
-    python src/video_processing_methods/live_thermal_viewer.py /home/arbeit/Dokumente/master_thesis/data/lepton/raw_lepton_data/03022026/
+    python src/video_processing_methods/live_thermal_viewer.py /home/arbeit/Dokumente/master_thesis/data/lepton/raw_lepton_data/22052026/temp/
 
 This will monitor the directory for new .gray files and display them in real-time.
 Press 'q' to quit, 's' to save a screenshot of the current frame.
