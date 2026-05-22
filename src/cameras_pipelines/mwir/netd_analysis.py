@@ -320,6 +320,39 @@ def plot_neighbor_correlation_heatmap(
 	plt.show()
 
 
+def plot_roi_mean_signal_fft(
+	thermal_frames: np.ndarray,
+	frame_rate_hz: float,
+	roi: tuple[int, int, int, int] | None = None,
+	title: str = "FFT of ROI Mean Temperature Signal",
+) -> None:
+	"""Plot FFT magnitude of the temporal mean temperature signal in an ROI."""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+	if thermal_frames.shape[0] < 2:
+		raise ValueError("At least 2 frames are required for FFT plotting.")
+	if frame_rate_hz <= 0:
+		raise ValueError(f"frame_rate_hz must be > 0, got {frame_rate_hz}")
+
+	y_slice, x_slice = _normalize_roi(roi, thermal_frames.shape[1:])
+	roi_frames = thermal_frames[:, y_slice, x_slice]
+	roi_mean_signal = roi_frames.mean(axis=(1, 2))
+	roi_mean_signal_centered = roi_mean_signal - roi_mean_signal.mean()
+
+	frequency_axis_hz = np.fft.rfftfreq(roi_mean_signal_centered.size, d=1.0 / frame_rate_hz)
+	fft_magnitude = np.abs(np.fft.rfft(roi_mean_signal_centered))
+
+	fig, ax = plt.subplots(figsize=(10, 4))
+	ax.plot(frequency_axis_hz, fft_magnitude, color="darkorange", linewidth=2)
+	ax.set_title(title)
+	ax.set_xlabel("Frequency (Hz)")
+	ax.set_ylabel("Magnitude")
+	ax.grid(alpha=0.3)
+	plt.tight_layout()
+	plt.show()
+
+
 def format_netd_result(result: dict[str, float | int | tuple[int, int]]) -> str:
 	"""Format a NETD result dictionary for human-readable output."""
 	return (
@@ -352,15 +385,18 @@ def format_neighbor_correlation_result(result: dict[str, object]) -> str:
 
 def main() -> None:
 	#path = Path("data/infratec_mwir/Black_body_Ascii")
-	path = Path("/mnt/wwn-0x50000398325009f6-part1/10_secs_NETD_Ascii")
+	path = Path("/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/10_secs_NETD_Ascii")
     
 	recursive = False
 	roi: tuple[int, int, int, int] | None = None # If None, whole image is used 
 	plot_histogram = True
 	plot_one_frame_heatmap = True
 	plot_neighbor_correlation_heatmap_enabled = True
+	plot_roi_fft = True
 	heatmap_frame_index = 0
+	frame_rate_hz = 100.0
 	frame_average_window = 10
+	effective_frame_rate_hz = frame_rate_hz / frame_average_window
 
 	if path.is_dir():
 		filepaths = discover_asc_files(path, recursive=recursive)
@@ -392,6 +428,9 @@ def main() -> None:
 
 	if plot_neighbor_correlation_heatmap_enabled:
 		plot_neighbor_correlation_heatmap(neighbor_correlation_result["neighbor_corr_map"])
+
+	if plot_roi_fft:
+		plot_roi_mean_signal_fft(thermal_frames_averaged, frame_rate_hz=effective_frame_rate_hz, roi=roi)
 
 
 if __name__ == "__main__":
