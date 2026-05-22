@@ -26,6 +26,82 @@ from src.approaches.yang_et_al.utils_ground_truth import (
 )
 
 
+def instantaneous_hr_from_peak_times(peak_times: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute instantaneous HR (bpm) and timestamps from peak times.
+
+    For consecutive peaks p[i], p[i+1], IBI = p[i+1] - p[i],
+    HR = 60 / IBI and timestamp is midpoint (p[i] + p[i+1]) / 2.
+    """
+    peak_times = np.asarray(peak_times, dtype=float)
+    if peak_times.size < 2:
+        return np.array([], dtype=float), np.array([], dtype=float)
+
+    ibi = np.diff(peak_times)
+    valid = ibi > 0
+    if valid.sum() == 0:
+        return np.array([], dtype=float), np.array([], dtype=float)
+
+    hr_inst = 60.0 / ibi[valid]
+    hr_times = (peak_times[:-1][valid] + peak_times[1:][valid]) / 2.0
+    return hr_inst.astype(float), hr_times.astype(float)
+
+
+def match_by_timestamp_tolerance(
+    gt_values: np.ndarray,
+    gt_times: np.ndarray,
+    pred_values: np.ndarray,
+    pred_times: np.ndarray,
+    tolerance_ms: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Match predicted values to ground-truth values by nearest timestamp within tolerance.
+
+    Returns:
+    - matched_gt_values
+    - matched_pred_values
+    - matched_gt_times
+    - matched_pred_times
+    """
+    gt_values = np.asarray(gt_values, dtype=float)
+    gt_times = np.asarray(gt_times, dtype=float)
+    pred_values = np.asarray(pred_values, dtype=float)
+    pred_times = np.asarray(pred_times, dtype=float)
+
+    if gt_values.size == 0 or pred_values.size == 0:
+        return (
+            np.array([], dtype=float),
+            np.array([], dtype=float),
+            np.array([], dtype=float),
+            np.array([], dtype=float),
+        )
+
+    tol_s = float(tolerance_ms) / 1000.0
+    pred_used = np.zeros(pred_times.shape[0], dtype=bool)
+
+    matched_gt_vals = []
+    matched_pred_vals = []
+    matched_gt_t = []
+    matched_pred_t = []
+
+    # iterate through GT timestamps and find nearest unmatched prediction within tolerance
+    for i in range(gt_times.shape[0]):
+        dt = np.abs(pred_times - gt_times[i])
+        dt[pred_used] = np.inf
+        j = int(np.argmin(dt))
+        if np.isfinite(dt[j]) and dt[j] <= tol_s:
+            matched_gt_vals.append(gt_values[i])
+            matched_pred_vals.append(pred_values[j])
+            matched_gt_t.append(gt_times[i])
+            matched_pred_t.append(pred_times[j])
+            pred_used[j] = True
+
+    return (
+        np.asarray(matched_gt_vals, dtype=float),
+        np.asarray(matched_pred_vals, dtype=float),
+        np.asarray(matched_gt_t, dtype=float),
+        np.asarray(matched_pred_t, dtype=float),
+    )
+
+
 def resample_signal(sig: np.ndarray, fs_from: float, fs_to: float) -> np.ndarray:
     """Resample 1D signal from fs_from to fs_to using linear interpolation.
 
@@ -85,7 +161,7 @@ def compute_ks_pvalue(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     b = b[~np.isnan(b)]
     if a.size == 0 or b.size == 0:
         return float('nan')
-    statistic, pvalue = stats.ks_2samp(a, b)
+    _, pvalue = stats.ks_2samp(a, b)
     return float(pvalue)
 
 
@@ -113,8 +189,9 @@ def bland_altman(y_true: np.ndarray, y_pred: np.ndarray, plot: bool = True, ax: 
     loa_high = mean_diff + 1.96 * sd_diff
 
     if plot:
+        created_local_axis = ax is None
         if ax is None:
-            fig, ax = plt.subplots(figsize=(8, 5))
+            _, ax = plt.subplots(figsize=(8, 5))
         ax.scatter(means, diffs, alpha=0.6)
         ax.axhline(mean_diff, color='C1', linestyle='--', label=f'Mean diff = {mean_diff:.3f}')
         ax.axhline(loa_high, color='C2', linestyle='--', label=f'LoA high = {loa_high:.3f}')
@@ -123,8 +200,9 @@ def bland_altman(y_true: np.ndarray, y_pred: np.ndarray, plot: bool = True, ax: 
         ax.set_ylabel('Difference (pred - gt)')
         ax.set_title(title or 'Bland-Altman Plot')
         ax.legend()
-        plt.tight_layout()
-        plt.show()
+        if created_local_axis:
+            plt.tight_layout()
+            plt.show()
 
     return {"mean_diff": mean_diff, "loa_low": loa_low, "loa_high": loa_high, "sd_diff": sd_diff}
 
@@ -214,23 +292,50 @@ def evaluate_against_ground_truth(
     signal_time = np.arange(len(predicted_signal)) / float(predicted_fs) + start_time
 
     # Detect peaks in predicted and ground truth
-    min_distance_signal = int(max(1, np.floor(0.3 * predicted_fs)))
     try:
         signal_peaks, _ = detect_peaks_in_signal(predicted_signal, predicted_fs, min_distance_s=0.3)
         signal_peak_times = signal_time[signal_peaks]
-    except Exception:
+    except (ValueError, RuntimeError):
         signal_peaks = np.array([], dtype=int)
         signal_peak_times = np.array([])
 
     try:
         gt_peaks, gt_peak_times = detect_peaks_in_signal(gt_segment, gt_fs, min_distance_s=0.5, prominence=1.0)
         gt_peak_times = gt_peak_times + start_time
-    except Exception:
+    except (ValueError, RuntimeError):
         gt_peaks = np.array([], dtype=int)
         gt_peak_times = np.array([])
 
     gt_hr_mean = mean_hr_from_peak_times(gt_peak_times)
     signal_hr_mean = mean_hr_from_peak_times(signal_peak_times)
+
+    if plot_steps:
+        plt.figure(figsize=(10, 5))
+        signal_line, = plt.plot(signal_time, predicted_signal, label="Selected PCA component")
+        ground_truth_line, = plt.plot(gt_time, gt_segment, label="Ground truth", alpha=0.7)
+
+        if signal_peaks.size > 0:
+            plt.scatter(
+                signal_peak_times,
+                predicted_signal[signal_peaks],
+                label="_nolegend_",
+                s=25,
+                color=signal_line.get_color(),
+            )
+        if gt_peaks.size > 0:
+            plt.scatter(
+                gt_peak_times,
+                gt_segment[gt_peaks],
+                label="_nolegend_",
+                s=25,
+                color=ground_truth_line.get_color(),
+            )
+        plt.xlabel("Time (s)")
+        plt.ylabel("Amplitude")
+        plt.title("Selected PCA Component vs Ground Truth")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
 
     # Compute standard metrics and Bland-Altman using evaluate_predictions
     metrics, ba_stats = evaluate_predictions(
@@ -257,6 +362,244 @@ def evaluate_against_ground_truth(
     return out
 
 
+def evaluate_instantaneous_hr_against_ground_truth(
+    predicted_signal: np.ndarray,
+    predicted_fs: float,
+    path_ground_truth: str,
+    timespan: Optional[Tuple[float, float]] = None,
+    time_first_frame_signal: float = 0.0,
+    time_first_frame_ecg: float = 0.0,
+    flip_ground_truth: bool = False,
+    tolerance_ms: float = 150.0,
+    plot_steps: bool = True,
+    plot_bland_altman: bool = True,
+) -> Dict[str, object]:
+    """Evaluate instantaneous HR by timestamp-based peak matching.
+
+    Pipeline:
+    1) load + optional timespan extraction of ground truth
+    2) interpolate/resample predicted signal to ground-truth fs
+    3) detect peaks in both signals
+    4) compute instantaneous HR + timestamps from peak times
+    5) match predicted-vs-ground-truth HR points by timestamp within ±tolerance_ms
+    6) compute RMSE/MAE/R2/KS + Bland-Altman on matched HR values
+    """
+    # 1) ground truth loading and optional segmentation
+    gt_signal, gt_fs = load_ground_truth_signal(path_ground_truth, flip=flip_ground_truth)
+
+    t_gt_full = np.arange(len(gt_signal)) / float(gt_fs)
+
+    if timespan is not None:
+        start_time, end_time = timespan
+        signal_offset = float(time_first_frame_signal or 0.0)
+        ecg_offset = float(time_first_frame_ecg or 0.0)
+        gt_segment, gt_time = get_ground_truth_segment(
+            gt_signal,
+            gt_fs,
+            start_time,
+            end_time,
+            signal_offset=signal_offset,
+            ecg_offset=ecg_offset,
+        )
+    else:
+        start_time = 0.0
+        gt_segment = np.asarray(gt_signal, dtype=float)
+        gt_time = np.arange(len(gt_segment)) / float(gt_fs)
+
+    # 2) resample prediction to GT fs, then keep same duration as GT segment
+    pred = np.asarray(predicted_signal, dtype=float)
+    pred_time_original = np.arange(len(pred)) / float(predicted_fs) + start_time
+    pred_rs = resample_signal(pred, predicted_fs, gt_fs)
+    L = min(len(gt_segment), len(pred_rs))
+    if L == 0:
+        raise ValueError("Empty signals after segmentation/resampling.")
+    gt_segment = gt_segment[:L]
+    gt_time = gt_time[:L]
+    pred_rs = pred_rs[:L]
+    pred_time = np.arange(L) / float(gt_fs) + start_time
+
+    # 3) peak detection
+    pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs, min_distance_s=0.3)
+    pred_peak_times = pred_time[pred_peaks]
+
+    gt_peaks, gt_peak_times_rel = detect_peaks_in_signal(
+        gt_segment,
+        gt_fs,
+        min_distance_s=0.5,
+        prominence=1.0,
+    )
+    gt_peak_times = gt_peak_times_rel + start_time
+
+    # 4) instantaneous HR + timestamps
+    pred_ihr, pred_ihr_times = instantaneous_hr_from_peak_times(pred_peak_times)
+    gt_ihr, gt_ihr_times = instantaneous_hr_from_peak_times(gt_peak_times)
+
+    # 5) timestamp-based matching within tolerance
+    matched_gt_ihr, matched_pred_ihr, matched_gt_times, matched_pred_times = match_by_timestamp_tolerance(
+        gt_values=gt_ihr,
+        gt_times=gt_ihr_times,
+        pred_values=pred_ihr,
+        pred_times=pred_ihr_times,
+        tolerance_ms=tolerance_ms,
+    )
+
+    ba_stats = None
+    if matched_gt_ihr.size == 0:
+        metrics = {
+            "rmse": np.nan,
+            "mae": np.nan,
+            "r2": np.nan,
+            "ks_pvalue": np.nan,
+            "mean_diff": np.nan,
+            "loa_low": np.nan,
+            "loa_high": np.nan,
+            "sd_diff": np.nan,
+            "num_matched": 0,
+        }
+    else:
+        # 6) metrics on matched instantaneous HR values
+        metrics = compute_regression_metrics(matched_gt_ihr, matched_pred_ihr)
+        metrics["ks_pvalue"] = compute_ks_pvalue(matched_gt_ihr, matched_pred_ihr)
+        ba_stats = bland_altman(
+            matched_gt_ihr,
+            matched_pred_ihr,
+            plot=plot_bland_altman and not plot_steps,
+            title=f"Bland-Altman Instantaneous HR (±{tolerance_ms:.0f} ms match)",
+        )
+        metrics.update(ba_stats)
+        metrics["num_matched"] = int(matched_gt_ihr.size)
+
+    if plot_steps:
+        fig, axes = plt.subplots(4, 2, figsize=(18, 16))
+        fig.suptitle("Instantaneous HR evaluation steps", fontsize=14)
+        axes = axes.ravel()
+
+        axes[0].plot(t_gt_full, gt_signal, color="C0", label="Ground truth (full)")
+        axes[0].set_title("Step 1: Full ground truth signal")
+        axes[0].set_xlabel("Time (s)")
+        axes[0].set_ylabel("Amplitude")
+        axes[0].legend()
+
+        axes[1].plot(gt_time, gt_segment, color="C1", label="Ground truth (segment)")
+        axes[1].set_title("Step 2: Ground truth segment")
+        axes[1].set_xlabel("Time (s)")
+        axes[1].set_ylabel("Amplitude")
+        axes[1].legend()
+
+        axes[2].plot(pred_time_original, pred, color="C3", alpha=0.75, label="Predicted (before)")
+        axes[2].plot(pred_time, pred_rs, color="C2", alpha=0.85, label="Predicted (after interpolation)")
+        axes[2].set_title("Step 3: Interpolation comparison")
+        axes[2].set_xlabel("Time (s)")
+        axes[2].set_ylabel("Amplitude")
+        axes[2].legend()
+
+        axes[3].plot(gt_time, gt_segment, alpha=0.8, label="Ground truth")
+        axes[3].plot(pred_time, pred_rs, alpha=0.8, label="Predicted (resampled)")
+        axes[3].set_title("Step 4: GT vs resampled prediction")
+        axes[3].set_xlabel("Time (s)")
+        axes[3].set_ylabel("Amplitude")
+        axes[3].legend()
+
+        gt_line = axes[4].plot(gt_time, gt_segment, label="Ground truth", alpha=0.8)[0]
+        pred_line = axes[4].plot(pred_time, pred_rs, label="Predicted (resampled)", alpha=0.8)[0]
+        if gt_peaks.size > 0:
+            axes[4].scatter(gt_peak_times, gt_segment[gt_peaks], s=20, color=gt_line.get_color(), label="GT peaks")
+        if pred_peaks.size > 0:
+            axes[4].scatter(pred_peak_times, pred_rs[pred_peaks], s=20, color=pred_line.get_color(), label="Pred peaks")
+        axes[4].set_title("Step 5: Peak detection")
+        axes[4].set_xlabel("Time (s)")
+        axes[4].set_ylabel("Amplitude")
+        axes[4].legend()
+
+        if gt_ihr.size > 0:
+            axes[5].plot(gt_ihr_times, gt_ihr, marker="o", linestyle="-", label="GT IHR")
+        if pred_ihr.size > 0:
+            axes[5].plot(pred_ihr_times, pred_ihr, marker="o", linestyle="-", label="Pred IHR")
+        axes[5].set_title("Step 6: Instantaneous HR")
+        axes[5].set_xlabel("Time (s)")
+        axes[5].set_ylabel("HR (bpm)")
+        axes[5].legend()
+
+        if gt_ihr.size > 0:
+            axes[6].plot(gt_ihr_times, gt_ihr, alpha=0.35, label="GT IHR (all)", color="C0")
+        if pred_ihr.size > 0:
+            axes[6].plot(pred_ihr_times, pred_ihr, alpha=0.35, label="Pred IHR (all)", color="C1")
+        if matched_gt_ihr.size > 0:
+            axes[6].scatter(matched_gt_times, matched_gt_ihr, color="C0", s=28, label="Matched GT")
+            axes[6].scatter(matched_pred_times, matched_pred_ihr, color="C1", s=28, label="Matched Pred")
+            for i in range(matched_gt_ihr.size):
+                axes[6].plot(
+                    [matched_gt_times[i], matched_pred_times[i]],
+                    [matched_gt_ihr[i], matched_pred_ihr[i]],
+                    color="gray",
+                    alpha=0.35,
+                    linewidth=0.7,
+                )
+        axes[6].set_title(f"Step 7: Timestamp matching (±{tolerance_ms:.0f} ms)")
+        axes[6].set_xlabel("Time (s)")
+        axes[6].set_ylabel("HR (bpm)")
+        axes[6].legend()
+
+        if matched_gt_ihr.size > 0:
+            ba_stats_subplot = bland_altman(
+                matched_gt_ihr,
+                matched_pred_ihr,
+                plot=True,
+                ax=axes[7],
+                title="Step 8: Bland-Altman (matched IHR)",
+            )
+            if ba_stats is None:
+                ba_stats = ba_stats_subplot
+        else:
+            axes[7].text(0.5, 0.5, "No matched pairs for\nBland-Altman", ha="center", va="center")
+            axes[7].set_title("Step 8: Bland-Altman")
+            axes[7].set_axis_off()
+
+        plt.tight_layout()
+        plt.show()
+
+    if matched_gt_ihr.size == 0:
+        return {
+            "metrics": metrics,
+            "ground_truth_ihr": gt_ihr,
+            "ground_truth_ihr_times": gt_ihr_times,
+            "predicted_ihr": pred_ihr,
+            "predicted_ihr_times": pred_ihr_times,
+            "matched_ground_truth_ihr": matched_gt_ihr,
+            "matched_predicted_ihr": matched_pred_ihr,
+            "matched_ground_truth_times": matched_gt_times,
+            "matched_predicted_times": matched_pred_times,
+            "ground_truth_peak_times": gt_peak_times,
+            "ground_truth_peak_indices": gt_peaks,
+            "predicted_peak_times": pred_peak_times,
+            "ground_truth_fs": gt_fs,
+            "predicted_resampled_fs": gt_fs,
+            "tolerance_ms": tolerance_ms,
+        }
+
+    return {
+        "metrics": metrics,
+        "ground_truth_ihr": gt_ihr,
+        "ground_truth_ihr_times": gt_ihr_times,
+        "predicted_ihr": pred_ihr,
+        "predicted_ihr_times": pred_ihr_times,
+        "matched_ground_truth_ihr": matched_gt_ihr,
+        "matched_predicted_ihr": matched_pred_ihr,
+        "matched_ground_truth_times": matched_gt_times,
+        "matched_predicted_times": matched_pred_times,
+        "ground_truth_peak_times": gt_peak_times,
+        "ground_truth_peak_indices": gt_peaks,
+        "predicted_peak_times": pred_peak_times,
+        "ground_truth_fs": gt_fs,
+        "predicted_resampled_fs": gt_fs,
+        "tolerance_ms": tolerance_ms,
+    }
+
+
 if __name__ == "__main__":
     print("This module provides evaluation utilities for ground truth comparison.")
-# TODO test metric pipelien
+
+
+# get mean values
+#get peak to peak without filling empty values
+#get peakt to peak with filling empty values
