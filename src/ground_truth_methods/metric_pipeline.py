@@ -15,6 +15,10 @@ Assumptions:
 """
 
 from typing import Tuple, Dict, Optional
+import csv
+import json
+import os
+from datetime import datetime, timezone
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
@@ -100,6 +104,158 @@ def match_by_timestamp_tolerance(
         np.asarray(matched_gt_t, dtype=float),
         np.asarray(matched_pred_t, dtype=float),
     )
+
+
+def match_by_nearest_timestamp(
+    gt_values: np.ndarray,
+    gt_times: np.ndarray,
+    pred_values: np.ndarray,
+    pred_times: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Match each ground-truth value to the closest prediction by timestamp.
+
+    Unlike tolerance matching, this keeps all ground-truth points (if predictions exist)
+    and allows reusing predicted points.
+    """
+    gt_values = np.asarray(gt_values, dtype=float)
+    gt_times = np.asarray(gt_times, dtype=float)
+    pred_values = np.asarray(pred_values, dtype=float)
+    pred_times = np.asarray(pred_times, dtype=float)
+
+    if gt_values.size == 0 or pred_values.size == 0:
+        return (
+            np.array([], dtype=float),
+            np.array([], dtype=float),
+            np.array([], dtype=float),
+            np.array([], dtype=float),
+        )
+
+    matched_gt_vals = []
+    matched_pred_vals = []
+    matched_gt_t = []
+    matched_pred_t = []
+
+    for i in range(gt_times.shape[0]):
+        dt = np.abs(pred_times - gt_times[i])
+        j = int(np.argmin(dt))
+        matched_gt_vals.append(gt_values[i])
+        matched_pred_vals.append(pred_values[j])
+        matched_gt_t.append(gt_times[i])
+        matched_pred_t.append(pred_times[j])
+
+    return (
+        np.asarray(matched_gt_vals, dtype=float),
+        np.asarray(matched_pred_vals, dtype=float),
+        np.asarray(matched_gt_t, dtype=float),
+        np.asarray(matched_pred_t, dtype=float),
+    )
+
+
+def compute_metrics_with_optional_bland_altman(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    plot_bland_altman: bool = False,
+    title: Optional[str] = None,
+) -> Tuple[Dict[str, float], Optional[Dict[str, float]]]:
+    """Compute regression + KS + optional Bland-Altman for paired values."""
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    if y_true.size == 0 or y_pred.size == 0:
+        empty_metrics = {
+            "rmse": np.nan,
+            "mae": np.nan,
+            "r2": np.nan,
+            "ks_pvalue": np.nan,
+            "mean_diff": np.nan,
+            "loa_low": np.nan,
+            "loa_high": np.nan,
+            "sd_diff": np.nan,
+            "num_pairs": 0,
+        }
+        return empty_metrics, None
+
+    metrics = compute_regression_metrics(y_true, y_pred)
+    metrics["ks_pvalue"] = compute_ks_pvalue(y_true, y_pred)
+    ba_stats = bland_altman(y_true, y_pred, plot=plot_bland_altman, title=title)
+    metrics.update(ba_stats)
+    metrics["num_pairs"] = int(y_true.size)
+    return metrics, ba_stats
+
+
+def _to_json_string(value: object) -> str:
+    """Convert arrays/dicts/scalars to a JSON string for CSV storage."""
+
+    def convert(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.floating, np.integer)):
+            return obj.item()
+        if isinstance(obj, dict):
+            return {k: convert(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [convert(v) for v in obj]
+        return obj
+
+    return json.dumps(convert(value), ensure_ascii=False)
+
+
+def append_evaluation_row_to_csv(
+    csv_output_path: str,
+    path_signal: Optional[str],
+    path_ground_truth: str,
+    roi: Optional[str],
+    gt_hr_mean: float,
+    signal_hr_mean: float,
+    gt_ihr_times: np.ndarray,
+    gt_ihr: np.ndarray,
+    pred_ihr_times: np.ndarray,
+    pred_ihr: np.ndarray,
+    metrics_mean_hr: Dict[str, float],
+    metrics_peak_to_peak_disregard: Dict[str, float],
+    metrics_peak_to_peak_closest: Dict[str, float],
+) -> None:
+    """Append one evaluation result row to a CSV file."""
+    os.makedirs(os.path.dirname(csv_output_path) or ".", exist_ok=True)
+
+    fieldnames = [
+        "timestamp_utc",
+        "path_signal",
+        "path_ground_truth",
+        "roi",
+        "gt_hr_mean",
+        "signal_hr_mean",
+        "ground_truth_ihr_times",
+        "ground_truth_ihr",
+        "predicted_ihr_times",
+        "predicted_ihr",
+        "metrics_mean_hr",
+        "metrics_peak_to_peak_disregard",
+        "metrics_peak_to_peak_closest",
+    ]
+
+    row = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "path_signal": path_signal or "",
+        "path_ground_truth": path_ground_truth,
+        "roi": roi or "",
+        "gt_hr_mean": float(gt_hr_mean) if np.isfinite(gt_hr_mean) else np.nan,
+        "signal_hr_mean": float(signal_hr_mean) if np.isfinite(signal_hr_mean) else np.nan,
+        "ground_truth_ihr_times": _to_json_string(gt_ihr_times),
+        "ground_truth_ihr": _to_json_string(gt_ihr),
+        "predicted_ihr_times": _to_json_string(pred_ihr_times),
+        "predicted_ihr": _to_json_string(pred_ihr),
+        "metrics_mean_hr": _to_json_string(metrics_mean_hr),
+        "metrics_peak_to_peak_disregard": _to_json_string(metrics_peak_to_peak_disregard),
+        "metrics_peak_to_peak_closest": _to_json_string(metrics_peak_to_peak_closest),
+    }
+
+    write_header = not os.path.exists(csv_output_path) or os.path.getsize(csv_output_path) == 0
+    with open(csv_output_path, "a", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 def resample_signal(sig: np.ndarray, fs_from: float, fs_to: float) -> np.ndarray:
@@ -366,6 +522,9 @@ def evaluate_instantaneous_hr_against_ground_truth(
     predicted_signal: np.ndarray,
     predicted_fs: float,
     path_ground_truth: str,
+    path_signal: Optional[str] = None,
+    roi: Optional[str] = None,
+    csv_output_path: Optional[str] = "src/ground_truth_methods/evaluation_results.csv",
     timespan: Optional[Tuple[float, float]] = None,
     time_first_frame_signal: float = 0.0,
     time_first_frame_ecg: float = 0.0,
@@ -381,8 +540,10 @@ def evaluate_instantaneous_hr_against_ground_truth(
     2) interpolate/resample predicted signal to ground-truth fs
     3) detect peaks in both signals
     4) compute instantaneous HR + timestamps from peak times
-    5) match predicted-vs-ground-truth HR points by timestamp within ±tolerance_ms
-    6) compute RMSE/MAE/R2/KS + Bland-Altman on matched HR values
+     5) compute mean HR for full predicted and full ground-truth signals
+     6) compute peak-to-peak metrics in two modes:
+         a) disregard unmatched peaks (within ±tolerance_ms)
+         b) fallback to closest timestamp when no match in tolerance exists
     """
     # 1) ground truth loading and optional segmentation
     gt_signal, gt_fs = load_ground_truth_signal(path_ground_truth, flip=flip_ground_truth)
@@ -434,6 +595,16 @@ def evaluate_instantaneous_hr_against_ground_truth(
     pred_ihr, pred_ihr_times = instantaneous_hr_from_peak_times(pred_peak_times)
     gt_ihr, gt_ihr_times = instantaneous_hr_from_peak_times(gt_peak_times)
 
+    gt_hr_mean = mean_hr_from_peak_times(gt_peak_times)
+    signal_hr_mean = mean_hr_from_peak_times(pred_peak_times)
+
+    mean_hr_metrics, mean_hr_ba_stats = compute_metrics_with_optional_bland_altman(
+        np.array([gt_hr_mean], dtype=float),
+        np.array([signal_hr_mean], dtype=float),
+        plot_bland_altman=False,
+        title="Bland-Altman Mean HR (whole signal)",
+    )
+
     # 5) timestamp-based matching within tolerance
     matched_gt_ihr, matched_pred_ihr, matched_gt_times, matched_pred_times = match_by_timestamp_tolerance(
         gt_values=gt_ihr,
@@ -443,31 +614,26 @@ def evaluate_instantaneous_hr_against_ground_truth(
         tolerance_ms=tolerance_ms,
     )
 
-    ba_stats = None
-    if matched_gt_ihr.size == 0:
-        metrics = {
-            "rmse": np.nan,
-            "mae": np.nan,
-            "r2": np.nan,
-            "ks_pvalue": np.nan,
-            "mean_diff": np.nan,
-            "loa_low": np.nan,
-            "loa_high": np.nan,
-            "sd_diff": np.nan,
-            "num_matched": 0,
-        }
-    else:
-        # 6) metrics on matched instantaneous HR values
-        metrics = compute_regression_metrics(matched_gt_ihr, matched_pred_ihr)
-        metrics["ks_pvalue"] = compute_ks_pvalue(matched_gt_ihr, matched_pred_ihr)
-        ba_stats = bland_altman(
-            matched_gt_ihr,
-            matched_pred_ihr,
-            plot=plot_bland_altman and not plot_steps,
-            title=f"Bland-Altman Instantaneous HR (±{tolerance_ms:.0f} ms match)",
-        )
-        metrics.update(ba_stats)
-        metrics["num_matched"] = int(matched_gt_ihr.size)
+    peak_to_peak_disregard_metrics, ba_stats_disregard = compute_metrics_with_optional_bland_altman(
+        matched_gt_ihr,
+        matched_pred_ihr,
+        plot_bland_altman=plot_bland_altman and not plot_steps,
+        title=f"Bland-Altman Instantaneous HR (±{tolerance_ms:.0f} ms match)",
+    )
+    peak_to_peak_disregard_metrics["num_matched"] = int(matched_gt_ihr.size)
+
+    closest_gt_ihr, closest_pred_ihr, closest_gt_times, closest_pred_times = match_by_nearest_timestamp(
+        gt_values=gt_ihr,
+        gt_times=gt_ihr_times,
+        pred_values=pred_ihr,
+        pred_times=pred_ihr_times,
+    )
+    peak_to_peak_closest_metrics, ba_stats_closest = compute_metrics_with_optional_bland_altman(
+        closest_gt_ihr,
+        closest_pred_ihr,
+        plot_bland_altman=False,
+        title="Bland-Altman Instantaneous HR (closest timestamp fallback)",
+    )
 
     if plot_steps:
         fig, axes = plt.subplots(4, 2, figsize=(18, 16))
@@ -548,8 +714,8 @@ def evaluate_instantaneous_hr_against_ground_truth(
                 ax=axes[7],
                 title="Step 8: Bland-Altman (matched IHR)",
             )
-            if ba_stats is None:
-                ba_stats = ba_stats_subplot
+            if ba_stats_disregard is None:
+                ba_stats_disregard = ba_stats_subplot
         else:
             axes[7].text(0.5, 0.5, "No matched pairs for\nBland-Altman", ha="center", va="center")
             axes[7].set_title("Step 8: Bland-Altman")
@@ -558,27 +724,16 @@ def evaluate_instantaneous_hr_against_ground_truth(
         plt.tight_layout()
         plt.show()
 
-    if matched_gt_ihr.size == 0:
-        return {
-            "metrics": metrics,
-            "ground_truth_ihr": gt_ihr,
-            "ground_truth_ihr_times": gt_ihr_times,
-            "predicted_ihr": pred_ihr,
-            "predicted_ihr_times": pred_ihr_times,
-            "matched_ground_truth_ihr": matched_gt_ihr,
-            "matched_predicted_ihr": matched_pred_ihr,
-            "matched_ground_truth_times": matched_gt_times,
-            "matched_predicted_times": matched_pred_times,
-            "ground_truth_peak_times": gt_peak_times,
-            "ground_truth_peak_indices": gt_peaks,
-            "predicted_peak_times": pred_peak_times,
-            "ground_truth_fs": gt_fs,
-            "predicted_resampled_fs": gt_fs,
-            "tolerance_ms": tolerance_ms,
-        }
-
-    return {
-        "metrics": metrics,
+    out = {
+        "metrics": peak_to_peak_disregard_metrics,
+        "mean_hr_metrics": mean_hr_metrics,
+        "mean_hr_ba_stats": mean_hr_ba_stats,
+        "peak_to_peak_disregard_metrics": peak_to_peak_disregard_metrics,
+        "peak_to_peak_disregard_ba_stats": ba_stats_disregard,
+        "peak_to_peak_closest_metrics": peak_to_peak_closest_metrics,
+        "peak_to_peak_closest_ba_stats": ba_stats_closest,
+        "gt_hr_mean": gt_hr_mean,
+        "signal_hr_mean": signal_hr_mean,
         "ground_truth_ihr": gt_ihr,
         "ground_truth_ihr_times": gt_ihr_times,
         "predicted_ihr": pred_ihr,
@@ -587,6 +742,10 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "matched_predicted_ihr": matched_pred_ihr,
         "matched_ground_truth_times": matched_gt_times,
         "matched_predicted_times": matched_pred_times,
+        "closest_ground_truth_ihr": closest_gt_ihr,
+        "closest_predicted_ihr": closest_pred_ihr,
+        "closest_ground_truth_times": closest_gt_times,
+        "closest_predicted_times": closest_pred_times,
         "ground_truth_peak_times": gt_peak_times,
         "ground_truth_peak_indices": gt_peaks,
         "predicted_peak_times": pred_peak_times,
@@ -595,11 +754,25 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "tolerance_ms": tolerance_ms,
     }
 
+    if csv_output_path:
+        append_evaluation_row_to_csv(
+            csv_output_path=csv_output_path,
+            path_signal=path_signal,
+            path_ground_truth=path_ground_truth,
+            roi=roi,
+            gt_hr_mean=gt_hr_mean,
+            signal_hr_mean=signal_hr_mean,
+            gt_ihr_times=gt_ihr_times,
+            gt_ihr=gt_ihr,
+            pred_ihr_times=pred_ihr_times,
+            pred_ihr=pred_ihr,
+            metrics_mean_hr=mean_hr_metrics,
+            metrics_peak_to_peak_disregard=peak_to_peak_disregard_metrics,
+            metrics_peak_to_peak_closest=peak_to_peak_closest_metrics,
+        )
+
+    return out
+
 
 if __name__ == "__main__":
     print("This module provides evaluation utilities for ground truth comparison.")
-
-
-# get mean values
-#get peak to peak without filling empty values
-#get peakt to peak with filling empty values
