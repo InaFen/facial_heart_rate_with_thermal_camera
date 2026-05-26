@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-CAMERA_TYPE = "mwir"
+CAMERA_TYPE = "vario"
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
@@ -14,7 +14,7 @@ DATA_SEPARATOR = "\t"
 FPS = 25
 
 DATA_SECTION_HEADER = "[Data]"
-INPUT_DIR = Path("/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/MWIR")
+INPUT_DIR = Path("/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/LWIR/Daten/Ina")
 SAVE_NPY = True
 NPY_SUFFIX = "_thermal_data_all_frames"
 
