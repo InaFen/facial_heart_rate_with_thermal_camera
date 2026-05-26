@@ -1,5 +1,5 @@
 """
-NETD analysis helpers for MWIR ASCII thermal frames.
+NETD analysis helpers for MWIR ASCII thermal frames and Lepton .gray sequences.
 
 The usual workflow for a uniform black-body target is:
 1. Load multiple thermal frames from `.asc` files.
@@ -30,12 +30,109 @@ try:
 except ImportError:  # pragma: no cover - allows running the file directly
 	from data_extraction import extract_thermal_data
 
+try:
+	from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+	from src.video_processing_methods.gray_file_methods import read_lepton35_gray
+except ImportError:  # pragma: no cover - allows running the file directly
+	import sys
+	project_root = Path(__file__).resolve().parents[3]
+	sys.path.insert(0, str(project_root))
+	from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+	from src.video_processing_methods.gray_file_methods import read_lepton35_gray
+
 
 def load_thermal_frames(filepaths: Sequence[str | Path]) -> np.ndarray:
-	"""Load multiple MWIR ASC files into a 3D array with shape (n_frames, 512, 640)."""
+	"""Load MWIR ASC files and stack them into a 3D array."""
 	frames = [extract_thermal_data(str(filepath)) for filepath in filepaths]
 	if not frames:
 		raise ValueError("No ASC files were provided.")
+	print("Frames loaded")
+	return np.stack(frames, axis=0)
+
+
+def extract_thermal_data_vario(filepath: str | Path) -> np.ndarray:
+	"""Load an Infratec Vario ASC file into a 2D array."""
+	path = Path(filepath)
+	text = path.read_text(encoding="latin-1", errors="replace")
+	lines = text.splitlines()
+
+	data_start = None
+	for index, line in enumerate(lines):
+		if line.strip() == "[Data]":
+			data_start = index + 1
+			break
+
+	if data_start is None:
+		raise ValueError(f"Missing [Data] section in {path}")
+
+	data_lines = [line for line in lines[data_start:] if line.strip()]
+	frame_height = 480
+	frame_width = 640
+	if len(data_lines) < frame_height:
+		raise ValueError(
+			f"Not enough data rows in {path}: expected {frame_height}, got {len(data_lines)}"
+		)
+
+	frame = np.empty((frame_height, frame_width), dtype=np.float32)
+	for row in range(frame_height):
+		line = data_lines[row].replace(",", ".")
+		values = np.fromstring(line, sep="\t", dtype=np.float32)
+
+		if values.size != frame_width:
+			values = np.fromstring(line, sep=";", dtype=np.float32)
+
+		if values.size != frame_width:
+			values = np.fromstring(line, sep=" ", dtype=np.float32)
+
+		if values.size != frame_width:
+			raise ValueError(
+				f"Row {row} in {path} has {values.size} columns, expected {frame_width}"
+			)
+
+		frame[row] = values
+
+	return frame
+
+
+def load_thermal_frames_asc(filepaths: Sequence[str | Path], camera: str) -> np.ndarray:
+	"""Load ASC files for MWIR or Vario cameras and stack them into a 3D array."""
+	if camera == "mwir":
+		frames = [extract_thermal_data(str(filepath)) for filepath in filepaths]
+	elif camera == "vario":
+		frames = [extract_thermal_data_vario(filepath) for filepath in filepaths]
+	else:
+		raise ValueError(f"Unsupported camera for ASC loading: {camera}")
+
+	if not frames:
+		raise ValueError("No ASC files were provided.")
+	print("Frames loaded")
+	return np.stack(frames, axis=0)
+
+
+def discover_gray_files(directory: str | Path) -> list[Path]:
+	"""Return .gray files from a directory, sorted by timestamp (handles _interpolated)."""
+	directory = Path(directory)
+	if not directory.exists():
+		raise FileNotFoundError(f"Directory does not exist: {directory}")
+
+	_, sorted_frames_original_name = sort_grayfiles_with_interpolations(str(directory))
+	if not sorted_frames_original_name:
+		raise ValueError(f"No .gray files found in: {directory}")
+	return [directory / name for name in sorted_frames_original_name]
+
+
+def load_gray_frames(filepaths: Sequence[str | Path]) -> np.ndarray:
+	"""Load Lepton .gray files and stack them into a 3D array."""
+	frames: list[np.ndarray] = []
+	for filepath in filepaths:
+		gray_frames = read_lepton35_gray(str(filepath))
+		if gray_frames.ndim == 3:
+			for frame in gray_frames:
+				frames.append(frame)
+		else:
+			frames.append(gray_frames)
+	if not frames:
+		raise ValueError("No .gray frames were loaded.")
 	print("Frames loaded")
 	return np.stack(frames, axis=0)
 
@@ -249,7 +346,7 @@ def _format_histogram_summary(values: np.ndarray, frame_count: int, bins: int) -
 
 def plot_all_pixels_histogram(
 	thermal_frames: np.ndarray,
-	bins: int = 500,
+	bins: int = 250,
 	title: str = "Histogram of All Pixel Values Across All Frames",
 ) -> None:
 	"""Plot a histogram using all pixel temperatures from all frames."""
@@ -439,28 +536,45 @@ def format_neighbor_correlation_result(result: dict[str, object]) -> str:
 def main() -> None:
 	"""Run a NETD/noise analysis pipeline on a folder of ASC frames."""
 	#path = Path("data/infratec_mwir/Black_body_Ascii")
-	path = Path("/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/10_secs_NETD_Ascii")
+	camera = "lepton"  # "mwir", "vario", or "lepton"
+	path = Path("data/lepton/raw_lepton_data/22052026/NETD_500frames")
     
 	recursive = False
 	roi: tuple[int, int, int, int] | None = None # If None, whole image is used 
 	plot_histogram = True
-	plot_qq = True
+	plot_qq = False
 	plot_one_frame_heatmap = True
 	plot_neighbor_correlation_heatmap_enabled = True
 	plot_roi_fft = True
 	plot_psd = True
 	heatmap_frame_index = 0
-	frame_rate_hz = 100.0
-	frame_average_window = 10
-	effective_frame_rate_hz = frame_rate_hz / frame_average_window
+	frame_rate_hz = 8.5
+	INPUT_FORMAT = "gray"  # "gray" or "asc"
+	if camera == "lepton":
+		INPUT_FORMAT = "gray"
+
+	if INPUT_FORMAT not in {"gray", "asc"}:
+		raise ValueError(f"Unsupported INPUT_FORMAT: {INPUT_FORMAT}")
+	if camera not in {"mwir", "vario", "lepton"}:
+		raise ValueError(f"Unsupported camera: {camera}")
 
 	if path.is_dir():
-		filepaths = discover_asc_files(path, recursive=recursive)
+		if INPUT_FORMAT == "gray":
+			filepaths = discover_gray_files(path)
+			thermal_frames = load_gray_frames(filepaths)
+			if camera == "lepton":
+				thermal_frames = thermal_frames / 100.0 - 273.15
+		else:
+			filepaths = discover_asc_files(path, recursive=recursive)
+			thermal_frames = load_thermal_frames_asc(filepaths, camera=camera)
 	else:
 		filepaths = [path]
-
-	# Get images
-	thermal_frames = load_thermal_frames(filepaths)
+		if INPUT_FORMAT == "gray":
+			thermal_frames = load_gray_frames(filepaths)
+			if camera == "lepton":
+				thermal_frames = thermal_frames / 100.0 - 273.15
+		else:
+			thermal_frames = load_thermal_frames_asc(filepaths, camera=camera)
 	#thermal_frames_averaged = average_consecutive_frames(thermal_frames, window_size=frame_average_window)
 
 	# Calculate NETD (use raw frames to avoid underestimating temporal noise)
@@ -490,7 +604,7 @@ def main() -> None:
 		plot_neighbor_correlation_heatmap(neighbor_correlation_result["neighbor_corr_map"])
 
 	if plot_roi_fft:
-		plot_roi_mean_signal_fft(thermal_frames, frame_rate_hz=effective_frame_rate_hz, roi=roi)
+		plot_roi_mean_signal_fft(thermal_frames, frame_rate_hz=frame_rate_hz, roi=roi)
 
 	if plot_psd:
 		plot_pixelwise_mean_psd(thermal_frames, frame_rate_hz=frame_rate_hz)
@@ -499,7 +613,3 @@ def main() -> None:
 if __name__ == "__main__":
 	main()
 
-
-# TODO add what kind of noise anaylsis
-# TODO in which frequencies dominant for bandpass filter
-# TODO apply to different cameras
