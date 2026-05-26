@@ -32,10 +32,3 @@ def read_lepton35_gray(filename, width=160, height=120):
     
     return frames
 
-# Usage example
-filename = "data/lepton/processed_lepton_data/29122025_interpolated/0000358214.gray"
-frames = read_lepton35_gray(filename)
-
-print("Number of frames:", frames.shape[0])
-print("Frame shape:", frames.shape[1:])  # should be (120, 160)
-print("Pixel dtype:", frames.dtype)
