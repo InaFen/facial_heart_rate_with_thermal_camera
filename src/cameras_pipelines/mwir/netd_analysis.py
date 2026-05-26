@@ -23,6 +23,7 @@ from typing import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy import stats, signal
 
 try:
 	from .data_extraction import extract_thermal_data
@@ -267,6 +268,19 @@ def plot_all_pixels_histogram(
 	plt.show()
 
 
+def plot_all_pixels_qq(
+	thermal_frames: np.ndarray,
+	title: str = "Q-Q Plot of All Pixel Values",
+) -> None:
+	"""Plot a Q-Q plot to assess normality of pixel values across all frames."""
+	all_values = np.asarray(thermal_frames, dtype=np.float32).ravel()
+	fig, ax = plt.subplots(figsize=(6, 6))
+	stats.probplot(all_values, dist="norm", plot=ax)
+	ax.set_title(title)
+	plt.tight_layout()
+	plt.show()
+
+
 def plot_single_frame_heatmap(
 	thermal_frames: np.ndarray,
 	frame_index: int = 0,
@@ -353,6 +367,45 @@ def plot_roi_mean_signal_fft(
 	plt.show()
 
 
+def plot_pixelwise_mean_psd(
+	thermal_frames: np.ndarray,
+	frame_rate_hz: float,
+	title: str = "Mean PSD Across Pixels (Welch)",
+) -> None:
+	"""Plot mean PSD across all pixels to assess noise type.
+	Takes every pixel’s time series (temperature vs. frame).
+	Centers each series (subtracts its mean).
+	Computes a PSD per pixel using Welch’s method.
+	Averages the PSDs across all pixels to get one mean PSD curve.
+	Plots that mean PSD vs frequency.
+	"""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+	if thermal_frames.shape[0] < 2:
+		raise ValueError("At least 2 frames are required for PSD plotting.")
+	if frame_rate_hz <= 0:
+		raise ValueError(f"frame_rate_hz must be > 0, got {frame_rate_hz}")
+
+	frame_count = thermal_frames.shape[0]
+	nperseg = min(256, frame_count)
+
+	series = thermal_frames.reshape(frame_count, -1)
+	series = series - series.mean(axis=0, keepdims=True)
+
+	freqs, psd = signal.welch(series, fs=frame_rate_hz, nperseg=nperseg, axis=0)
+	mean_psd = psd.mean(axis=1)
+
+	fig, ax = plt.subplots(figsize=(10, 4))
+	ax.plot(freqs, mean_psd, color="slateblue", linewidth=2)
+	ax.set_title(title)
+	ax.set_xlabel("Frequency (Hz)")
+	ax.set_ylabel("Power")
+	ax.grid(alpha=0.3)
+	plt.tight_layout()
+	plt.show()
+
+
 def format_netd_result(result: dict[str, float | int | tuple[int, int]]) -> str:
 	"""Format a NETD result dictionary for human-readable output."""
 	return (
@@ -384,15 +437,18 @@ def format_neighbor_correlation_result(result: dict[str, object]) -> str:
 
 
 def main() -> None:
+	"""Run a NETD/noise analysis pipeline on a folder of ASC frames."""
 	#path = Path("data/infratec_mwir/Black_body_Ascii")
 	path = Path("/mnt/wwn-0x50000398325009f6-part1/Masterarbeit/10_secs_NETD_Ascii")
     
 	recursive = False
 	roi: tuple[int, int, int, int] | None = None # If None, whole image is used 
 	plot_histogram = True
+	plot_qq = True
 	plot_one_frame_heatmap = True
 	plot_neighbor_correlation_heatmap_enabled = True
 	plot_roi_fft = True
+	plot_psd = True
 	heatmap_frame_index = 0
 	frame_rate_hz = 100.0
 	frame_average_window = 10
@@ -405,33 +461,45 @@ def main() -> None:
 
 	# Get images
 	thermal_frames = load_thermal_frames(filepaths)
-	thermal_frames_averaged = average_consecutive_frames(thermal_frames, window_size=frame_average_window)
+	#thermal_frames_averaged = average_consecutive_frames(thermal_frames, window_size=frame_average_window)
 
-	# Calculate NETD
-	result = calculate_netd_from_pixelwise_std(thermal_frames_averaged, roi=roi)
+	# Calculate NETD (use raw frames to avoid underestimating temporal noise)
+	result = calculate_netd_from_pixelwise_std(thermal_frames, roi=roi)
 	print(format_netd_result(result))
 
 	# Calculate spatial noise (how much differs pixel values in one frame)
-	spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames_averaged, roi=roi)
+	spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames, roi=roi)
 	print(format_spatial_noise_result(spatial_noise_result))
 
 	# Calculate how much temporal noise is correlated between neighboring pixels
-	neighbor_correlation_result = calculate_neighbor_temporal_correlation(thermal_frames_averaged, roi=roi)
+	neighbor_correlation_result = calculate_neighbor_temporal_correlation(thermal_frames, roi=roi)
 	print(format_neighbor_correlation_result(neighbor_correlation_result))
 
 	if plot_histogram:
 		# Check whether noise is Gaussian distributed by plotting a histogram of all pixel values across all frames
-		plot_all_pixels_histogram(thermal_frames_averaged)
+		# Disadvantage of using histogram for this: Bin size can heavily affect visual impression
+		plot_all_pixels_histogram(thermal_frames)
+
+	if plot_qq:
+		plot_all_pixels_qq(thermal_frames)
 
 	if plot_one_frame_heatmap:
-		plot_single_frame_heatmap(thermal_frames_averaged, frame_index=heatmap_frame_index)
+		plot_single_frame_heatmap(thermal_frames, frame_index=heatmap_frame_index)
 
 	if plot_neighbor_correlation_heatmap_enabled:
 		plot_neighbor_correlation_heatmap(neighbor_correlation_result["neighbor_corr_map"])
 
 	if plot_roi_fft:
-		plot_roi_mean_signal_fft(thermal_frames_averaged, frame_rate_hz=effective_frame_rate_hz, roi=roi)
+		plot_roi_mean_signal_fft(thermal_frames, frame_rate_hz=effective_frame_rate_hz, roi=roi)
+
+	if plot_psd:
+		plot_pixelwise_mean_psd(thermal_frames, frame_rate_hz=frame_rate_hz)
 
 
 if __name__ == "__main__":
 	main()
+
+
+# TODO add what kind of noise anaylsis
+# TODO in which frequencies dominant for bandpass filter
+# TODO apply to different cameras
