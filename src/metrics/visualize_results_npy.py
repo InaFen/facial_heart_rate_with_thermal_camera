@@ -182,7 +182,7 @@ def visualize_npy_contents(path: str | Path, show_plots: bool = True) -> dict[st
 
 
 def main() -> None:
-	PATH = "saved_results/yang_et_al/05032026_before_after_sport_interpolated_temp_0_00-10_00s.npz"
+	PATH = "saved_results/yang_et_al/Julian1_thermal_data_all_frames_tracker_landmark_threshold_30_c_30_00-45_00s.npz"
 	SHOW_PLOTS = True
 	visualize_npy_contents(PATH, show_plots=SHOW_PLOTS)
 
