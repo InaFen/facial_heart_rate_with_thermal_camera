@@ -14,7 +14,7 @@ sys.path.insert(0, project_root)
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
-from src.ground_truth_methods.metric_pipeline import evaluate_instantaneous_hr_against_ground_truth
+from src.metrics.metric_pipeline import evaluate_instantaneous_hr_against_ground_truth
 
 
 CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
