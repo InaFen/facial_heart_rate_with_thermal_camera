@@ -26,6 +26,116 @@ from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_wi
 from src.approaches.yang_et_al.utils_face_tracking import track_face
 
 
+def apply_roi_masks_to_npy_frames(
+    frame_stack: np.ndarray,
+    roi_mask_log: List[Dict[str, np.ndarray]],
+) -> List[Dict[str, Dict[str, object]]]:
+    """
+    Apply ROI masks to a precomputed numeric frame stack from a .npy file.
+    
+    Parameters:
+        frame_stack: 3D numpy array of shape (n_frames, height, width) containing numeric frame data
+        roi_mask_log: list of per-frame ROI masks where each entry is a dict {roi_name: mask_array}
+    
+    Returns:
+        roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "adc_values", "mean_value"}}
+    """
+    if frame_stack.ndim != 3:
+        raise ValueError(f"Expected 3D frame stack, got shape {frame_stack.shape}")
+    
+    n_frames, height, width = frame_stack.shape
+    
+    if len(roi_mask_log) != n_frames:
+        raise ValueError(f"Frame stack has {n_frames} frames but ROI mask log has {len(roi_mask_log)} entries")
+    
+    roi_pixel_data: List[Dict[str, Dict[str, object]]] = []
+    
+    for frame_idx, (frame, masks) in enumerate(zip(frame_stack, roi_mask_log)):
+        frame_data: Dict[str, Dict[str, object]] = {}
+        
+        for roi_name, mask in masks.items():
+            if mask.shape != frame.shape:
+                raise ValueError(f"Mask shape {mask.shape} does not match frame shape {frame.shape} for ROI {roi_name}")
+            
+            ys, xs = np.where(mask == 255)
+            coords = list(zip(xs.tolist(), ys.tolist()))
+            values = frame[ys, xs].astype(np.float64)
+            mean_value = np.mean(values) if len(values) > 0 else 0.0
+            
+            frame_data[roi_name] = {
+                "coords": coords,
+                "adc_values": values.tolist(),
+                "mean_value": mean_value,
+            }
+        
+        roi_pixel_data.append(frame_data)
+    
+    return roi_pixel_data
+
+
+def write_roi_tracked_video_from_npy_frames(
+    frame_stack: np.ndarray,
+    roi_mask_log: List[Dict[str, np.ndarray]],
+    output_path: str,
+    fps: float,
+    start_frame: int = 0,
+    end_frame: int = None,
+) -> None:
+    """Write a masked video from a precomputed numeric frame stack using ROI masks."""
+    if frame_stack.ndim != 3:
+        raise ValueError(f"Expected 3D frame stack, got shape {frame_stack.shape}")
+
+    num_frames = frame_stack.shape[0]
+    if start_frame < 0:
+        raise ValueError("start_frame must be >= 0")
+
+    if end_frame is None:
+        end_frame = num_frames
+
+    if end_frame < start_frame:
+        raise ValueError("end_frame must be >= start_frame")
+
+    if end_frame > num_frames:
+        raise ValueError(f"end_frame {end_frame} exceeds available frames {num_frames}")
+
+    frames_slice = frame_stack[start_frame:end_frame]
+    if len(roi_mask_log) == num_frames:
+        masks_slice = roi_mask_log[start_frame:end_frame]
+    else:
+        masks_slice = roi_mask_log
+
+    if len(frames_slice) != len(masks_slice):
+        raise ValueError(
+            f"Mismatch between frames ({len(frames_slice)}) and masks ({len(masks_slice)}) in selected range"
+        )
+
+    if not len(frames_slice):
+        return
+
+    first_mask = next(iter(masks_slice[0].values()))
+    height, width = first_mask.shape
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    for frame, masks in zip(frames_slice, masks_slice):
+        vmin, vmax = np.percentile(frame, [1, 99])
+        frame_clipped = np.clip(frame, vmin, vmax)
+        frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        combined_mask = np.zeros(frame_norm.shape, dtype=np.uint8)
+        for mask in masks.values():
+            combined_mask = cv2.bitwise_or(combined_mask, mask)
+
+        frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(frame_bgr, contours, -1, (0, 255, 255), 1)
+        out.write(frame_bgr)
+
+    out.release()
+    print(f"Saved ROI tracked video (from npy frames) to: {output_path}")
+
+
 def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh', extract_from_video_instead_of_gray_files: bool = False) -> tuple:
     """
     Extract ROI data from thermal video and gray frames (raw data).
@@ -52,6 +162,24 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
         start_frame = int(start_time * configs.fps)
         end_frame = int(end_time * configs.fps)
 
+    # Check if path_gray_frames is a .npy file (precomputed numeric frame stack from ASC)
+    gray_frames_path_is_npy = os.path.isfile(configs.path_gray_frames) and configs.path_gray_frames.endswith('.npy')
+    npy_frames_full = None
+    npy_frames_slice = None
+    if gray_frames_path_is_npy:
+        print(f"[ROI Pipeline] Loading precomputed numeric frame stack from: {configs.path_gray_frames}")
+        npy_frames_full = np.load(configs.path_gray_frames, allow_pickle=False)
+        if npy_frames_full.ndim != 3:
+            raise ValueError(f"Expected 3D frame stack from {configs.path_gray_frames}, got shape {npy_frames_full.shape}")
+        num_frames = npy_frames_full.shape[0]
+        if limit_to_timespan:
+            if end_frame is None:
+                end_frame = num_frames
+            npy_frames_slice = npy_frames_full[start_frame:end_frame]
+        else:
+            npy_frames_slice = npy_frames_full
+        print(f"[ROI Pipeline] Using frames {start_frame or 0} to {end_frame or num_frames} from NPY stack (shape: {npy_frames_slice.shape})")
+
     ##########
     # Get ROI (manual ROI with user input or facemesh-based ROI)
     ##########
@@ -63,7 +191,8 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
         and configs.manual_roi_split_enabled
         and len(configs.manual_roi_names) == 1
     )
-    if configs.manual_roi_enabled:
+    if configs.manual_roi_enabled and not gray_frames_path_is_npy:
+        # Note: Manual ROI drawing requires frame access, skip if using .npy input
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
             frame_index = 0
             if configs.timespan_signal_to_look_at is not None:
@@ -224,30 +353,39 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
             or configs.overwrite_existing_files
             or split_single_manual_roi # Each ROI is treated as a sub-ROI so ROIs need to be defined accordingly in config
         ):
-            files_in_dir = [f for f in os.listdir(configs.path_gray_frames) if os.path.isfile(os.path.join(configs.path_gray_frames, f))]
-            if not files_in_dir:
-                raise ValueError(f"No files found in {configs.path_gray_frames}")
-
-            sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
-            # extract from asc files
-            if sample_ext == ".asc":
-                asc_paths = sorted(
-                    [os.path.join(configs.path_gray_frames, f) for f in files_in_dir if f.lower().endswith(".asc")]
-                )
-                roi_pixel_data = apply_roi_masks_to_asc_frames(
-                    asc_paths=asc_paths,
-                    roi_mask_log=roi_pixel_log,
-                    unit=configs.asc_unit,
+            # Handle .npy precomputed frame stack
+            if gray_frames_path_is_npy:
+                print(f"[ROI Pipeline] Extracting ROI data from NPY frame stack...")
+                roi_pixel_data = apply_roi_masks_to_npy_frames(
+                    frame_stack=npy_frames_slice,
+                    roi_mask_log=roi_pixel_log
                 )
             else:
-            # extract from gray files
-                roi_pixel_data = apply_roi_masks_to_gray_frames(
-                    gray_dir=configs.path_gray_frames,
-                    roi_mask_log=roi_pixel_log,
-                    output_npz=None,
-                    start_frame=start_frame if limit_to_timespan else 0,
-                    end_frame=end_frame if limit_to_timespan else None,
-                )
+                # Handle directory of ASC or gray files
+                files_in_dir = [f for f in os.listdir(configs.path_gray_frames) if os.path.isfile(os.path.join(configs.path_gray_frames, f))]
+                if not files_in_dir:
+                    raise ValueError(f"No files found in {configs.path_gray_frames}")
+
+                sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
+                # extract from asc files
+                if sample_ext == ".asc":
+                    asc_paths = sorted(
+                        [os.path.join(configs.path_gray_frames, f) for f in files_in_dir if f.lower().endswith(".asc")]
+                    )
+                    roi_pixel_data = apply_roi_masks_to_asc_frames(
+                        asc_paths=asc_paths,
+                        roi_mask_log=roi_pixel_log,
+                        unit=configs.asc_unit,
+                    )
+                else:
+                # extract from gray files
+                    roi_pixel_data = apply_roi_masks_to_gray_frames(
+                        gray_dir=configs.path_gray_frames,
+                        roi_mask_log=roi_pixel_log,
+                        output_npz=None,
+                        start_frame=start_frame if limit_to_timespan else 0,
+                        end_frame=end_frame if limit_to_timespan else None,
+                    )
             os.makedirs(os.path.dirname(configs.path_roi_pixel_data), exist_ok=True)
             np.save(configs.path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
         else:
@@ -261,14 +399,24 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
         start_frame = int(start_time * configs.fps)
         end_frame = int(end_time * configs.fps)
         os.makedirs(os.path.dirname(configs.path_video_tracked_face), exist_ok=True)
-        write_roi_tracked_video_from_gray_frames(
-            gray_dir=configs.path_gray_frames,
-            roi_mask_log=roi_pixel_log,
-            output_path=configs.path_video_tracked_face,
-            fps=configs.fps,
-            start_frame=start_frame,
-            end_frame=end_frame,
-        )
+        if gray_frames_path_is_npy:
+            write_roi_tracked_video_from_npy_frames(
+                frame_stack=npy_frames_full,
+                roi_mask_log=roi_pixel_log,
+                output_path=configs.path_video_tracked_face,
+                fps=configs.fps,
+                start_frame=start_frame,
+                end_frame=end_frame,
+            )
+        else:
+            write_roi_tracked_video_from_gray_frames(
+                gray_dir=configs.path_gray_frames,
+                roi_mask_log=roi_pixel_log,
+                output_path=configs.path_video_tracked_face,
+                fps=configs.fps,
+                start_frame=start_frame,
+                end_frame=end_frame,
+            )
         roi_pixel_data_for_return = roi_pixel_data
 
         local_start_idx = 0 if limit_to_timespan else start_frame
@@ -293,74 +441,71 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                             display_frame = frame.copy()
                     cap.release()
             else:
-                files_in_dir = [
-                    f for f in os.listdir(configs.path_gray_frames)
-                    if os.path.isfile(os.path.join(configs.path_gray_frames, f))
-                ]
-                if not files_in_dir:
-                    raise ValueError(f"No files found in {configs.path_gray_frames}")
-
-                sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
-                if sample_ext == ".asc":
-                    # Read the corresponding ASC frame for visualization
-                    asc_files = sorted(
-                        [f for f in files_in_dir if f.lower().endswith(".asc")]
-                    )
-                    if 0 <= start_frame < len(asc_files):
-                        frame_path = os.path.join(configs.path_gray_frames, asc_files[start_frame])
-                        if roi_masks:
-                            frame = _parse_asc_file(frame_path)
-                            frame = _asc_to_kelvin_x100(frame, configs.asc_unit)
-                            vmin, vmax = np.percentile(frame, [1, 99])
-                            frame_clipped = np.clip(frame, vmin, vmax)
-                            display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                if gray_frames_path_is_npy:
+                    frame = npy_frames_full[start_frame]
+                    vmin, vmax = np.percentile(frame, [1, 99])
+                    frame_clipped = np.clip(frame, vmin, vmax)
+                    display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
                 else:
-                    # Read the corresponding gray frame for visualization
-                    _, gray_files = sort_grayfiles_with_interpolations(configs.path_gray_frames)
-                    if 0 <= start_frame < len(gray_files):
-                        frame_path = os.path.join(configs.path_gray_frames, gray_files[start_frame])
-                        if roi_masks:
-                            first_mask = next(iter(roi_masks.values()))
-                            drop_telemetry = first_mask.shape[0] <= 120
-                            raw_height = first_mask.shape[0] + (2 if drop_telemetry else 0)
-                            raw_width = first_mask.shape[1]
-                            frame = load_gray_frame(
-                                frame_path,
-                                width=raw_width,
-                                height=raw_height,
-                                drop_telemetry=drop_telemetry,
-                            )
-                            vmin, vmax = np.percentile(frame, [1, 99])
-                            frame_clipped = np.clip(frame, vmin, vmax)
-                            display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                    files_in_dir = [
+                        f for f in os.listdir(configs.path_gray_frames)
+                        if os.path.isfile(os.path.join(configs.path_gray_frames, f))
+                    ]
+                    if not files_in_dir:
+                        raise ValueError(f"No files found in {configs.path_gray_frames}")
 
-            # Overlay ROI masks on the frame for visualization and save
-            if display_frame is not None and roi_masks:
-                if display_frame.ndim == 2:
-                    overlay = cv2.cvtColor(display_frame, cv2.COLOR_GRAY2BGR)
-                else:
-                    overlay = display_frame.copy()
-
-                colors = [
-                    (0, 255, 0),
-                    (0, 0, 255),
-                    (255, 0, 0),
-                    (255, 255, 0),
-                    (255, 0, 255),
-                    (0, 255, 255),
-                ]
-                for idx, (roi_name, mask) in enumerate(roi_masks.items()):
-                    if mask.shape != overlay.shape[:2]:
-                        print(
-                            f"Warning: ROI mask shape {mask.shape} does not match frame shape {overlay.shape[:2]} for {roi_name}"
+                    sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
+                    if sample_ext == ".asc":
+                        # Read the corresponding ASC frame for visualization
+                        asc_paths = sorted(
+                            [os.path.join(configs.path_gray_frames, f) for f in files_in_dir if f.lower().endswith(".asc")]
                         )
-                        continue
-                    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    color = colors[idx % len(colors)]
-                    cv2.drawContours(overlay, contours, -1, color, 1)
+                        if start_frame >= len(asc_paths):
+                            raise ValueError(f"start_frame {start_frame} exceeds available asc frames {len(asc_paths)}")
 
-                cv2.imwrite(output_path, overlay)
-                print(f"Saved ROI first-frame snapshot to: {output_path}")
+                        frame = _parse_asc_file(asc_paths[start_frame])
+                        if configs.asc_unit == "kelvin":
+                            frame = _asc_to_kelvin_x100(frame)
+
+                        vmin, vmax = np.percentile(frame, [1, 99])
+                        frame_clipped = np.clip(frame, vmin, vmax)
+                        display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                    else:
+                        # Read the corresponding gray frame for visualization
+                        _, gray_files = sort_grayfiles_with_interpolations(configs.path_gray_frames)
+                        if start_frame >= len(gray_files):
+                            raise ValueError(f"start_frame {start_frame} exceeds available gray frames {len(gray_files)}")
+
+                        frame = load_gray_frame(os.path.join(configs.path_gray_frames, gray_files[start_frame]))
+                        vmin, vmax = np.percentile(frame, [1, 99])
+                        frame_clipped = np.clip(frame, vmin, vmax)
+                        display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+            overlay = (
+                cv2.cvtColor(display_frame, cv2.COLOR_GRAY2BGR)
+                if display_frame.ndim == 2
+                else display_frame.copy()
+            )
+            colors = [
+                (0, 255, 0),
+                (0, 0, 255),
+                (255, 0, 0),
+                (255, 255, 0),
+                (255, 0, 255),
+                (0, 255, 255),
+            ]
+            for idx, (roi_name, mask) in enumerate(roi_masks.items()):
+                if mask.shape != overlay.shape[:2]:
+                    print(
+                        f"Warning: ROI mask shape {mask.shape} does not match frame shape {overlay.shape[:2]} for {roi_name}"
+                    )
+                    continue
+                contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                color = colors[idx % len(colors)]
+                cv2.drawContours(overlay, contours, -1, color, 1)
+
+            cv2.imwrite(output_path, overlay)
+            print(f"Saved ROI first-frame snapshot to: {output_path}")
 
     # Plot
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
