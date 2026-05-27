@@ -33,7 +33,7 @@ configs = Config.from_yaml(CONFIGS_PATH)
 RUN_RANDOM_PARALLEL = False
 RANDOM_SEED = 42
 APPLY_TRACKER_LANDMARK_DETECTION = True
-THRESHOLD_VALUE = 30000 # only keep pixels above 30 degrees, if tracker landmark detection used
+THRESHOLD_VALUE = 30 # only keep pixels above 30 degrees, if tracker landmark detection used
 print("Hardcoded parameters in main_yang_et_al.py:")
 print(f"RUN_RANDOM_PARALLEL: {RUN_RANDOM_PARALLEL}")
 print(f"RANDOM_SEED: {RANDOM_SEED}")
@@ -43,7 +43,6 @@ print(f"THRESHOLD_VALUE: {THRESHOLD_VALUE}")
 # IMPORTANT: Each ROI represents one building block in the graph
 # If ROIs are detected with mediapipe, they have to be set accordingly (e.g. 16 ROIs for 16 building blocks)
 # If ROI is manually defined, manual_roi_split_enabled = True so the ROI is split in sub-ROIs
-
 
 # Face detection and ROI extraction--------------------------------------------------------------------
 if APPLY_TRACKER_LANDMARK_DETECTION:
