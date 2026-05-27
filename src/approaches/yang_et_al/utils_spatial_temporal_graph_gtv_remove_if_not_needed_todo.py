@@ -60,7 +60,7 @@ def build_block_features_from_roi_pixel_data(roi_pixel_data):
     - Centroid y-coordinate
 
     Parameters:
-        roi_pixel_data: list per frame: dict {roi_name: {'coords':..., 'adc_values':..., 'mean_kelvin_multiplied_100':...}}
+        roi_pixel_data: list per frame: dict {roi_name: {'coords':..., 'adc_values':..., 'mean_value':...}}
 
     Returns:
         block_features: list of length T; each element is an (N, 3) array of features for N blocks at frame t.
@@ -74,7 +74,7 @@ def build_block_features_from_roi_pixel_data(roi_pixel_data):
         feats_t = []
         for name in roi_names:
             info = roi_pixel_data[t][name]
-            meanv = info['mean_kelvin_multiplied_100'] if info['mean_kelvin_multiplied_100'] is not None else np.nan
+            meanv = info['mean_value'] if info['mean_value'] is not None else np.nan
             centroid = compute_centroid(info['coords'])  # returns (cx, cy) or None
             if centroid is None:
                 cx, cy = np.nan, np.nan

@@ -998,7 +998,7 @@ def apply_roi_masks_to_gray_frames(
             frame_data[roi_name] = {
                 "coords": coords,
                 "adc_values": values.tolist(),
-                "mean_kelvin_multiplied_100": float(np.mean(values)) if values.size > 0 else float('nan'),
+                "mean_value": float(np.mean(values)) if values.size > 0 else float('nan'),
             }
 
         roi_pixel_data.append(frame_data)
@@ -1027,7 +1027,7 @@ def apply_roi_masks_to_asc_frames(
         unit: unit of values in ASC (celsius|kelvin|kelvin100|raw)
 
     Returns:
-        roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "values", "mean_kelvin_multiplied_100"}}
+        roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "values", "mean_value"}}
     """
     if not asc_paths:
         raise ValueError("asc_paths is empty")
@@ -1056,7 +1056,7 @@ def apply_roi_masks_to_asc_frames(
             frame_data[roi_name] = {
                 "coords": coords,
                 "adc_values": values.tolist(),
-                "mean_kelvin_multiplied_100": float(np.mean(values)) if values.size > 0 else float("nan"),
+                "mean_value": float(np.mean(values)) if values.size > 0 else float("nan"),
             }
 
         roi_pixel_data.append(frame_data)
@@ -1163,7 +1163,7 @@ def plot_roi_temperature_means(roi_pixel_data: List[Dict[str, Dict[str, object]]
 
     plt.figure(figsize=(12, 6))
     for roi in roi_names:
-        means = [frame.get(roi, {}).get("mean_kelvin_multiplied_100", np.nan) for frame in roi_pixel_data]
+        means = [frame.get(roi, {}).get("mean_value", np.nan) for frame in roi_pixel_data]
         plt.plot(t, means, label=roi)
 
     plt.xlabel("Frames" if fps is None else "Time (s)")

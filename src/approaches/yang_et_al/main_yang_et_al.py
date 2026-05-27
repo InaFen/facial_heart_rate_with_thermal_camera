@@ -25,14 +25,14 @@ from src.approaches.yang_et_al.utils_random_baseline import run_random_baseline
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 
-CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.yaml"
+CONFIGS_PATH = os.environ.get("YANG_CONFIG_PATH", "src/approaches/yang_et_al/configs_yang_et_al.yaml")
 
 # Get configurations
 configs = Config.from_yaml(CONFIGS_PATH)
 
 RUN_RANDOM_PARALLEL = False
 RANDOM_SEED = 42
-APPLY_TRACKER_LANDMARK_DETECTION = False
+APPLY_TRACKER_LANDMARK_DETECTION = True
 THRESHOLD_VALUE = 30000 # only keep pixels above 30 degrees, if tracker landmark detection used
 print("Hardcoded parameters in main_yang_et_al.py:")
 print(f"RUN_RANDOM_PARALLEL: {RUN_RANDOM_PARALLEL}")

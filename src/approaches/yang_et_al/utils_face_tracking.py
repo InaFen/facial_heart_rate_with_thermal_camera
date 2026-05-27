@@ -543,7 +543,6 @@ def track_face(
                     "coords": coords,
                     "values": values,
                     "mean_value": mean_val,
-                    "mean_kelvin_multiplied_100": mean_val,
                 }
 
                 mask = np.zeros(gray_raw.shape, dtype=np.uint8)
@@ -726,7 +725,7 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
             filtered_frame[roi_name] = {
                 "coords": filtered_coords,
                 "adc_values": filtered_values,
-                "mean_kelvin_multiplied_100": mean_val,
+                "mean_value": mean_val,
             }
 
             if writer is not None:

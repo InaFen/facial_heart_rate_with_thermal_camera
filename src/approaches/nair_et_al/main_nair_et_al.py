@@ -56,7 +56,7 @@ for frame in roi_pixel_data:
     for roi, values in frame.items():
         if roi not in result:
             subregions_names.append(roi)  # remember first-seen order
-        result[roi].append(values["mean_kelvin_multiplied_100"])
+        result[roi].append(values["mean_value"])
 
 mean_values_subregions = [result[roi] for roi in subregions_names]
 
