@@ -932,7 +932,7 @@ if __name__ == "__main__":
     PEAK_PROMINENCE_GT = 1.0
 
     evaluate_instantaneous_hr_against_ground_truth(
-        results="saved_results/yang_et_al/05032026_before_after_sport_interpolated_temp_0_00-10_00s.npz",
+        results="saved_results/yang_et_al/Julian1_thermal_data_all_frames_tracker_landmark_threshold_30_c_30_00-45_00s.npz",
         flip_ground_truth=False,
         tolerance_ms=150.0,
         plot_steps=True,
