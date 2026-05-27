@@ -178,6 +178,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
             npy_frames_slice = npy_frames_full[start_frame:end_frame]
         else:
             npy_frames_slice = npy_frames_full
+        del npy_frames_full
         print(f"[ROI Pipeline] Using frames {start_frame or 0} to {end_frame or num_frames} from NPY stack (shape: {npy_frames_slice.shape})")
 
     ##########
@@ -268,7 +269,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     in_path=configs.path_video,
                     out_path=configs.path_video_tracked_face,
                     fps=configs.fps,
-                    flip_upside_down=True,
+                    flip_upside_down=False,
                     start_frame=start_frame if limit_to_timespan else 0,
                     end_frame=end_frame if limit_to_timespan else None,
                 )
@@ -401,12 +402,12 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
         os.makedirs(os.path.dirname(configs.path_video_tracked_face), exist_ok=True)
         if gray_frames_path_is_npy:
             write_roi_tracked_video_from_npy_frames(
-                frame_stack=npy_frames_full,
+                frame_stack=npy_frames_slice,
                 roi_mask_log=roi_pixel_log,
                 output_path=configs.path_video_tracked_face,
                 fps=configs.fps,
-                start_frame=start_frame,
-                end_frame=end_frame,
+                start_frame=0,
+                end_frame=None,
             )
         else:
             write_roi_tracked_video_from_gray_frames(
@@ -442,7 +443,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     cap.release()
             else:
                 if gray_frames_path_is_npy:
-                    frame = npy_frames_full[start_frame]
+                    frame = npy_frames_slice[0]
                     vmin, vmax = np.percentile(frame, [1, 99])
                     frame_clipped = np.clip(frame, vmin, vmax)
                     display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
