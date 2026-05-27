@@ -124,11 +124,12 @@ def match_by_nearest_timestamp(
     gt_times: np.ndarray,
     pred_values: np.ndarray,
     pred_times: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Match each ground-truth value to the closest prediction by timestamp.
+) -> Dict[str, np.ndarray]:
+    """Match each ground-truth value to the closest prediction and vice versa.
 
-    Unlike tolerance matching, this keeps all ground-truth points (if predictions exist)
-    and allows reusing predicted points.
+    This keeps all ground-truth points by matching each one to its nearest prediction,
+    and also keeps all predicted points by matching each one to its nearest ground-truth
+    value. The returned dictionary contains both directions so neither side is lost.
     """
     gt_values = np.asarray(gt_values, dtype=float)
     gt_times = np.asarray(gt_times, dtype=float)
@@ -136,32 +137,54 @@ def match_by_nearest_timestamp(
     pred_times = np.asarray(pred_times, dtype=float)
 
     if gt_values.size == 0 or pred_values.size == 0:
-        return (
-            np.array([], dtype=float),
-            np.array([], dtype=float),
-            np.array([], dtype=float),
-            np.array([], dtype=float),
-        )
+        empty = np.array([], dtype=float)
+        return {
+            "gt_to_pred_gt_values": empty,
+            "gt_to_pred_pred_values": empty,
+            "gt_to_pred_gt_times": empty,
+            "gt_to_pred_pred_times": empty,
+            "pred_to_gt_pred_values": empty,
+            "pred_to_gt_gt_values": empty,
+            "pred_to_gt_pred_times": empty,
+            "pred_to_gt_gt_times": empty,
+        }
 
-    matched_gt_vals = []
-    matched_pred_vals = []
-    matched_gt_t = []
-    matched_pred_t = []
+    gt_to_pred_gt_vals = []
+    gt_to_pred_pred_vals = []
+    gt_to_pred_gt_t = []
+    gt_to_pred_pred_t = []
 
     for i in range(gt_times.shape[0]):
         dt = np.abs(pred_times - gt_times[i])
         j = int(np.argmin(dt))
-        matched_gt_vals.append(gt_values[i])
-        matched_pred_vals.append(pred_values[j])
-        matched_gt_t.append(gt_times[i])
-        matched_pred_t.append(pred_times[j])
+        gt_to_pred_gt_vals.append(gt_values[i])
+        gt_to_pred_pred_vals.append(pred_values[j])
+        gt_to_pred_gt_t.append(gt_times[i])
+        gt_to_pred_pred_t.append(pred_times[j])
 
-    return (
-        np.asarray(matched_gt_vals, dtype=float),
-        np.asarray(matched_pred_vals, dtype=float),
-        np.asarray(matched_gt_t, dtype=float),
-        np.asarray(matched_pred_t, dtype=float),
-    )
+    pred_to_gt_pred_vals = []
+    pred_to_gt_gt_vals = []
+    pred_to_gt_pred_t = []
+    pred_to_gt_gt_t = []
+
+    for i in range(pred_times.shape[0]):
+        dt = np.abs(gt_times - pred_times[i])
+        j = int(np.argmin(dt))
+        pred_to_gt_pred_vals.append(pred_values[i])
+        pred_to_gt_gt_vals.append(gt_values[j])
+        pred_to_gt_pred_t.append(pred_times[i])
+        pred_to_gt_gt_t.append(gt_times[j])
+
+    return {
+        "gt_to_pred_gt_values": np.asarray(gt_to_pred_gt_vals, dtype=float),
+        "gt_to_pred_pred_values": np.asarray(gt_to_pred_pred_vals, dtype=float),
+        "gt_to_pred_gt_times": np.asarray(gt_to_pred_gt_t, dtype=float),
+        "gt_to_pred_pred_times": np.asarray(gt_to_pred_pred_t, dtype=float),
+        "pred_to_gt_pred_values": np.asarray(pred_to_gt_pred_vals, dtype=float),
+        "pred_to_gt_gt_values": np.asarray(pred_to_gt_gt_vals, dtype=float),
+        "pred_to_gt_pred_times": np.asarray(pred_to_gt_pred_t, dtype=float),
+        "pred_to_gt_gt_times": np.asarray(pred_to_gt_gt_t, dtype=float),
+    }
 
 
 def _ihr_time_and_peak_pairs_from_peak_times(
@@ -667,11 +690,6 @@ def evaluate_instantaneous_hr_against_ground_truth(
     t = np.arange(L) / float(gt_fs_val)
 
     # Peak detection
-    PEAK_DISTANCE_SIGNAL = 0.3
-    PEAK_PROMINENCE_SIGNAL = 0.5
-    PEAK_DISTANCE_GT = 0.5
-    PEAK_PROMINENCE_GT = 1.0
-
     pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs_val, min_distance_s=PEAK_DISTANCE_SIGNAL, prominence=PEAK_PROMINENCE_SIGNAL)
     pred_peak_times = t[pred_peaks]
 
@@ -705,11 +723,35 @@ def evaluate_instantaneous_hr_against_ground_truth(
     peak_to_peak_disregard_metrics["num_matched"] = int(matched_gt_ihr.size)
 
     # Match GT & predicted HRs to closest, don't disregard any-----------------------
-    closest_gt_ihr, closest_pred_ihr, closest_gt_times, closest_pred_times = match_by_nearest_timestamp(
+    closest_matches = match_by_nearest_timestamp(
         gt_values=gt_ihr,
         gt_times=gt_ihr_times,
         pred_values=pred_ihr,
         pred_times=pred_ihr_times,
+    )
+    closest_gt_ihr = np.concatenate(
+        [
+            closest_matches["gt_to_pred_gt_values"],
+            closest_matches["pred_to_gt_gt_values"],
+        ]
+    )
+    closest_pred_ihr = np.concatenate(
+        [
+            closest_matches["gt_to_pred_pred_values"],
+            closest_matches["pred_to_gt_pred_values"],
+        ]
+    )
+    closest_gt_times = np.concatenate(
+        [
+            closest_matches["gt_to_pred_gt_times"],
+            closest_matches["pred_to_gt_gt_times"],
+        ]
+    )
+    closest_pred_times = np.concatenate(
+        [
+            closest_matches["gt_to_pred_pred_times"],
+            closest_matches["pred_to_gt_pred_times"],
+        ]
     )
     peak_to_peak_closest_metrics, ba_stats_closest = compute_metrics_with_optional_bland_altman(
         closest_gt_ihr,
@@ -718,29 +760,144 @@ def evaluate_instantaneous_hr_against_ground_truth(
         title="Bland-Altman Instantaneous HR (closest timestamp fallback)",
     )
 
-    # Optional plotting (kept simple)
+    # Create output folder named after the input NPZ file
+    output_folder = signal_path.parent / signal_path.stem
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Optional plotting: one combined figure with the requested subplots
     if plot_steps:
-        plt.figure(figsize=(10, 5))
-        plt.plot(t, pred_rs, label="Predicted (resampled)")
-        plt.plot(t, gt_segment, label="Ground truth", alpha=0.8)
-        if pred_peaks.size > 0:
-            plt.scatter(pred_peak_times, pred_rs[pred_peaks], s=25, color="C1")
+        fig, axes = plt.subplots(3, 1, figsize=(14, 16))
+        fig.suptitle("Instantaneous HR evaluation", fontsize=15)
+
+        # 1) Signal plot with detected peaks
+        axes[0].plot(t, gt_segment, label="Ground truth", alpha=0.85, color="C0")
+        axes[0].plot(t, pred_rs, label="Predicted (resampled)", alpha=0.75, color="C1")
         if gt_peaks.size > 0:
-            plt.scatter(gt_peak_times, gt_segment[gt_peaks], s=25, color="C2")
-        plt.legend()
-        plt.title("Predicted vs Ground Truth (resampled)")
-        plt.xlabel("Time (s)")
-        plt.ylabel("Amplitude")
+            axes[0].scatter(gt_peak_times, gt_segment[gt_peaks], s=35, color="C0", edgecolors="black", linewidths=0.4, label="GT peaks")
+        if pred_peaks.size > 0:
+            axes[0].scatter(pred_peak_times, pred_rs[pred_peaks], s=35, color="C1", edgecolors="black", linewidths=0.4, label="Pred peaks")
+        axes[0].set_title("Ground truth and predicted signal with detected peaks")
+        axes[0].set_xlabel("Time (s)")
+        axes[0].set_ylabel("Amplitude")
+        axes[0].legend(loc="best")
+        axes[0].grid(alpha=0.2)
+
+        # 2) IHR plot with disregarded/tolerance matching
+        axes[1].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.7, marker="o")
+        axes[1].plot(pred_ihr_times, pred_ihr, label="Pred IHR", color="C1", alpha=0.7, marker="o")
+        if matched_gt_times.size > 0:
+            axes[1].scatter(matched_gt_times, matched_gt_ihr, s=45, color="C0", edgecolors="black", linewidths=0.4, label="Matched GT IHR")
+            axes[1].scatter(matched_pred_times, matched_pred_ihr, s=45, color="C1", edgecolors="black", linewidths=0.4, label="Matched Pred IHR")
+            for x_gt, y_gt, x_pred, y_pred in zip(matched_gt_times, matched_gt_ihr, matched_pred_times, matched_pred_ihr):
+                axes[1].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.45, linewidth=0.8)
+        axes[1].set_title(f"IHR with tolerance matching (disregarded unmatched, ±{tolerance_ms:.0f} ms)")
+        axes[1].set_xlabel("Time (s)")
+        axes[1].set_ylabel("HR (bpm)")
+        axes[1].legend(loc="best")
+        axes[1].grid(alpha=0.2)
+
+        # 3) IHR plot with closest matching in both directions
+        axes[2].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.45, marker="o")
+        axes[2].plot(pred_ihr_times, pred_ihr, label="Pred IHR", color="C1", alpha=0.45, marker="o")
+        gt_to_pred_gt_times = closest_matches["gt_to_pred_gt_times"]
+        gt_to_pred_pred_times = closest_matches["gt_to_pred_pred_times"]
+        gt_to_pred_gt_values = closest_matches["gt_to_pred_gt_values"]
+        gt_to_pred_pred_values = closest_matches["gt_to_pred_pred_values"]
+        pred_to_gt_pred_times = closest_matches["pred_to_gt_pred_times"]
+        pred_to_gt_gt_times = closest_matches["pred_to_gt_gt_times"]
+        pred_to_gt_pred_values = closest_matches["pred_to_gt_pred_values"]
+        pred_to_gt_gt_values = closest_matches["pred_to_gt_gt_values"]
+
+        if gt_to_pred_gt_times.size > 0:
+            axes[2].scatter(gt_to_pred_gt_times, gt_to_pred_gt_values, s=45, color="C0", edgecolors="black", linewidths=0.4, label="GT matched to closest Pred")
+            axes[2].scatter(gt_to_pred_pred_times, gt_to_pred_pred_values, s=45, color="C1", edgecolors="black", linewidths=0.4, label="Pred matched from GT")
+            for x_gt, y_gt, x_pred, y_pred in zip(gt_to_pred_gt_times, gt_to_pred_gt_values, gt_to_pred_pred_times, gt_to_pred_pred_values):
+                axes[2].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.35, linewidth=0.8)
+
+        if pred_to_gt_pred_times.size > 0:
+            axes[2].scatter(pred_to_gt_gt_times, pred_to_gt_gt_values, s=30, facecolors="none", edgecolors="C0", linewidths=1.1, label="GT matched from Pred")
+            axes[2].scatter(pred_to_gt_pred_times, pred_to_gt_pred_values, s=30, facecolors="none", edgecolors="C1", linewidths=1.1, label="Pred matched to closest GT")
+            for x_pred, y_pred, x_gt, y_gt in zip(pred_to_gt_pred_times, pred_to_gt_pred_values, pred_to_gt_gt_times, pred_to_gt_gt_values):
+                axes[2].plot([x_pred, x_gt], [y_pred, y_gt], color="tab:purple", alpha=0.25, linewidth=0.7)
+
+        axes[2].set_title("IHR with closest matching in both directions")
+        axes[2].set_xlabel("Time (s)")
+        axes[2].set_ylabel("HR (bpm)")
+        axes[2].legend(loc="best", ncol=2)
+        axes[2].grid(alpha=0.2)
+
         plt.tight_layout()
+        combined_plot_path = output_folder / "01_combined_evaluation.png"
+        plt.savefig(combined_plot_path, dpi=150, bbox_inches="tight")
         plt.show()
 
+    # Generate and save Bland-Altman plots for both matching strategies
+    if plot_bland_altman or plot_steps:
+        # Disregard/tolerance matching Bland-Altman plot
         if matched_gt_ihr.size > 0:
-            ba = bland_altman(matched_gt_ihr, matched_pred_ihr, plot=True, title="Bland-Altman (matched IHR)")
-            if ba_stats_disregard is None:
-                ba_stats_disregard = ba
+            fig, ax = plt.subplots(figsize=(8, 6))
+            bland_altman(
+                matched_gt_ihr,
+                matched_pred_ihr,
+                plot=True,
+                ax=ax,
+                title=f"Bland-Altman: Tolerance matching (±{tolerance_ms:.0f} ms)",
+            )
+            ba_disregard_path = output_folder / "02_bland_altman_disregard.png"
+            fig.tight_layout()
+            plt.savefig(ba_disregard_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+        # Closest matching Bland-Altman plot
+        if closest_gt_ihr.size > 0:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            bland_altman(
+                closest_gt_ihr,
+                closest_pred_ihr,
+                plot=True,
+                ax=ax,
+                title="Bland-Altman: Closest matching (both directions)",
+            )
+            ba_closest_path = output_folder / "03_bland_altman_closest.png"
+            fig.tight_layout()
+            plt.savefig(ba_closest_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+    # Save output data as JSON for easy inspection
+    def _serialize_for_json(obj):
+        """Convert numpy types to JSON-serializable Python types."""
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        if isinstance(obj, dict):
+            return {k: _serialize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_serialize_for_json(v) for v in obj]
+        return obj
+
+    output_data = {
+        "input_file": str(signal_path),
+        "tolerance_ms": tolerance_ms,
+        "ground_truth_fs": float(gt_fs_val),
+        "predicted_fs": float(predicted_fs_val),
+        "metrics_disregard": _serialize_for_json(peak_to_peak_disregard_metrics),
+        "ba_stats_disregard": _serialize_for_json(ba_stats_disregard),
+        "metrics_closest": _serialize_for_json(peak_to_peak_closest_metrics),
+        "ba_stats_closest": _serialize_for_json(ba_stats_closest),
+        "gt_hr_mean": float(gt_hr_mean) if np.isfinite(gt_hr_mean) else None,
+        "signal_hr_mean": float(signal_hr_mean) if np.isfinite(signal_hr_mean) else None,
+        "num_gt_peaks": int(gt_peaks.size),
+        "num_pred_peaks": int(pred_peaks.size),
+        "num_matched_disregard": int(matched_gt_ihr.size),
+        "num_matched_closest": int(closest_gt_ihr.size),
+    }
+
+    output_json_path = output_folder / "00_metrics.json"
+    with open(output_json_path, "w", encoding="utf-8") as f:
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
 
     out = {
-        "metrics": peak_to_peak_disregard_metrics,
         "peak_to_peak_disregard_metrics": peak_to_peak_disregard_metrics,
         "peak_to_peak_disregard_ba_stats": ba_stats_disregard,
         "peak_to_peak_closest_metrics": peak_to_peak_closest_metrics,
@@ -751,26 +908,29 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "ground_truth_ihr_times": gt_ihr_times,
         "predicted_ihr": pred_ihr,
         "predicted_ihr_times": pred_ihr_times,
-        "matched_ground_truth_ihr": matched_gt_ihr,
-        "matched_predicted_ihr": matched_pred_ihr,
-        "matched_ground_truth_times": matched_gt_times,
-        "matched_predicted_times": matched_pred_times,
+        "matched_ground_truth_ihr_disregard": matched_gt_ihr,
+        "matched_predicted_ihr_disregard": matched_pred_ihr,
+        "matched_ground_truth_times_disregard": matched_gt_times,
+        "matched_predicted_times_disregard": matched_pred_times,
         "closest_ground_truth_ihr": closest_gt_ihr,
         "closest_predicted_ihr": closest_pred_ihr,
         "closest_ground_truth_times": closest_gt_times,
         "closest_predicted_times": closest_pred_times,
-        "ground_truth_peak_times": gt_peak_times,
-        "ground_truth_peak_indices": gt_peaks,
-        "predicted_peak_times": pred_peak_times,
         "ground_truth_fs": gt_fs_val,
         "predicted_resampled_fs": gt_fs_val,
         "tolerance_ms": tolerance_ms,
     }
+    out["output_folder"] = str(output_folder)
 
     return out
 
 
 if __name__ == "__main__":
+    PEAK_DISTANCE_SIGNAL = 0.3
+    PEAK_PROMINENCE_SIGNAL = 0.5
+    PEAK_DISTANCE_GT = 0.5
+    PEAK_PROMINENCE_GT = 1.0
+
     evaluate_instantaneous_hr_against_ground_truth(
         results="saved_results/yang_et_al/05032026_before_after_sport_interpolated_temp_0_00-10_00s.npz",
         flip_ground_truth=False,
