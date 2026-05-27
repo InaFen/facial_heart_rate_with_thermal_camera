@@ -375,9 +375,15 @@ def track_face(
     flip_upside_down: bool = True,
     start_frame: int = 0,
     end_frame: int | None = None,
+    tracking_reference_size: tuple[int, int] = (160, 120),
 ):
     """
     Full thermal head tracking pipeline.
+
+    The tracker runs in a normalized reference space so videos recorded at
+    different resolutions still use the same tuned head-template and STC
+    tracker parameters. The resulting ROI is then mapped back to the original
+    frame size.
 
     Returns:
         roi_pixel_log
@@ -395,6 +401,15 @@ def track_face(
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    reference_w = int(tracking_reference_size[0])
+    reference_h = int(tracking_reference_size[1])
+    if reference_w <= 0 or reference_h <= 0:
+        raise ValueError("tracking_reference_size must contain positive width and height")
+
+    scale_x = W / reference_w
+    scale_y = H / reference_h
+    resize_interpolation = cv2.INTER_AREA if (W > reference_w or H > reference_h) else cv2.INTER_LINEAR
 
     writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
 
@@ -434,11 +449,17 @@ def track_face(
         gray_raw = cv2.cvtColor(frame_display, cv2.COLOR_BGR2GRAY)
         gray_raw_proc = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2GRAY)
 
+        gray_raw_proc_ref = cv2.resize(
+            gray_raw_proc,
+            (reference_w, reference_h),
+            interpolation=resize_interpolation,
+        )
+
         # ----------------------------------------
         # THERMAL PREPROCESSING
         # ----------------------------------------
 
-        gray = cv2.GaussianBlur(gray_raw_proc, (5, 5), 0)
+        gray = cv2.GaussianBlur(gray_raw_proc_ref, (5, 5), 0)
         gray = cv2.equalizeHist(gray)
 
         # ----------------------------------------
@@ -480,13 +501,19 @@ def track_face(
 
         x, y, w, h = bbox
 
+        x = int(round(x * scale_x))
+        y = int(round(y * scale_y))
+        w = max(1, int(round(w * scale_x)))
+        h = max(1, int(round(h * scale_y)))
+
         center_proc = (x + w // 2, y + h // 2)
         if flip_upside_down:
             center = (center_proc[0], (H - 1) - center_proc[1])
         else:
             center = center_proc
 
-        roi_size = (grid_size * block_size)
+        scaled_block_size = max(1, int(round(block_size * ((scale_x + scale_y) / 2.0))))
+        roi_size = grid_size * scaled_block_size
         roi_half = roi_size // 2
         rx0 = max(0, int(center[0] - roi_half))
         ry0 = max(0, int(center[1] - roi_half))
@@ -518,10 +545,10 @@ def track_face(
         for gy in range(-half_grid, half_grid + 1):
             for gx in range(-half_grid, half_grid + 1):
                 roi_name = f"roi_r{gy + half_grid + 1}c{gx + half_grid + 1}"
-                x0 = int(center[0] + gx * block_size - block_size // 2)
-                y0 = int(center[1] + gy * block_size - block_size // 2)
-                x1 = x0 + block_size
-                y1 = y0 + block_size
+                x0 = int(center[0] + gx * scaled_block_size - scaled_block_size // 2)
+                y0 = int(center[1] + gy * scaled_block_size - scaled_block_size // 2)
+                x1 = x0 + scaled_block_size
+                y1 = y0 + scaled_block_size
 
                 x0c = max(0, x0)
                 y0c = max(0, y0)
