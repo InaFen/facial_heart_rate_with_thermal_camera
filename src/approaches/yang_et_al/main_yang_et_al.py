@@ -1,8 +1,12 @@
 import sys
 import os
-import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
+import json
+import re
+from pathlib import Path
+from datetime import datetime
+import numpy as np
 
 project_root = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, project_root)
@@ -238,6 +242,8 @@ if configs.timespan_signal_to_look_at is not None:
 		predicted_signal=selected_pca_component,
 		predicted_fs=float(configs.fps),
 		path_ground_truth=configs.path_ground_truth,
+		path_signal=configs.path_gray_frames,
+		roi=configs.roi_name,
 		timespan=configs.timespan_signal_to_look_at,
 		time_first_frame_signal=float(configs.time_first_frame_signal or 0.0),
 		time_first_frame_ecg=float(configs.time_first_frame_ecg or 0.0),
@@ -293,3 +299,65 @@ print(f"Estimated heart rate: {heart_rate_estimate:.2f} beats per minute")
 
 
 print("Finished Yang et al. approach pipeline.")
+
+# Save results at end of pipeline
+try:
+	# Directory for saved results inside project
+	save_root = Path(project_root) / "saved_results"
+	save_root.mkdir(parents=True, exist_ok=True)
+	# Build descriptive filename: signalName_roiName_timespan
+	signal_path_cfg = getattr(configs, "path_gray_frames", "") or ""
+	signal_name = Path(signal_path_cfg).stem if signal_path_cfg else "signal"
+	roi_name_cfg = getattr(configs, "roi_name", "roi") or "roi"
+	timespan_cfg = getattr(configs, "timespan_signal_to_look_at", None)
+	if timespan_cfg:
+		try:
+			start_s, end_s = timespan_cfg
+			timespan_str = f"{float(start_s):.2f}-{float(end_s):.2f}s"
+		except Exception:
+			timespan_str = str(timespan_cfg)
+	else:
+		timespan_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+	base_name = f"{signal_name}_{roi_name_cfg}_{timespan_str}"
+	# sanitize to safe filename (keep alnum, dash and underscore)
+	safe_base = re.sub(r"[^A-Za-z0-9_-]", "_", base_name)
+	save_file = save_root / f"{safe_base}.npz"
+
+	metadata = {
+		"path_signal": getattr(configs, "path_gray_frames", ""),
+		"path_ground_truth": getattr(configs, "path_ground_truth", ""),
+		"timespan_signal_to_look_at": getattr(configs, "timespan_signal_to_look_at", None),
+		"roi_name": getattr(configs, "roi_name", ""),
+		"heart_rate_estimate_bpm": float(heart_rate_estimate),
+		"saved_at": datetime.now().isoformat(),
+	}
+
+	if "ground_truth_segment" in globals():
+		np.savez_compressed(
+			save_file,
+			selected_pca_component=np.asarray(selected_pca_component, dtype=float),
+			ground_truth_segment=np.asarray(ground_truth_segment, dtype=float),
+			heart_rate_estimate=float(heart_rate_estimate),
+			metadata=json.dumps(metadata),
+		)
+	else:
+		np.savez_compressed(
+			save_file,
+			selected_pca_component=np.asarray(selected_pca_component, dtype=float),
+			heart_rate_estimate=float(heart_rate_estimate),
+			metadata=json.dumps(metadata),
+		)
+
+
+	# Also write metadata as a separate, human-readable JSON file next to the .npz
+	try:
+		meta_path = save_file.with_suffix('.json')
+		with open(meta_path, 'w', encoding='utf-8') as jf:
+			json.dump(metadata, jf, ensure_ascii=False, indent=2)
+		print(f"Saved pipeline results to: {save_file}")
+		print(f"Saved metadata JSON to: {meta_path}")
+	except Exception as e:
+		print(f"Warning: failed to save metadata JSON: {e}")
+except Exception as e:
+	print(f"Warning: failed to save results: {e}")
