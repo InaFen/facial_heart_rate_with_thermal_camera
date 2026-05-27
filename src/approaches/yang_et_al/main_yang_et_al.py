@@ -24,7 +24,6 @@ from src.approaches.yang_et_al.utils_ground_truth import (
 from src.approaches.yang_et_al.utils_random_baseline import run_random_baseline
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
-from src.ground_truth_methods.metric_pipeline import evaluate_instantaneous_hr_against_ground_truth
 
 CONFIGS_PATH = "src/approaches/yang_et_al/configs_yang_et_al.yaml"
 
@@ -237,33 +236,6 @@ if configs.timespan_signal_to_look_at is not None:
 	plt.tight_layout()
 	plt.show()
 
-	# Instantaneous HR evaluation with timestamp-based matching (step-by-step plots enabled)
-	ihr_eval = evaluate_instantaneous_hr_against_ground_truth(
-		predicted_signal=selected_pca_component,
-		predicted_fs=float(configs.fps),
-		path_ground_truth=configs.path_ground_truth,
-		path_signal=configs.path_gray_frames,
-		roi=configs.roi_name,
-		timespan=configs.timespan_signal_to_look_at,
-		time_first_frame_signal=float(configs.time_first_frame_signal or 0.0),
-		time_first_frame_ecg=float(configs.time_first_frame_ecg or 0.0),
-		flip_ground_truth=False,
-		tolerance_ms=150.0,
-		plot_steps=bool(configs.plot_steps),
-		plot_bland_altman=bool(configs.plot_steps),
-	)
-
-	metrics_ihr = ihr_eval["metrics"]
-	print("\nInstantaneous HR metrics (timestamp matched):")
-	print(f"Matched pairs: {metrics_ihr.get('num_matched')}")
-	print(f"RMSE: {metrics_ihr.get('rmse'):.4f}")
-	print(f"MAE: {metrics_ihr.get('mae'):.4f}")
-	print(f"R2: {metrics_ihr.get('r2'):.4f}")
-	print(f"KS p-value: {metrics_ihr.get('ks_pvalue'):.4e}")
-	print(f"Mean diff: {metrics_ihr.get('mean_diff'):.4f}")
-	print(f"LoA low: {metrics_ihr.get('loa_low'):.4f}")
-	print(f"LoA high: {metrics_ihr.get('loa_high'):.4f}")
-
 
 
 # Apply FFT to the selected PCA component (positive frequencies only)---------------------------------------
@@ -303,7 +275,7 @@ print("Finished Yang et al. approach pipeline.")
 # Save results at end of pipeline
 try:
 	# Directory for saved results inside project
-	save_root = Path(project_root) / "saved_results"
+	save_root = Path(project_root) / "saved_results" / "yang_et_al"
 	save_root.mkdir(parents=True, exist_ok=True)
 	# Build descriptive filename: signalName_roiName_timespan
 	signal_path_cfg = getattr(configs, "path_gray_frames", "") or ""
@@ -325,18 +297,20 @@ try:
 	save_file = save_root / f"{safe_base}.npz"
 
 	metadata = {
+		"pipeline": "yang_et_al",
 		"path_signal": getattr(configs, "path_gray_frames", ""),
 		"path_ground_truth": getattr(configs, "path_ground_truth", ""),
 		"timespan_signal_to_look_at": getattr(configs, "timespan_signal_to_look_at", None),
 		"roi_name": getattr(configs, "roi_name", ""),
 		"heart_rate_estimate_bpm": float(heart_rate_estimate),
-		"saved_at": datetime.now().isoformat(),
+		"fps": float(configs.fps),
+		"fps_ground_truth": float(ground_truth_fs) if configs.timespan_signal_to_look_at else None,
 	}
 
 	if "ground_truth_segment" in globals():
 		np.savez_compressed(
 			save_file,
-			selected_pca_component=np.asarray(selected_pca_component, dtype=float),
+			predicted_signal=np.asarray(selected_pca_component, dtype=float),
 			ground_truth_segment=np.asarray(ground_truth_segment, dtype=float),
 			heart_rate_estimate=float(heart_rate_estimate),
 			metadata=json.dumps(metadata),
@@ -344,7 +318,7 @@ try:
 	else:
 		np.savez_compressed(
 			save_file,
-			selected_pca_component=np.asarray(selected_pca_component, dtype=float),
+			predicted_signal=np.asarray(selected_pca_component, dtype=float),
 			heart_rate_estimate=float(heart_rate_estimate),
 			metadata=json.dumps(metadata),
 		)
