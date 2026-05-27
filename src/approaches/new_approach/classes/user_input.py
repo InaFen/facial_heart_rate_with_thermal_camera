@@ -83,8 +83,10 @@ class Config:
     timespan_signal_to_look_at: Optional[List[float]] = None
     
     # ROI Landmarks
-    whole_face: List[int] = field(default_factory=list)
-    roi_landmarks_subgrid_face: Dict[str, List[int]] = field(default_factory=dict)
+    # ROI landmark options: named ROI definitions to choose from
+    roi_landmarks_options: Dict[str, List[int]] = field(default_factory=dict)
+    used_rois: List[str] = field(default_factory=list)
+    roi_name: Optional[str] = None
     
     # Config path (not serialized)
     config_path: Path = field(default=None, repr=False)
@@ -96,7 +98,9 @@ class Config:
         paths_data = data['paths']
         processing_data = data['processing']
         timing_data = data['timing']
-        roi_data = data['roi_landmarks']
+        # roi definitions may be provided as 'roi_landmarks_options' at top-level
+        roi_data = data.get('roi_landmarks', {})
+        roi_options = data.get('roi_landmarks_options', {})
 
         return cls(
             # Paths
@@ -134,9 +138,10 @@ class Config:
             time_first_frame_ecg=timing_data['time_first_frame_ecg'],
             timespan_signal_to_look_at=timing_data.get('timespan_signal_to_look_at', None),
 
-            # ROI Landmarks
-            whole_face=roi_data['whole_face'],
-            roi_landmarks_subgrid_face=data['roi_landmarks_subgrid_face'],
+            # ROI Landmarks / selection
+            roi_landmarks_options=roi_options,
+            used_rois=processing_data.get('used_rois', []),
+            roi_name=processing_data.get('roi_name', None),
 
             # Config path
             config_path=config_path

@@ -157,10 +157,31 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     flip_upside_down=True,
                 )
             else: # Standard method is facemesh-based
+                # Build ROI landmarks to pass to facemesh: prefer explicit selection via configs.used_rois
+                # and configs.roi_landmarks_options. Fall back to the older roi_landmarks_subgrid_face for compatibility.
+                if getattr(configs, 'used_rois', None):
+                    roi_landmarks_selected = {}
+                    for rn in configs.used_rois:
+                        if rn in getattr(configs, 'roi_landmarks_options', {}):
+                            roi_landmarks_selected[rn] = configs.roi_landmarks_options[rn]
+                        else:
+                            raise ValueError(
+                                f"Requested ROI '{rn}' not found in 'roi_landmarks_options'.\n"
+                                "Please add the ROI definition to 'roi_landmarks_options' in the config."
+                            )
+                    if not roi_landmarks_selected:
+                        raise ValueError(
+                            "No valid ROIs selected from 'used_rois'. Ensure 'used_rois' names exist in 'roi_landmarks_options'."
+                        )
+                else:
+                    raise ValueError(
+                        "No ROI definitions found in config. Please provide 'roi_landmarks_options' mapping in the YAML."
+                    )
+
                 roi_pixel_log = apply_facemesh_to_thermal_video(
                     input_path=configs.path_video,
                     output_path=configs.path_video_facemesh,
-                    roi_landmarks=configs.roi_landmarks_subgrid_face,
+                    roi_landmarks=roi_landmarks_selected,
                     fps=configs.fps,
                     use_ema=configs.use_ema,
                     ema_alpha=configs.ema_alpha,

@@ -31,6 +31,10 @@ processing:
   manual_roi_mask_save_paths:
   - data/saved_data/new_approach/manual_roi_signal_temple.npy
   manual_roi_selection_colormap: false
+  # Which named ROIs to use from roi_landmarks_options (list of names). Example:
+  used_rois: [forehead, left_cheek]
+  # A short name identifying the ROI selection (used for saved filenames)
+  roi_name: temp
 timing:
   time_first_frame_signal: 10.5
   time_first_frame_ecg: 0.0
@@ -38,7 +42,7 @@ timing:
   notes:
     time_first_frame_signal_expected: null
     time_first_frame_ecg_expected: null
-roi_landmarks:
+roi_landmarks_options:
   whole_face:
   - 10
   - 338
@@ -76,67 +80,6 @@ roi_landmarks:
   - 103
   - 67
   - 109
-roi_landmarks_subgrid_face:
-  forehead:
-  - 10
-  - 338
-  - 297
-  - 332
-  - 284
-  - 251
-  - 389
-  - 368
-  - 300
-  - 293
-  - 334
-  - 296
-  - 336
-  - 9
-  - 107
-  - 66
-  - 105
-  - 63
-  - 71
-  - 162
-  - 21
-  - 54
-  - 103
-  - 67
-  - 109
-  left_cheek:
-  - 245
-  - 233
-  - 232
-  - 231
-  - 230
-  - 229
-  - 228
-  - 31
-  - 111
-  - 116
-  - 123
-  - 147
-  - 187
-  - 205
-  - 36
-  - 142
-  - 126
-  - 217
-  - 174
-  - 188
-  right_cheek:
-  - 453
-  - 357
-  - 343
-  - 420
-  - 360
-  - 266
-  - 280
-  - 352
-  - 345
-  - 449
-  - 451
-currently_unused:
   glasses_left:
   - 413
   - 441
