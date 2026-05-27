@@ -43,6 +43,7 @@ Thumbs.db
 *.h5
 *.txt
 *.cmm
+*.asc
 
 # Raw data
 *.gray
@@ -53,3 +54,5 @@ Thumbs.db
 # External and Data
 external/
 data/
+
+!requirements.txt
