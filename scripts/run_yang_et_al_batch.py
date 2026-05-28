@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 from copy import deepcopy
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +75,7 @@ def prepare_row_inputs(recording_path: Path, run_dir: Path) -> Path:
     return existing_video
 
 
-def build_row_config(template_config: dict[str, Any], row: dict[str, str], run_dir: Path) -> Path:
+def build_row_config(template_config: dict[str, Any], row: dict[str, str], run_dir: Path, fps: float, roi_name: str, camera: str | None = None) -> Path:
     recording_path = Path(row["recording_path"])
     base_path = Path("/home/arbeit/Dokumente/master_thesis")
     ground_truth_path = base_path / row["ground_truth_path"]
@@ -84,12 +85,31 @@ def build_row_config(template_config: dict[str, Any], row: dict[str, str], run_d
     print(f"Preparing inputs for recording: {recording_path}")
     existing_video = prepare_row_inputs(recording_path, run_dir)
 
+    # Prepare per-run copy (or fallback) of the .npy with camera prefix if requested
+    if camera:
+        new_recording_name = f"{camera}_{recording_path.name}"
+    else:
+        new_recording_name = recording_path.name
+    new_recording_path = run_dir / new_recording_name
+    if not new_recording_path.exists():
+        try:
+            # Prefer symlink to save disk space; fall back to copy if symlink creation fails
+            os.symlink(recording_path, new_recording_path)
+            print(f"Created symlink to recording: {new_recording_path} -> {recording_path}")
+        except Exception as exc:
+            try:
+                shutil.copy2(recording_path, new_recording_path)
+                print(f"Symlink failed; copied recording to: {new_recording_path}")
+            except Exception as exc2:
+                print(f"Warning: failed to link or copy recording to run dir: {exc2}. Using original path.")
+                new_recording_path = recording_path
+
     config = deepcopy(template_config)
     config.setdefault("paths", {})
     config.setdefault("processing", {})
     config.setdefault("timing", {})
 
-    config["paths"]["gray_frames"] = str(recording_path)
+    config["paths"]["gray_frames"] = str(new_recording_path)
     config["paths"]["video"] = str(existing_video)
     config["paths"]["video_tracked_face"] = str(run_dir / "video_tracked_face.mp4")
     config["paths"]["video_thresholded_pixel"] = str(run_dir / "video_thresholded_pixel.mp4")
@@ -99,14 +119,14 @@ def build_row_config(template_config: dict[str, Any], row: dict[str, str], run_d
     config["paths"]["roi_pixel_data"] = str(run_dir / "roi_pixel_data.npy")
     config["paths"]["ground_truth"] = str(ground_truth_path)
 
-    config["processing"]["fps"] = 25.0
-    config["processing"]["roi_name"] = "tracker_landmark_threshold_30_c"
+    config["processing"]["fps"] = fps
+    config["processing"]["roi_name"] = roi_name
 
     config["timing"]["time_first_frame_signal"] = offset_ground_truth
     config["timing"]["time_first_frame_ecg"] = 0.0
     config["timing"]["timespan_signal_to_look_at"] = timespan
 
-    config["processing"]["plot_steps"] = True
+    config["processing"]["plot_steps"] = False
 
     config_path = run_dir / "configs_yang_et_al.generated.yaml"
     print(
@@ -144,10 +164,13 @@ def main() -> int:
     csv_path = DEFAULT_CSV
     template_config_path = DEFAULT_TEMPLATE_CONFIG
     main_script_path = DEFAULT_MAIN_SCRIPT
-    output_root = PROJECT_ROOT / "saved_results" / "yang_et_al" / "batch_runs"
+    output_root = PROJECT_ROOT / "saved_results" / "yang_et_al" / "batch_runs" / "mwir" # TODO adapt accordingly
     limit_rows = None
     dry_run = False
     save_plots = True  # Save plots to batch run directory instead of displaying
+    fps = 100.0
+    roi_name = "tracker_landmark_threshold_30_c"
+    camera = "mwir"
 
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV not found: {csv_path}")
@@ -175,14 +198,15 @@ def main() -> int:
 
     failures: list[str] = []
     for index, row in enumerate(face_rows, start=1):
+        # Include camera identifier in the run name for clearer organization
         run_name = sanitize_name(
-            f"{index:02d}_{Path(row['recording_path']).stem}_{row['person'].strip()}_{row['before_after_sport'].strip()}_{row['area'].strip()}"
+            f"{index:02d}_{camera}_{Path(row['recording_path']).stem}_{row['person'].strip()}_{row['before_after_sport'].strip()}_{row['area'].strip()}"
         )
         run_dir = output_root / run_name
         run_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            config_path = build_row_config(template_config, row, run_dir)
+            config_path = build_row_config(template_config, row, run_dir, fps, roi_name, camera=camera)
             print(f"[{index}/{len(face_rows)}] Running {run_name}")
             plots_save_dir = run_dir / "plots" if save_plots else None
             return_code = run_one_row(main_script_path, config_path, cwd=PROJECT_ROOT, plots_save_dir=plots_save_dir)
