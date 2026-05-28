@@ -370,7 +370,7 @@ def track_face(
     out_path: str,
     fps: float,
     grid_size: int = 3,
-    block_size: int = 27,
+    block_size: int = 21,
     show_display: bool = True,
     flip_upside_down: bool = True,
     start_frame: int = 0,
@@ -530,7 +530,7 @@ def track_face(
                 cy = float(np.sum(ys * weights) / weight_sum)
                 center = (int(rx0 + cx), int(ry0 + cy))
 
-        center = (center[0], min(H - 1, center[1] - int(0.1 * roi_size)))
+        center = (center[0], min(H - 1, center[1] + int(0.1 * roi_size))) #adapt center upwards to better align with face area
 
         centers.append(center)
 
