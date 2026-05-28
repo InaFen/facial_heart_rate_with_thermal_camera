@@ -22,7 +22,7 @@ import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CSV = PROJECT_ROOT / "experiments" / "experiments_info" / "vario_experiments.csv"
+DEFAULT_CSV = PROJECT_ROOT / "experiments" / "experiments_info" / "mwir_experiments.csv"
 DEFAULT_TEMPLATE_CONFIG = PROJECT_ROOT / "src" / "approaches" / "yang_et_al" / "configs_yang_et_al.yaml"
 DEFAULT_MAIN_SCRIPT = PROJECT_ROOT / "src" / "approaches" / "yang_et_al" / "main_yang_et_al.py"
 
@@ -131,9 +131,11 @@ def iter_face_rows(csv_path: Path) -> list[dict[str, str]]:
     return [row for row in rows if row.get("area", "").strip().lower() == "face"]
 
 
-def run_one_row(main_script: Path, config_path: Path, *, cwd: Path) -> int:
+def run_one_row(main_script: Path, config_path: Path, *, cwd: Path, plots_save_dir: Path | None = None) -> int:
     env = os.environ.copy()
     env["YANG_CONFIG_PATH"] = str(config_path)
+    if plots_save_dir is not None:
+        env["YANG_PLOTS_SAVE_DIR"] = str(plots_save_dir)
     completed = subprocess.run([sys.executable, str(main_script)], cwd=str(cwd), env=env)
     return completed.returncode
 
@@ -145,6 +147,7 @@ def main() -> int:
     output_root = PROJECT_ROOT / "saved_results" / "yang_et_al" / "batch_runs"
     limit_rows = None
     dry_run = False
+    save_plots = True  # Save plots to batch run directory instead of displaying
 
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV not found: {csv_path}")
@@ -181,7 +184,8 @@ def main() -> int:
         try:
             config_path = build_row_config(template_config, row, run_dir)
             print(f"[{index}/{len(face_rows)}] Running {run_name}")
-            return_code = run_one_row(main_script_path, config_path, cwd=PROJECT_ROOT)
+            plots_save_dir = run_dir / "plots" if save_plots else None
+            return_code = run_one_row(main_script_path, config_path, cwd=PROJECT_ROOT, plots_save_dir=plots_save_dir)
             if return_code != 0:
                 failures.append(f"{run_name}: exited with code {return_code}")
         except Exception as exc:

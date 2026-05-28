@@ -26,6 +26,7 @@ from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 
 CONFIGS_PATH = os.environ.get("YANG_CONFIG_PATH", "src/approaches/yang_et_al/configs_yang_et_al.yaml")
+PLOTS_SAVE_DIR = os.environ.get("YANG_PLOTS_SAVE_DIR", None)
 
 # Get configurations
 configs = Config.from_yaml(CONFIGS_PATH)
@@ -39,6 +40,7 @@ print(f"RUN_RANDOM_PARALLEL: {RUN_RANDOM_PARALLEL}")
 print(f"RANDOM_SEED: {RANDOM_SEED}")
 print(f"APPLY_TRACKER_LANDMARK_DETECTION: {APPLY_TRACKER_LANDMARK_DETECTION}")
 print(f"THRESHOLD_VALUE: {THRESHOLD_VALUE}")
+print(f"PLOTS_SAVE_DIR: {PLOTS_SAVE_DIR}")
 
 # IMPORTANT: Each ROI represents one building block in the graph
 # If ROIs are detected with mediapipe, they have to be set accordingly (e.g. 16 ROIs for 16 building blocks)
@@ -74,7 +76,7 @@ adjacency_matrix, laplacian = build_spatiotemporal_graph(block_features=block_fe
 
 signal_each_roi_seperate = [f[:, 0:1] for f in block_features] # shape = (T, N, 1)
 # plot each ROI signal seperately
-plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names, fps=configs.fps, title="Mean Pixel Value of Each ROI Over Time", show_seconds=True)
+plot_signal_each_roi_seperately(block_features=signal_each_roi_seperate, roi_names=roi_names, fps=configs.fps, title="Mean Pixel Value of Each ROI Over Time", show_seconds=True, save_path=PLOTS_SAVE_DIR)
 
 signal_all_rois = np.vstack(signal_each_roi_seperate)      # shape = (T*N, 1)
 #plot_flattened_signal_each_roi(signal_flattened=signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Before denoising in changed format")
@@ -109,7 +111,7 @@ signal_all_rois_without_nans = signal_all_rois_unflat.reshape(-1, 1)
 # Denoise signal via laplacian
 denoised_signal_all_rois = denoise_via_laplacian(Y=signal_all_rois_without_nans, laplacian=laplacian)
 #plot_flattened_signal_each_roi(signal_flattened=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="After denoising")
-plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI")
+plot_original_vs_denoised(signal_flattened_orig=signal_all_rois_without_nans, signal_flattened_denoised=denoised_signal_all_rois, block_features= signal_each_roi_seperate, roi_names=roi_names, title_info="Original vs Denoised Signals per ROI", save_path=PLOTS_SAVE_DIR)
 
 random_selected_pca_component = None
 if RUN_RANDOM_PARALLEL:
@@ -133,7 +135,7 @@ bandpassed_signal_each_roi_seperate = apply_butterworth_bandpass_filter(signal=d
 
 # PCA ---------------------------------------------------------------------
 prinicpal_components = pca(data=bandpassed_signal_each_roi_seperate, num_components=4)
-plot_principal_components_in_seperate_plots(principal_components=prinicpal_components)
+plot_principal_components_in_seperate_plots(principal_components=prinicpal_components, save_path=PLOTS_SAVE_DIR)
 
 # Find most periodic component
 selected_pca_component = find_most_periodic_pca_component(principal_components=prinicpal_components)
@@ -233,7 +235,15 @@ if configs.timespan_signal_to_look_at is not None:
 	plt.title("Selected PCA Component vs Ground Truth")
 	plt.legend()
 	plt.tight_layout()
-	plt.show()
+	if PLOTS_SAVE_DIR is not None:
+		save_path = Path(PLOTS_SAVE_DIR)
+		save_path.mkdir(parents=True, exist_ok=True)
+		save_file = save_path / "pca_component_vs_ground_truth.png"
+		plt.savefig(save_file, dpi=100, bbox_inches='tight')
+		print(f"Saved plot to: {save_file}")
+		plt.close()
+	else:
+		plt.show()
 
 
 
@@ -248,7 +258,7 @@ dominant_frequency_index = np.argmax(fft_selected)
 dominant_frequency = frequencies[dominant_frequency_index]
 
 if configs.plot_steps:
-	plt.figure(figsize=(10, 5))
+	fig = plt.figure(figsize=(10, 5))
 	plt.plot(frequencies, fft_selected, label="FFT magnitude")
 	plt.axvline(
 		dominant_frequency,
@@ -261,7 +271,15 @@ if configs.plot_steps:
 	plt.title("FFT of Selected PCA Component")
 	plt.legend()
 	plt.tight_layout()
-	plt.show()
+	if PLOTS_SAVE_DIR is not None:
+		save_path = Path(PLOTS_SAVE_DIR)
+		save_path.mkdir(parents=True, exist_ok=True)
+		save_file = save_path / "fft_selected_pca_component.png"
+		fig.savefig(save_file, dpi=100, bbox_inches='tight')
+		print(f"Saved plot to: {save_file}")
+		plt.close(fig)
+	else:
+		plt.show()
 
 # Estimate heart rate--------------------------------------------------------------------------------
 heart_rate_estimate = dominant_frequency * 60

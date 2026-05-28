@@ -2,9 +2,32 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 from src.approaches.yang_et_al.utils_post_processing import transform_flatten_signal_to_original_shape
 
-def plot_signal_each_roi_seperately(block_features, roi_names, title, fps, show_seconds=False):
+def _save_or_show_plot(fig, save_path=None, plot_name="plot"):
+    """Helper function to save plot to file or display it.
+    
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure to save or display
+    save_path : str or Path, optional
+        If provided, save the plot to this directory instead of showing
+    plot_name : str
+        Name for the saved plot file (without extension)
+    """
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
+        save_file = save_path / f"{plot_name}.png"
+        fig.savefig(save_file, dpi=100, bbox_inches='tight')
+        print(f"Saved plot to: {save_file}")
+        plt.close(fig)
+    else:
+        plt.show()
+
+def plot_signal_each_roi_seperately(block_features, roi_names, title, fps, show_seconds=False, save_path=None):
     """
     Plot the mean signal of each ROI on a single plot over time.
 
@@ -22,6 +45,9 @@ def plot_signal_each_roi_seperately(block_features, roi_names, title, fps, show_
     
     show_seconds : bool, optional
         If True, x-axis will be in seconds instead of frames. Default is False.
+    
+    save_path : str or Path, optional
+        If provided, save the plot to this directory instead of showing
     """
     T = len(block_features)
     N = block_features[0].shape[0]
@@ -38,7 +64,7 @@ def plot_signal_each_roi_seperately(block_features, roi_names, title, fps, show_
         x_label = 'Frame'
 
     # Plot all ROI signals on a single plot
-    plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12, 6))
     for n in range(N):
         plt.plot(x_axis, signals[n], label=f'ROI: {roi_names[n]}')
     
@@ -47,10 +73,10 @@ def plot_signal_each_roi_seperately(block_features, roi_names, title, fps, show_
     plt.title(title)
     plt.legend()
     plt.tight_layout()
-    plt.show()
+    _save_or_show_plot(fig, save_path, "signal_each_roi_separately")
 
 
-def plot_flattened_signal_each_roi(signal_flattened, block_features, roi_names, title_info):
+def plot_flattened_signal_each_roi(signal_flattened, block_features, roi_names, title_info, save_path=None):
     """
     Reshape a flattened signal (T*N, 1) back to (T, N) and plot each ROI on one plot.
 
@@ -64,6 +90,9 @@ def plot_flattened_signal_each_roi(signal_flattened, block_features, roi_names, 
 
     roi_names : list of str
         Names of each ROI (length N).
+    
+    save_path : str or Path, optional
+        If provided, save the plot to this directory instead of showing
     """
 
     # Infer dimensions
@@ -74,7 +103,7 @@ def plot_flattened_signal_each_roi(signal_flattened, block_features, roi_names, 
     signal_matrix = signal_flattened.reshape(T, N)
 
     # --- Plot ---
-    plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12, 6))
     for n in range(N):
         plt.plot(signal_matrix[:, n], label=f'ROI: {roi_names[n]}')
 
@@ -83,12 +112,12 @@ def plot_flattened_signal_each_roi(signal_flattened, block_features, roi_names, 
     plt.title(f"Signal for Each ROI: {title_info}")
     plt.legend()
     plt.tight_layout()
-    plt.show(block=False)
+    _save_or_show_plot(fig, save_path, "flattened_signal_each_roi")
 
     return signal_matrix  # optionally return the reconstructed matrix
 
 
-def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, block_features, roi_names, title_info="Signal Comparison"):
+def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, block_features, roi_names, title_info="Signal Comparison", save_path=None):
     """
     Plot original vs denoised signals per ROI in one figure.
 
@@ -104,6 +133,8 @@ def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, 
         Names of ROIs
     title_info : str
         Title for the plot
+    save_path : str or Path, optional
+        If provided, save the plot to this directory instead of showing
     """
 
     N = block_features[0].shape[0]
@@ -112,7 +143,7 @@ def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, 
     orig_matrix = transform_flatten_signal_to_original_shape(block_features=block_features, flattened_signal=signal_flattened_orig)
     denoised_matrix = transform_flatten_signal_to_original_shape(block_features=block_features, flattened_signal=signal_flattened_denoised)
 
-    plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12, 6))
 
     for n in range(N):
         plt.plot(orig_matrix[:, n], label=f'{roi_names[n]} - Original', alpha=0.6)
@@ -123,10 +154,10 @@ def plot_original_vs_denoised(signal_flattened_orig, signal_flattened_denoised, 
     plt.title(title_info)
     plt.legend()
     plt.tight_layout()
-    plt.show(block=True) 
+    _save_or_show_plot(fig, save_path, "original_vs_denoised") 
 
 
-def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names, title, fps, show_seconds=False):
+def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names, title, fps, show_seconds=False, save_path=None):
     """
     Plot denoised signals per ROI in one figure.
 
@@ -140,11 +171,13 @@ def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names, title, fps, s
         Frames per second.
     show_seconds : bool, optional
         If True, x-axis will be in seconds instead of frames. Default is False.
+    save_path : str or Path, optional
+        If provided, save the plot to this directory instead of showing
     """
 
     N = denoised_signal_unflat.shape[1]
 
-    plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12, 6))
 
     # Create time axis
     if show_seconds:
@@ -162,10 +195,10 @@ def plot_denoised_signal_unflat(denoised_signal_unflat, roi_names, title, fps, s
     plt.title(title)
     plt.legend()
     plt.tight_layout()
-    plt.show(block=True)
+    _save_or_show_plot(fig, save_path, "denoised_signal_unflat")
 
 
-def plot_signal_before_after(signal_before, signal_after, roi_names, title="Signal Before vs After Processing", fps=8.767687772484802):
+def plot_signal_before_after(signal_before, signal_after, roi_names, title="Signal Before vs After Processing", fps=8.767687772484802, save_path=None):
     """
     Plot signals before and after processing for all ROIs in one plot.
 
@@ -181,6 +214,8 @@ def plot_signal_before_after(signal_before, signal_after, roi_names, title="Sign
         Title for the plot
     fps : float
         Frames per second for time axis
+    save_path : str or Path, optional
+        If provided, save the plot to this directory instead of showing
     """
     N = signal_before.shape[1]
     time_seconds = np.arange(signal_before.shape[0]) / fps
@@ -207,10 +242,10 @@ def plot_signal_before_after(signal_before, signal_after, roi_names, title="Sign
 
     fig.suptitle(title, fontsize=14, fontweight='bold', y=0.995)
     plt.tight_layout()
-    plt.show(block=True)
+    _save_or_show_plot(fig, save_path, "signal_before_after")
 
 
-def plot_principal_components_in_seperate_plots(principal_components):
+def plot_principal_components_in_seperate_plots(principal_components, save_path=None):
     """
     Plot each principal component in a separate plot.
 
@@ -218,10 +253,12 @@ def plot_principal_components_in_seperate_plots(principal_components):
     ----------
     principal_components : array, shape (T, num_components)
         The principal components to plot.
+    save_path : str or Path, optional
+        If provided, save the plot to this directory instead of showing
     """
     T, num_components = principal_components.shape
 
-    plt.figure(figsize=(12, 3 * num_components))
+    fig = plt.figure(figsize=(12, 3 * num_components))
     for i in range(num_components):
         plt.subplot(num_components, 1, i + 1)
         plt.plot(principal_components[:, i])
@@ -229,10 +266,10 @@ def plot_principal_components_in_seperate_plots(principal_components):
         plt.xlabel('Frame')
         plt.ylabel('Amplitude')
         plt.tight_layout()
-    plt.show()
+    _save_or_show_plot(fig, save_path, "principal_components")
 
-def plot_chosen_component(chosen_component, fps):
-    plt.figure(figsize=(10, 4))
+def plot_chosen_component(chosen_component, fps, save_path=None):
+    fig = plt.figure(figsize=(10, 4))
     time_seconds = np.arange(chosen_component.shape[0]) / fps
     plt.plot(time_seconds, chosen_component, label='Most Periodic PCA Component', color='blue')
     plt.xlabel("Seconds")
@@ -240,4 +277,4 @@ def plot_chosen_component(chosen_component, fps):
     plt.title("Most Periodic PCA Component Over Time")
     plt.legend()
     plt.tight_layout()
-    plt.show(block=True)
+    _save_or_show_plot(fig, save_path, "chosen_component")
