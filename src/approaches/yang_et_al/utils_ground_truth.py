@@ -35,7 +35,7 @@ def detect_peaks_in_signal(
 	prominence: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
 	min_distance = int(min_distance_s * fs)
-	peaks, _ = find_peaks(signal, distance=max(1, min_distance), prominence=prominence)
+	peaks, _ = find_peaks(signal, distance=min_distance, prominence=prominence)
 	peak_times = peaks / fs
 	return peaks, peak_times
 
