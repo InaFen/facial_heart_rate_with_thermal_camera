@@ -2,9 +2,13 @@ import sys
 from collections import defaultdict
 import numpy as np
 import os
+import json
+import re
 from scipy.signal import stft
 import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
+from datetime import datetime
 
 from utils import generate_ppg_signal, extract_curve
 from src.approaches.new_approach.classes.user_input import Config
@@ -14,13 +18,18 @@ sys.path.insert(0, project_root)
 
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
+from src.approaches.yang_et_al.utils_ground_truth import (
+	load_ground_truth_signal,
+	get_ground_truth_segment
+)
 
-CONFIGS_PATH = "src/approaches/nair_et_al/configs_nair_et_al.yaml"
+CONFIGS_PATH = os.environ.get("NAIR_CONFIG_PATH", "src/approaches/nair_et_al/configs_nair_et_al.yaml")
+PLOTS_SAVE_DIR = os.environ.get("NAIR_PLOTS_SAVE_DIR", None)
 
 configs = Config.from_yaml(CONFIGS_PATH)
 output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
 
-APPLY_DLIB_LANDMARK_DETECTION = False
+APPLY_DLIB_LANDMARK_DETECTION = True
 STFT_WINDOW_SIZE = 64
 STFT_OVERLAP = 56
 SMOOTHNESS_PENALTY = 0.1 # used in curve extraction, higher values lead to smoother curve but less accurate, lower values lead to more accurate but less smooth curve
@@ -185,4 +194,88 @@ T = len(optimal_vh_components) / configs.fps
 # Convert the curve to heart rate (HR)
 hr = (hr_curve * configs.fps) / T
 print("Predicted Heart Rate:", hr)
+
+
+print("Finished Nair et al. approach pipeline.")
+
+# Ground truth steps---------------------------------------------------------
+if configs.timespan_signal_to_look_at is not None:
+	start_time, end_time = configs.timespan_signal_to_look_at
+	signal_offset = float(configs.time_first_frame_signal or 0.0)
+	ecg_offset = float(configs.time_first_frame_ecg or 0.0)
+	ground_truth_signal, ground_truth_fs = load_ground_truth_signal(
+		configs.path_ground_truth,
+		flip=False,
+	)
+	ground_truth_segment, ground_truth_time = get_ground_truth_segment(
+		ground_truth_signal,
+		ground_truth_fs,
+		start_time,
+		end_time,
+		signal_offset=signal_offset,
+		ecg_offset=ecg_offset,
+	)
+
+
+# Save results at end of pipeline
+try:
+    # Directory for saved results inside project
+    save_root = Path(project_root) / "saved_results" / "nair_et_al"
+    save_root.mkdir(parents=True, exist_ok=True)
+
+    # Build descriptive filename: signalName_roiName_timespan
+    signal_path_cfg = getattr(configs, "path_gray_frames", "") or ""
+    signal_name = Path(signal_path_cfg).stem if signal_path_cfg else "signal"
+    roi_name_cfg = getattr(configs, "roi_name", "roi") or "roi"
+    timespan_cfg = getattr(configs, "timespan_signal_to_look_at", None)
+    if timespan_cfg:
+        try:
+            start_s, end_s = timespan_cfg
+            timespan_str = f"{float(start_s):.2f}-{float(end_s):.2f}s"
+        except Exception:
+            timespan_str = str(timespan_cfg)
+    else:
+        timespan_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    base_name = f"{signal_name}_{roi_name_cfg}_{timespan_str}"
+    safe_base = re.sub(r"[^A-Za-z0-9_-]", "_", base_name)
+    save_file = save_root / f"{safe_base}.npz"
+
+    metadata = {
+        "pipeline": "nair_et_al",
+        "path_signal": getattr(configs, "path_gray_frames", ""),
+        "path_ground_truth": getattr(configs, "path_ground_truth", ""),
+        "timespan_signal_to_look_at": getattr(configs, "timespan_signal_to_look_at", None),
+        "roi_name": getattr(configs, "roi_name", ""),
+        "heart_rate_estimate_bpm": float(hr),
+        "fps": float(configs.fps),
+        "fps_ground_truth": float(ground_truth_fs) if "ground_truth_fs" in globals() else None,
+    }
+
+    if "ground_truth_segment" in globals():
+        np.savez_compressed(
+            save_file,
+            predicted_signal=np.asarray(optimal_vh_components[:], dtype=float),
+            ground_truth_segment=np.asarray(ground_truth_segment, dtype=float),
+            heart_rate_estimate=float(hr),
+            metadata=json.dumps(metadata),
+        )
+    else:
+        np.savez_compressed(
+            save_file,
+            predicted_signal=np.asarray(optimal_vh_components[:], dtype=float),
+            heart_rate_estimate=float(hr),
+            metadata=json.dumps(metadata),
+        )
+
+    try:
+        meta_path = save_file.with_suffix('.json')
+        with open(meta_path, 'w', encoding='utf-8') as jf:
+            json.dump(metadata, jf, ensure_ascii=False, indent=2)
+        print(f"Saved pipeline results to: {save_file}")
+        print(f"Saved metadata JSON to: {meta_path}")
+    except Exception as e:
+        print(f"Warning: failed to save metadata JSON: {e}")
+except Exception as e:
+    print(f"Warning: failed to save results: {e}")
     
