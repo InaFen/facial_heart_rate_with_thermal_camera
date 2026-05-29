@@ -247,7 +247,7 @@ try:
         "path_ground_truth": getattr(configs, "path_ground_truth", ""),
         "timespan_signal_to_look_at": getattr(configs, "timespan_signal_to_look_at", None),
         "roi_name": getattr(configs, "roi_name", ""),
-        "heart_rate_estimate_bpm": float(hr),
+        "heart_rate_estimate_bpm": float(np.mean(hr)),
         "fps": float(configs.fps),
         "fps_ground_truth": float(ground_truth_fs) if "ground_truth_fs" in globals() else None,
     }
@@ -257,7 +257,7 @@ try:
             save_file,
             predicted_signal=np.asarray(optimal_vh_components[:], dtype=float),
             ground_truth_segment=np.asarray(ground_truth_segment, dtype=float),
-            heart_rate_estimate=float(hr),
+            heart_rate_estimate=float(np.mean(hr)),
             metadata=json.dumps(metadata),
         )
     else:
