@@ -54,5 +54,6 @@ Thumbs.db
 # External and Data
 external/
 data/
+saved_results/
 
 !requirements.txt
