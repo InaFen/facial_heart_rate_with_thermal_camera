@@ -32,6 +32,13 @@ print(f"STFT_WINDOW_SIZE: {STFT_WINDOW_SIZE}")
 print(f"STFT_OVERLAP: {STFT_OVERLAP}")
 print(f"SMOOTHNESS_PENALTY: {SMOOTHNESS_PENALTY}")
 print(f"NORMAL_HR_FREQ: {NORMAL_HR_FREQ}")
+print(f"ROI selection name: {getattr(configs, 'roi_name', None)}")
+print(f"ROI selection used_rois: {getattr(configs, 'used_rois', None)}")
+
+if not getattr(configs, "used_rois", None):
+    raise ValueError("configs.used_rois must be defined in configs_nair_et_al.yaml, similar to the Yang-style YAML.")
+if not getattr(configs, "roi_landmarks_options", None):
+    raise ValueError("configs.roi_landmarks_options must be defined in configs_nair_et_al.yaml.")
 
 ############
 # Preprocessing: Landmark detection & denoising 
