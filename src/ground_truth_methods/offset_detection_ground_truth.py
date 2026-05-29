@@ -249,9 +249,9 @@ def offset_and_saving_pipeline(signal_path: str, npz_path: str, npz_filename: st
 
 
 if __name__ == "__main__":
-    signal_path = "data/ground_truth/opensignals/original_signal/20042026/Ina/Ina_3/opensignals_0007800F80FA_2026-04-20_15-14-22.txt"
-    npz_filename = "opensignals_0007800F80FA_2026-04-20_15-14-22.npz"
-    npz_path = "data/ground_truth/opensignals/extracted_npy_files/20042026/Ina/Ina_3/"
+    signal_path = "data/ground_truth/opensignals/original_signal/31032026/Julian_31_03_2/opensignals_0007800F7623_2026-03-31_16-37-56.txt"
+    npz_filename = "opensignals_0007800F7623_2026-03-31_16-37-56.npz"
+    npz_path = "data/ground_truth/opensignals/extracted_npy_files/31032026/Julian_31_03_2/"
 
     offset_and_saving_pipeline(signal_path=signal_path, npz_path=npz_path, npz_filename=npz_filename)
     

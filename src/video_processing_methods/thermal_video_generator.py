@@ -160,9 +160,9 @@ def create_thermal_video(input_dir, output_file, fps=9, width=160, height=120):
 
 def main():
 
-    input_dir = "data/lepton/processed_lepton_data/05032026_Wasserhahn_interpolated"
-    output = "data/recorded_videos/thermal_video_from_y16_frames/05032026_Wasserhahn.mp4"
-    fps =8.767696814403491 # based on findings in get_consistent_fps_for_gray_images.py
+    input_dir = "data/lepton/processed_lepton_data/22052026/Julian/Julian4_interpolated"
+    output = "data/recorded_videos/thermal_video_from_y16_frames/22052026/Julian/Julian4_interpolated.mp4"
+    fps =8.76 # based on findings in get_consistent_fps_for_gray_images.py
     width = 160
     height = 120
 
@@ -174,7 +174,7 @@ def main():
     if output_dir and not os.path.isdir(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
-    plot_greyscale_frame("data/lepton/processed_lepton_data/05032026_Wasserhahn_interpolated/0001391667.gray")
+    #plot_greyscale_frame("data/lepton/processed_lepton_data/05032026_Wasserhahn_interpolated/0001391667.gray")
 
     create_thermal_video(
         input_dir,
