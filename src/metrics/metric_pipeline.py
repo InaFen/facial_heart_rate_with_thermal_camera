@@ -43,13 +43,12 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
     )
 
 # Global defaults (previously set inside __main__); make available to all functions
-PEAK_DISTANCE_SIGNAL = 0.0#int(max(1, FPS * PEAK_DISTANCE_SECONDS))#0.3
-PEAK_PROMINENCE_SIGNAL = 0.0#0.5
+PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # distance value see below in code 
 PEAK_DISTANCE_GT = 0.5
 PEAK_PROMINENCE_GT = 1.0
 
 # Default evaluation parameters
-DEFAULT_TOLERANCE_MS = 150.0
+DEFAULT_TOLERANCE_MS = 500.0
 DEFAULT_PATTERN = "*.npz"
 DEFAULT_PLOT_STEPS = True
 DEFAULT_PLOT_BLAND_ALTMAN = True
@@ -73,6 +72,18 @@ def instantaneous_hr_from_peak_times(peak_times: np.ndarray) -> Tuple[np.ndarray
     hr_inst = 60.0 / ibi[valid]
     hr_times = (peak_times[:-1][valid] + peak_times[1:][valid]) / 2.0
     return hr_inst.astype(float), hr_times.astype(float)
+
+
+def _is_finite_scalar(value) -> bool:
+    """Safely test whether a (possibly non-numeric) value is finite.
+
+    Returns False for values that cannot be converted to float.
+    """
+    try:
+        v = float(value)
+    except Exception:
+        return False
+    return np.isfinite(v)
 
 
 def match_by_timestamp_tolerance(
@@ -116,7 +127,12 @@ def match_by_timestamp_tolerance(
         dt = np.abs(pred_times - gt_times[i])
         dt[pred_used] = np.inf
         j = int(np.argmin(dt))
-        if np.isfinite(dt[j]) and dt[j] <= tol_s:
+        try:
+            dtj = float(dt[j])
+        except Exception:
+            # non-numeric timestamp encountered; skip
+            continue
+        if np.isfinite(dtj) and dtj <= tol_s:
             matched_gt_vals.append(gt_values[i])
             matched_pred_vals.append(pred_values[j])
             matched_gt_t.append(gt_times[i])
@@ -431,8 +447,8 @@ def append_evaluation_row_to_csv(
         "path_signal": path_signal or "",
         "path_ground_truth": path_ground_truth,
         "roi": roi or "",
-        "gt_hr_mean": float(gt_hr_mean) if np.isfinite(gt_hr_mean) else np.nan,
-        "signal_hr_mean": float(signal_hr_mean) if np.isfinite(signal_hr_mean) else np.nan,
+        "gt_hr_mean": float(gt_hr_mean) if _is_finite_scalar(gt_hr_mean) else np.nan,
+        "signal_hr_mean": float(signal_hr_mean) if _is_finite_scalar(signal_hr_mean) else np.nan,
         "ground_truth_ihr_times": _to_json_string(gt_ihr_times),
         "ground_truth_ihr": _to_json_string(gt_ihr),
         "predicted_ihr_times": _to_json_string(pred_ihr_times),
@@ -721,6 +737,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
 
     # Peak detection
+    PEAK_DISTANCE_SIGNAL = int(max(1, gt_fs_val * 0.1))
     pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs_val, min_distance_s=PEAK_DISTANCE_SIGNAL, prominence=PEAK_PROMINENCE_SIGNAL)
     pred_peak_times = t[pred_peaks]
 
@@ -939,8 +956,8 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "ba_stats_disregard": _serialize_for_json(ba_stats_disregard),
         "metrics_closest": _serialize_for_json(peak_to_peak_closest_metrics),
         "ba_stats_closest": _serialize_for_json(ba_stats_closest),
-        "gt_hr_mean": float(gt_hr_mean) if np.isfinite(gt_hr_mean) else None,
-        "signal_hr_mean": float(signal_hr_mean) if np.isfinite(signal_hr_mean) else None,
+        "gt_hr_mean": float(gt_hr_mean) if _is_finite_scalar(gt_hr_mean) else None,
+        "signal_hr_mean": float(signal_hr_mean) if _is_finite_scalar(signal_hr_mean) else None,
         "num_gt_peaks": int(gt_peaks.size),
         "num_pred_peaks": int(pred_peaks.size),
         "num_matched_disregard": int(matched_gt_ihr.size),
