@@ -23,7 +23,6 @@ import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CSV = PROJECT_ROOT / "experiments" / "experiments_info" / "mwir_experiments.csv"
 DEFAULT_TEMPLATE_CONFIG = PROJECT_ROOT / "src" / "approaches" / "yang_et_al" / "configs_yang_et_al.yaml"
 DEFAULT_MAIN_SCRIPT = PROJECT_ROOT / "src" / "approaches" / "yang_et_al" / "main_yang_et_al.py"
 
@@ -161,16 +160,27 @@ def run_one_row(main_script: Path, config_path: Path, *, cwd: Path, plots_save_d
 
 
 def main() -> int:
+    camera = "vario" # TODO adapt accordingl
+    roi_name = "tracker_landmark_threshold_30_c" # TODO adapt accordingl
+
+    if camera == "mwir":
+        fps = 100.0
+    elif camera == "vario":
+        fps = 25.0
+    elif camera == "lepton":
+        fps = 8.76
+    else:
+        raise ValueError(f"Unknown camera type {camera!r}. Please set an appropriate fps value for it.")
+
+    DEFAULT_CSV = PROJECT_ROOT / "experiments" / "experiments_info" / f"{camera}_experiments.csv"
     csv_path = DEFAULT_CSV
     template_config_path = DEFAULT_TEMPLATE_CONFIG
     main_script_path = DEFAULT_MAIN_SCRIPT
-    output_root = PROJECT_ROOT / "saved_results" / "yang_et_al" / "batch_runs" / "mwir" # TODO adapt accordingly
+    output_root = PROJECT_ROOT / "saved_results" / "yang_et_al" / "batch_runs" / camera
     limit_rows = None
     dry_run = False
     save_plots = True  # Save plots to batch run directory instead of displaying
-    fps = 100.0
-    roi_name = "tracker_landmark_threshold_30_c"
-    camera = "mwir"
+    
 
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV not found: {csv_path}")
