@@ -282,10 +282,10 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     upsample=0,
                     resize_frame=False,
                     fps=configs.fps,
-                    show_display=True,
+                    show_display=False,
                     start_frame=start_frame if limit_to_timespan else 0,
                     end_frame=end_frame if limit_to_timespan else None,
-                    flip_upside_down=True,
+                    flip_upside_down=False,
                 )
             else: # Standard method is facemesh-based
                 # Build ROI landmarks to pass to facemesh: prefer explicit selection via configs.used_rois
