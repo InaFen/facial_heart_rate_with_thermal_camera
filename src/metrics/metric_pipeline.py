@@ -42,6 +42,18 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
         mean_hr_from_peak_times,
     )
 
+# Global defaults (previously set inside __main__); make available to all functions
+PEAK_DISTANCE_SIGNAL = 0.0#int(max(1, FPS * PEAK_DISTANCE_SECONDS))#0.3
+PEAK_PROMINENCE_SIGNAL = 0.0#0.5
+PEAK_DISTANCE_GT = 0.5
+PEAK_PROMINENCE_GT = 1.0
+
+# Default evaluation parameters
+DEFAULT_TOLERANCE_MS = 150.0
+DEFAULT_PATTERN = "*.npz"
+DEFAULT_PLOT_STEPS = True
+DEFAULT_PLOT_BLAND_ALTMAN = True
+
 
 def instantaneous_hr_from_peak_times(peak_times: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Compute instantaneous HR (bpm) and timestamps from peak times.
@@ -603,7 +615,13 @@ def evaluate_instantaneous_hr_against_ground_truth(
         raise FileNotFoundError(f"Results file not found: {signal_path}")
 
     loaded = np.load(signal_path, allow_pickle=True)
-
+    if isinstance(loaded, np.lib.npyio.NpzFile):
+        try:
+            print(f"[metric_pipeline] Loaded NPZ archive with keys: {loaded.files}")
+        except Exception:
+            print("[metric_pipeline] Loaded NPZ archive")
+    else:
+        print(f"[metric_pipeline] Loaded array object, shape={getattr(loaded, 'shape', None)}, dtype={getattr(loaded, 'dtype', None)}")
     # helper to extract arrays from loaded file
     def _extract_arrays_and_metadata(loaded_obj):
         arrays = {}
@@ -658,6 +676,8 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
     pred = np.asarray(arrays["predicted_signal"], dtype=float)
     gt = np.asarray(arrays["ground_truth_segment"], dtype=float)
+    print(gt.shape, pred.shape)
+    print(gt)
 
     # Read sampling rates from metadata
     predicted_fs_meta = metadata.get("fps") if isinstance(metadata, dict) else None
@@ -668,6 +688,14 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
     predicted_fs_val = float(predicted_fs_meta)
     gt_fs_val = float(gt_fs_meta)
+
+    print(f"[metric_pipeline] Sampling rates - predicted: {predicted_fs_val} Hz, ground-truth: {gt_fs_val} Hz")
+
+    # Create output folder early so we can save pre-resample plots
+    output_root = signal_path.parent / "metric_results"
+    output_folder = output_root / signal_path.stem
+    os.makedirs(output_folder, exist_ok=True)
+    print(f"[metric_pipeline] Created output folder: {output_folder}")
 
     # Signals are expected to be already cut to the same time span; only resample predicted -> gt
     if predicted_fs_val != gt_fs_val:
@@ -687,7 +715,10 @@ def evaluate_instantaneous_hr_against_ground_truth(
         L = len(gt)
         gt_segment = gt
 
+    print(f"[metric_pipeline] Working length after resample/truncate: {L} samples")
+
     t = np.arange(L) / float(gt_fs_val)
+
 
     # Peak detection
     pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs_val, min_distance_s=PEAK_DISTANCE_SIGNAL, prominence=PEAK_PROMINENCE_SIGNAL)
@@ -695,6 +726,8 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
     gt_peaks, gt_peak_times_rel = detect_peaks_in_signal(gt_segment, gt_fs_val, min_distance_s=PEAK_DISTANCE_GT, prominence=PEAK_PROMINENCE_GT)
     gt_peak_times = gt_peak_times_rel
+
+    print(f"[metric_pipeline] Detected peaks - predicted: {pred_peaks.size}, ground-truth: {gt_peaks.size}")
 
     # Instantaneous HR
     pred_ihr, pred_ihr_times = instantaneous_hr_from_peak_times(pred_peak_times)
@@ -713,6 +746,8 @@ def evaluate_instantaneous_hr_against_ground_truth(
         pred_times=pred_ihr_times,
         tolerance_ms=tolerance_ms,
     )
+
+    print(f"[metric_pipeline] Matched pairs within tolerance ({tolerance_ms} ms): {matched_gt_ihr.size}")
 
     peak_to_peak_disregard_metrics, ba_stats_disregard = compute_metrics_with_optional_bland_altman(
         matched_gt_ihr,
@@ -760,45 +795,61 @@ def evaluate_instantaneous_hr_against_ground_truth(
         title="Bland-Altman Instantaneous HR (closest timestamp fallback)",
     )
 
-    # Create output folder named after the input NPZ file
-    output_folder = signal_path.parent / signal_path.stem
+    print(f"[metric_pipeline] Closest-matching pairs combined size: {closest_gt_ihr.size}")
+
+    # Create output folder named after the input NPZ file inside a `metric_results` root
+    output_root = signal_path.parent / "metric_results"
+    output_folder = output_root / signal_path.stem
     os.makedirs(output_folder, exist_ok=True)
+
+    print(f"[metric_pipeline] Created output folder: {output_folder}")
+
+    # Inform about plots to be generated
+    if not plot_steps and not plot_bland_altman:
+        print("[metric_pipeline] No plots requested (both plot_steps and plot_bland_altman are False). Skipping plot generation.")
 
     # Optional plotting: one combined figure with the requested subplots
     if plot_steps:
-        fig, axes = plt.subplots(3, 1, figsize=(14, 16))
+        fig, axes = plt.subplots(4, 1, figsize=(14, 20))
         fig.suptitle("Instantaneous HR evaluation", fontsize=15)
 
-        # 1) Signal plot with detected peaks
+        # 1) Ground-truth signal with detected peaks
         axes[0].plot(t, gt_segment, label="Ground truth", alpha=0.85, color="C0")
-        axes[0].plot(t, pred_rs, label="Predicted (resampled)", alpha=0.75, color="C1")
         if gt_peaks.size > 0:
             axes[0].scatter(gt_peak_times, gt_segment[gt_peaks], s=35, color="C0", edgecolors="black", linewidths=0.4, label="GT peaks")
-        if pred_peaks.size > 0:
-            axes[0].scatter(pred_peak_times, pred_rs[pred_peaks], s=35, color="C1", edgecolors="black", linewidths=0.4, label="Pred peaks")
-        axes[0].set_title("Ground truth and predicted signal with detected peaks")
+        axes[0].set_title("Ground truth signal with detected peaks")
         axes[0].set_xlabel("Time (s)")
         axes[0].set_ylabel("Amplitude")
         axes[0].legend(loc="best")
         axes[0].grid(alpha=0.2)
 
-        # 2) IHR plot with disregarded/tolerance matching
-        axes[1].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.7, marker="o")
-        axes[1].plot(pred_ihr_times, pred_ihr, label="Pred IHR", color="C1", alpha=0.7, marker="o")
-        if matched_gt_times.size > 0:
-            axes[1].scatter(matched_gt_times, matched_gt_ihr, s=45, color="C0", edgecolors="black", linewidths=0.4, label="Matched GT IHR")
-            axes[1].scatter(matched_pred_times, matched_pred_ihr, s=45, color="C1", edgecolors="black", linewidths=0.4, label="Matched Pred IHR")
-            for x_gt, y_gt, x_pred, y_pred in zip(matched_gt_times, matched_gt_ihr, matched_pred_times, matched_pred_ihr):
-                axes[1].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.45, linewidth=0.8)
-        axes[1].set_title(f"IHR with tolerance matching (disregarded unmatched, ±{tolerance_ms:.0f} ms)")
+        # 2) Predicted signal with detected peaks
+        axes[1].plot(t, pred_rs, label="Predicted (resampled)", alpha=0.75, color="C1")
+        if pred_peaks.size > 0:
+            axes[1].scatter(pred_peak_times, pred_rs[pred_peaks], s=35, color="C1", edgecolors="black", linewidths=0.4, label="Pred peaks")
+        axes[1].set_title("Predicted signal with detected peaks")
         axes[1].set_xlabel("Time (s)")
-        axes[1].set_ylabel("HR (bpm)")
+        axes[1].set_ylabel("Amplitude")
         axes[1].legend(loc="best")
         axes[1].grid(alpha=0.2)
 
-        # 3) IHR plot with closest matching in both directions
-        axes[2].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.45, marker="o")
-        axes[2].plot(pred_ihr_times, pred_ihr, label="Pred IHR", color="C1", alpha=0.45, marker="o")
+        # 3) IHR plot with disregarded/tolerance matching
+        axes[2].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.7, marker="o")
+        axes[2].plot(pred_ihr_times, pred_ihr, label="Pred IHR", color="C1", alpha=0.7, marker="o")
+        if matched_gt_times.size > 0:
+            axes[2].scatter(matched_gt_times, matched_gt_ihr, s=45, color="C0", edgecolors="black", linewidths=0.4, label="Matched GT IHR")
+            axes[2].scatter(matched_pred_times, matched_pred_ihr, s=45, color="C1", edgecolors="black", linewidths=0.4, label="Matched Pred IHR")
+            for x_gt, y_gt, x_pred, y_pred in zip(matched_gt_times, matched_gt_ihr, matched_pred_times, matched_pred_ihr):
+                axes[2].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.45, linewidth=0.8)
+        axes[2].set_title(f"IHR with tolerance matching (disregarded unmatched, ±{tolerance_ms:.0f} ms)")
+        axes[2].set_xlabel("Time (s)")
+        axes[2].set_ylabel("HR (bpm)")
+        axes[2].legend(loc="best")
+        axes[2].grid(alpha=0.2)
+
+        # 4) IHR plot with closest matching in both directions
+        axes[3].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.45, marker="o")
+        axes[3].plot(pred_ihr_times, pred_ihr, label="Pred IHR", color="C1", alpha=0.45, marker="o")
         gt_to_pred_gt_times = closest_matches["gt_to_pred_gt_times"]
         gt_to_pred_pred_times = closest_matches["gt_to_pred_pred_times"]
         gt_to_pred_gt_values = closest_matches["gt_to_pred_gt_values"]
@@ -809,27 +860,28 @@ def evaluate_instantaneous_hr_against_ground_truth(
         pred_to_gt_gt_values = closest_matches["pred_to_gt_gt_values"]
 
         if gt_to_pred_gt_times.size > 0:
-            axes[2].scatter(gt_to_pred_gt_times, gt_to_pred_gt_values, s=45, color="C0", edgecolors="black", linewidths=0.4, label="GT matched to closest Pred")
-            axes[2].scatter(gt_to_pred_pred_times, gt_to_pred_pred_values, s=45, color="C1", edgecolors="black", linewidths=0.4, label="Pred matched from GT")
+            axes[3].scatter(gt_to_pred_gt_times, gt_to_pred_gt_values, s=45, color="C0", edgecolors="black", linewidths=0.4, label="GT matched to closest Pred")
+            axes[3].scatter(gt_to_pred_pred_times, gt_to_pred_pred_values, s=45, color="C1", edgecolors="black", linewidths=0.4, label="Pred matched from GT")
             for x_gt, y_gt, x_pred, y_pred in zip(gt_to_pred_gt_times, gt_to_pred_gt_values, gt_to_pred_pred_times, gt_to_pred_pred_values):
-                axes[2].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.35, linewidth=0.8)
+                axes[3].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.35, linewidth=0.8)
 
         if pred_to_gt_pred_times.size > 0:
-            axes[2].scatter(pred_to_gt_gt_times, pred_to_gt_gt_values, s=30, facecolors="none", edgecolors="C0", linewidths=1.1, label="GT matched from Pred")
-            axes[2].scatter(pred_to_gt_pred_times, pred_to_gt_pred_values, s=30, facecolors="none", edgecolors="C1", linewidths=1.1, label="Pred matched to closest GT")
+            axes[3].scatter(pred_to_gt_gt_times, pred_to_gt_gt_values, s=30, facecolors="none", edgecolors="C0", linewidths=1.1, label="GT matched from Pred")
+            axes[3].scatter(pred_to_gt_pred_times, pred_to_gt_pred_values, s=30, facecolors="none", edgecolors="C1", linewidths=1.1, label="Pred matched to closest GT")
             for x_pred, y_pred, x_gt, y_gt in zip(pred_to_gt_pred_times, pred_to_gt_pred_values, pred_to_gt_gt_times, pred_to_gt_gt_values):
-                axes[2].plot([x_pred, x_gt], [y_pred, y_gt], color="tab:purple", alpha=0.25, linewidth=0.7)
+                axes[3].plot([x_pred, x_gt], [y_pred, y_gt], color="tab:purple", alpha=0.25, linewidth=0.7)
 
-        axes[2].set_title("IHR with closest matching in both directions")
-        axes[2].set_xlabel("Time (s)")
-        axes[2].set_ylabel("HR (bpm)")
-        axes[2].legend(loc="best", ncol=2)
-        axes[2].grid(alpha=0.2)
+        axes[3].set_title("IHR with closest matching in both directions")
+        axes[3].set_xlabel("Time (s)")
+        axes[3].set_ylabel("HR (bpm)")
+        axes[3].legend(loc="best", ncol=2)
+        axes[3].grid(alpha=0.2)
 
         plt.tight_layout()
         combined_plot_path = output_folder / "01_combined_evaluation.png"
+        print(f"[metric_pipeline] Saving combined plot to: {combined_plot_path}")
         plt.savefig(combined_plot_path, dpi=150, bbox_inches="tight")
-        plt.show()
+        plt.close()
 
     # Generate and save Bland-Altman plots for both matching strategies
     if plot_bland_altman or plot_steps:
@@ -844,6 +896,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
                 title=f"Bland-Altman: Tolerance matching (±{tolerance_ms:.0f} ms)",
             )
             ba_disregard_path = output_folder / "02_bland_altman_disregard.png"
+            print(f"[metric_pipeline] Saving Bland-Altman (disregard) to: {ba_disregard_path}")
             fig.tight_layout()
             plt.savefig(ba_disregard_path, dpi=150, bbox_inches="tight")
             plt.close(fig)
@@ -859,6 +912,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
                 title="Bland-Altman: Closest matching (both directions)",
             )
             ba_closest_path = output_folder / "03_bland_altman_closest.png"
+            print(f"[metric_pipeline] Saving Bland-Altman (closest) to: {ba_closest_path}")
             fig.tight_layout()
             plt.savefig(ba_closest_path, dpi=150, bbox_inches="tight")
             plt.close(fig)
@@ -896,6 +950,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
     output_json_path = output_folder / "00_metrics.json"
     with open(output_json_path, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2, ensure_ascii=False)
+    print(f"[metric_pipeline] Saved metrics JSON to: {output_json_path}")
 
     out = {
         "peak_to_peak_disregard_metrics": peak_to_peak_disregard_metrics,
@@ -925,16 +980,74 @@ def evaluate_instantaneous_hr_against_ground_truth(
     return out
 
 
-if __name__ == "__main__":
-    PEAK_DISTANCE_SIGNAL = 0.3
-    PEAK_PROMINENCE_SIGNAL = 0.5
-    PEAK_DISTANCE_GT = 0.5
-    PEAK_PROMINENCE_GT = 1.0
+def batch_evaluate_folder(
+    folder: str | Path,
+    pattern: str = "*.npz",
+    flip_ground_truth: bool = False,
+    tolerance_ms: float = 150.0,
+    plot_steps: bool = True,
+    plot_bland_altman: bool = True,
+) -> Dict[str, object]:
+    """Run evaluate_instantaneous_hr_against_ground_truth for all archive files in `folder`.
 
-    evaluate_instantaneous_hr_against_ground_truth(
-        results="saved_results/yang_et_al/Julian1_thermal_data_all_frames_tracker_landmark_threshold_30_c_30_00-45_00s.npz",
-        flip_ground_truth=False,
-        tolerance_ms=150.0,
-        plot_steps=True,
-        plot_bland_altman=True,
-    )
+    For each found file, a subfolder named after the file stem is created (if not existing)
+    and figures are saved inside that folder (the called function already saves into
+    `signal_path.parent / signal_path.stem`). Returns a dict mapping file paths to
+    the returned result dict or an error description.
+    """
+    folder = Path(folder)
+    if not folder.exists() or not folder.is_dir():
+        raise ValueError(f"Folder not found: {folder}")
+
+    results: dict[str, object] = {}
+    files = sorted(folder.glob(pattern))
+    for f in files:
+        print(f"[metric_pipeline] Batch: processing file: {f}")
+        try:
+            out = evaluate_instantaneous_hr_against_ground_truth(
+                results=f,
+                flip_ground_truth=flip_ground_truth,
+                tolerance_ms=tolerance_ms,
+                plot_steps=plot_steps,
+                plot_bland_altman=plot_bland_altman,
+            )
+            results[str(f)] = out
+            of = out.get("output_folder", "N/A")
+            matched = len(out.get("matched_ground_truth_ihr_disregard", []))
+            print(f"[metric_pipeline] Batch: finished {f}; output_folder={of}; matched_within_tolerance={matched}")
+        except Exception as exc:
+            results[str(f)] = {"error": str(exc)}
+            print(f"[metric_pipeline] Batch: error processing {f}: {exc}")
+
+    return results
+
+
+if __name__ == "__main__":
+    # Hard-coded parameters for batch evaluation (edit here if you want different inputs)
+    HARD_CODED_PATH = Path("saved_results/yang_et_al")
+    HARD_CODED_PATTERN = DEFAULT_PATTERN
+    HARD_CODED_FLIP = False
+    HARD_CODED_TOLERANCE_MS = DEFAULT_TOLERANCE_MS
+    HARD_CODED_PLOT_STEPS = DEFAULT_PLOT_STEPS
+    HARD_CODED_PLOT_BA = DEFAULT_PLOT_BLAND_ALTMAN
+
+    if HARD_CODED_PATH.exists():
+        if HARD_CODED_PATH.is_dir():
+            batch_evaluate_folder(
+                folder=HARD_CODED_PATH,
+                pattern=HARD_CODED_PATTERN,
+                flip_ground_truth=HARD_CODED_FLIP,
+                tolerance_ms=HARD_CODED_TOLERANCE_MS,
+                plot_steps=HARD_CODED_PLOT_STEPS,
+                plot_bland_altman=HARD_CODED_PLOT_BA,
+            )
+        elif HARD_CODED_PATH.is_file():
+            evaluate_instantaneous_hr_against_ground_truth(
+                results=str(HARD_CODED_PATH),
+                flip_ground_truth=HARD_CODED_FLIP,
+                tolerance_ms=HARD_CODED_TOLERANCE_MS,
+                plot_steps=HARD_CODED_PLOT_STEPS,
+                plot_bland_altman=HARD_CODED_PLOT_BA,
+            )
+    else:
+        print(f"Hard-coded path not found: {HARD_CODED_PATH}. Update the path in the script to point to your .npz folder or file.")
