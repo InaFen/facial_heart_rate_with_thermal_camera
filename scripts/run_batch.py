@@ -48,6 +48,12 @@ PIPELINE_CONFIG = {
     },
 }
 
+TRACK_FACE_SETTINGS_BY_CAMERA = {
+    "lepton": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": -0.35, "use_rescaling": False},
+    "vario": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True},
+    "mwir": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True},
+}
+
 
 def sanitize_name(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", value.strip())
@@ -189,6 +195,12 @@ def run_one_row(
     env[config_env_var] = str(config_path)
     if plots_save_dir is not None:
         env[plots_env_var] = str(plots_save_dir)
+    track_face_settings = TRACK_FACE_SETTINGS_BY_CAMERA.get(camera or "", {})
+    if track_face_settings:
+        env["TRACK_FACE_BLOCK_SIZE"] = str(track_face_settings["block_size"])
+        env["TRACK_FACE_ADAPT_CENTER"] = str(track_face_settings["adapt_center"])
+        env["TRACK_FACE_ADAPT_CENTER_HORIZONTAL"] = str(track_face_settings["adapt_center_horizontal"])
+        env["TRACK_FACE_USE_RESCALING"] = "1" if track_face_settings["use_rescaling"] else "0"
     # FLIP_UPSIDE_DOWN: True for lepton camera
     if camera == "lepton":
         env["FLIP_UPSIDE_DOWN"] = "1"

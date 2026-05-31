@@ -267,12 +267,21 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
             # Determine flip flag from environment: batch runners set FLIP_UPSIDE_DOWN
             flip_env = os.environ.get("FLIP_UPSIDE_DOWN", "0").strip().lower()
             flip_flag = flip_env in ("1", "true", "yes")
+            block_size = int(os.environ.get("TRACK_FACE_BLOCK_SIZE", "21"))
+            adapt_center = float(os.environ.get("TRACK_FACE_ADAPT_CENTER", "0.1"))
+            adapt_center_horizontal = float(os.environ.get("TRACK_FACE_ADAPT_CENTER_HORIZONTAL", "0.0"))
+            use_rescaling_env = os.environ.get("TRACK_FACE_USE_RESCALING", "1").strip().lower()
+            use_rescaling = use_rescaling_env in ("1", "true", "yes")
 
             if roi_detection_method == "tracker":
                 roi_pixel_log = track_face(
                     in_path=configs.path_video,
                     out_path=configs.path_video_tracked_face,
                     fps=configs.fps,
+                    block_size=block_size,
+                    adapt_center=adapt_center,
+                    adapt_center_horizontal=adapt_center_horizontal,
+                    use_rescaling=use_rescaling,
                     flip_upside_down=flip_flag,
                     start_frame=start_frame if limit_to_timespan else 0,
                     end_frame=end_frame if limit_to_timespan else None,

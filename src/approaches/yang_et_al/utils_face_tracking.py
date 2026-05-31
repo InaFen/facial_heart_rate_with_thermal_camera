@@ -371,6 +371,9 @@ def track_face(
     fps: float,
     grid_size: int = 3,
     block_size: int = 21,
+    adapt_center: float = 0.1,
+    adapt_center_horizontal: float = 0.0,
+    use_rescaling: bool = True,
     show_display: bool = True,
     flip_upside_down: bool = True,
     start_frame: int = 0,
@@ -402,14 +405,21 @@ def track_face(
 
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    reference_w = int(tracking_reference_size[0])
-    reference_h = int(tracking_reference_size[1])
-    if reference_w <= 0 or reference_h <= 0:
-        raise ValueError("tracking_reference_size must contain positive width and height")
+    if use_rescaling:
+        reference_w = int(tracking_reference_size[0])
+        reference_h = int(tracking_reference_size[1])
+        if reference_w <= 0 or reference_h <= 0:
+            raise ValueError("tracking_reference_size must contain positive width and height")
 
-    scale_x = W / reference_w
-    scale_y = H / reference_h
-    resize_interpolation = cv2.INTER_AREA if (W > reference_w or H > reference_h) else cv2.INTER_LINEAR
+        scale_x = W / reference_w
+        scale_y = H / reference_h
+        resize_interpolation = cv2.INTER_AREA if (W > reference_w or H > reference_h) else cv2.INTER_LINEAR
+    else:
+        reference_w = W
+        reference_h = H
+        scale_x = 1.0
+        scale_y = 1.0
+        resize_interpolation = cv2.INTER_LINEAR
 
     writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (W, H))
 
@@ -449,11 +459,14 @@ def track_face(
         gray_raw = cv2.cvtColor(frame_display, cv2.COLOR_BGR2GRAY)
         gray_raw_proc = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2GRAY)
 
-        gray_raw_proc_ref = cv2.resize(
-            gray_raw_proc,
-            (reference_w, reference_h),
-            interpolation=resize_interpolation,
-        )
+        if use_rescaling:
+            gray_raw_proc_ref = cv2.resize(
+                gray_raw_proc,
+                (reference_w, reference_h),
+                interpolation=resize_interpolation,
+            )
+        else:
+            gray_raw_proc_ref = gray_raw_proc
 
         # ----------------------------------------
         # THERMAL PREPROCESSING
@@ -530,7 +543,10 @@ def track_face(
                 cy = float(np.sum(ys * weights) / weight_sum)
                 center = (int(rx0 + cx), int(ry0 + cy))
 
-        center = (center[0], min(H - 1, center[1] + int(0.1 * roi_size))) #adapt center upwards to better align with face area
+        center = (
+            max(0, min(W - 1, center[0] + int(adapt_center_horizontal * roi_size))),
+            min(H - 1, center[1] + int(adapt_center * roi_size)),
+        ) #adapt center to better align with face area
 
         centers.append(center)
 
