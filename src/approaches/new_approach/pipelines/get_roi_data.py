@@ -264,12 +264,16 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
     # detects landmarks on thermal video, applies ROI mask then on gray frames (so raw data)
     else:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
+            # Determine flip flag from environment: batch runners set FLIP_UPSIDE_DOWN
+            flip_env = os.environ.get("FLIP_UPSIDE_DOWN", "0").strip().lower()
+            flip_flag = flip_env in ("1", "true", "yes")
+
             if roi_detection_method == "tracker":
                 roi_pixel_log = track_face(
                     in_path=configs.path_video,
                     out_path=configs.path_video_tracked_face,
                     fps=configs.fps,
-                    flip_upside_down=False,
+                    flip_upside_down=flip_flag,
                     start_frame=start_frame if limit_to_timespan else 0,
                     end_frame=end_frame if limit_to_timespan else None,
                     show_display=False
@@ -285,7 +289,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     show_display=False,
                     start_frame=start_frame if limit_to_timespan else 0,
                     end_frame=end_frame if limit_to_timespan else None,
-                    flip_upside_down=False,
+                    flip_upside_down=flip_flag,
                 )
             else: # Standard method is facemesh-based
                 # Build ROI landmarks to pass to facemesh: prefer explicit selection via configs.used_rois
@@ -318,6 +322,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     ema_alpha=configs.ema_alpha,
                     start_frame=start_frame if limit_to_timespan else 0,
                     end_frame=end_frame if limit_to_timespan else None,
+                    flip_upside_down=flip_flag,
                 )
             os.makedirs(os.path.dirname(configs.path_pixels_log), exist_ok=True)
             np.save(configs.path_pixels_log, roi_pixel_log, allow_pickle=True)

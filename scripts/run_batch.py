@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Batch runner for the Yang et al. pipeline.
+"""Unified batch runner for Yang et al. and Nair et al. pipelines.
 
 This script reads an experiments CSV, keeps only rows with `area == face`,
-prepares a per-row temporary Yang configuration, converts `.npy` recordings
+prepares a per-row temporary configuration, converts `.npy` recordings
 into the frame/video layout expected by the pipeline, and launches the
-existing `main_yang_et_al.py` once per row.
+main script once per row. The pipeline can be selected via --pipeline argument.
+
+Usage:
+    python run_batch.py --pipeline yang [--camera lepton] [--dry-run] [--limit 5]
+    python run_batch.py --pipeline nair [--camera vario] [--dry-run]
 """
 
 from __future__ import annotations
@@ -23,8 +27,26 @@ import yaml
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_TEMPLATE_CONFIG = PROJECT_ROOT / "src" / "approaches" / "yang_et_al" / "configs_yang_et_al.yaml"
-DEFAULT_MAIN_SCRIPT = PROJECT_ROOT / "src" / "approaches" / "yang_et_al" / "main_yang_et_al.py"
+
+# Pipeline configurations
+PIPELINE_CONFIG = {
+    "yang": {
+        "template_config": PROJECT_ROOT / "src" / "approaches" / "yang_et_al" / "configs_yang_et_al.yaml",
+        "main_script": PROJECT_ROOT / "src" / "approaches" / "yang_et_al" / "main_yang_et_al.py",
+        "config_env_var": "YANG_CONFIG_PATH",
+        "plots_env_var": "YANG_PLOTS_SAVE_DIR",
+        "output_subdir": "yang_et_al",
+        "generated_config_name": "configs_yang_et_al.generated.yaml",
+    },
+    "nair": {
+        "template_config": PROJECT_ROOT / "src" / "approaches" / "nair_et_al" / "configs_nair_et_al.yaml",
+        "main_script": PROJECT_ROOT / "src" / "approaches" / "nair_et_al" / "main_nair_et_al.py",
+        "config_env_var": "NAIR_CONFIG_PATH",
+        "plots_env_var": "NAIR_PLOTS_SAVE_DIR",
+        "output_subdir": "nair_et_al",
+        "generated_config_name": "configs_nair_et_al.generated.yaml",
+    },
+}
 
 
 def sanitize_name(value: str) -> str:
@@ -36,9 +58,6 @@ def parse_timespan(value: str) -> list[float]:
     if len(parts) != 2:
         raise ValueError(f"Invalid timeframe_use value {value!r}; expected 'start,end'.")
     return [float(parts[0]), float(parts[1])]
-
-
-
 
 
 def resolve_existing_video_path(recording_path: Path) -> Path:
@@ -74,9 +93,16 @@ def prepare_row_inputs(recording_path: Path, run_dir: Path) -> Path:
     return existing_video
 
 
-def build_row_config(template_config: dict[str, Any], row: dict[str, str], run_dir: Path, fps: float, roi_name: str, camera: str | None = None) -> Path:
+def build_row_config(
+    template_config: dict[str, Any],
+    row: dict[str, str],
+    run_dir: Path,
+    fps: float,
+    roi_name: str,
+    camera: str | None = None,
+) -> Path:
     recording_path = Path(row["recording_path"])
-    base_path = Path("/home/arbeit/Dokumente/master_thesis")
+    base_path = PROJECT_ROOT
     ground_truth_path = base_path / row["ground_truth_path"]
     timespan = parse_timespan(row["timeframe_use"])
     offset_ground_truth = float(row["offset_ground_truth"])
@@ -92,7 +118,6 @@ def build_row_config(template_config: dict[str, Any], row: dict[str, str], run_d
     new_recording_path = run_dir / new_recording_name
     if not new_recording_path.exists():
         try:
-            # Prefer symlink to save disk space; fall back to copy if symlink creation fails
             os.symlink(recording_path, new_recording_path)
             print(f"Created symlink to recording: {new_recording_path} -> {recording_path}")
         except Exception as exc:
@@ -127,7 +152,7 @@ def build_row_config(template_config: dict[str, Any], row: dict[str, str], run_d
 
     config["processing"]["plot_steps"] = False
 
-    config_path = run_dir / "configs_yang_et_al.generated.yaml"
+    config_path = run_dir / "configs_generated.yaml"
     print(
         "Row settings:\n"
         f"  recording={recording_path}\n"
@@ -135,8 +160,8 @@ def build_row_config(template_config: dict[str, Any], row: dict[str, str], run_d
         f"  ground_truth={ground_truth_path}\n"
         f"  timespan={timespan}\n"
         f"  offset_ground_truth={offset_ground_truth}\n"
-        "  enforced_fps=25.0\n"
-        "  tracker=APPLY_TRACKER_LANDMARK_DETECTION=True"
+        f"  fps={fps}\n"
+        f"  roi_name={roi_name}"
     )
     with open(config_path, "w", encoding="utf-8") as handle:
         yaml.safe_dump(config, handle, sort_keys=False)
@@ -150,65 +175,123 @@ def iter_face_rows(csv_path: Path) -> list[dict[str, str]]:
     return [row for row in rows if row.get("area", "").strip().lower() == "face"]
 
 
-def run_one_row(main_script: Path, config_path: Path, *, cwd: Path, plots_save_dir: Path | None = None) -> int:
+def run_one_row(
+    main_script: Path,
+    config_path: Path,
+    *,
+    cwd: Path,
+    plots_save_dir: Path | None = None,
+    camera: str | None = None,
+    config_env_var: str = "CONFIG_PATH",
+    plots_env_var: str = "PLOTS_SAVE_DIR",
+) -> int:
     env = os.environ.copy()
-    env["YANG_CONFIG_PATH"] = str(config_path)
+    env[config_env_var] = str(config_path)
     if plots_save_dir is not None:
-        env["YANG_PLOTS_SAVE_DIR"] = str(plots_save_dir)
+        env[plots_env_var] = str(plots_save_dir)
+    # FLIP_UPSIDE_DOWN: True for lepton camera
+    if camera == "lepton":
+        env["FLIP_UPSIDE_DOWN"] = "1"
+    else:
+        env["FLIP_UPSIDE_DOWN"] = "0"
     completed = subprocess.run([sys.executable, str(main_script)], cwd=str(cwd), env=env)
     return completed.returncode
 
 
+def get_fps_for_camera(camera: str) -> float:
+    fps_map = {
+        "mwir": 100.0,
+        "vario": 25.0,
+        "lepton": 8.76,
+    }
+    if camera not in fps_map:
+        raise ValueError(f"Unknown camera type {camera!r}. Supported: {', '.join(fps_map.keys())}")
+    return fps_map[camera]
+
+
 def main() -> int:
-    camera = "vario" # TODO adapt accordingl
-    roi_name = "tracker_landmark_threshold_30_c" # TODO adapt accordingl
+    # ===== CONFIGURATION (edit these variables) =====
+    pipeline = "yang"  # "yang" or "nair"
+    camera = "lepton"  # "lepton", "vario", or "mwir" (None = use pipeline default)
+    roi_name = "tracker_landmark_threshold_30_c"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
+    limit_rows = None  # e.g., 5 (None = process all rows)
+    dry_run = False  # True to print what would be done, False to execute
+    save_plots = True  # True to save plots, False otherwise
+    # ===== END CONFIGURATION =====
 
-    if camera == "mwir":
-        fps = 100.0
-    elif camera == "vario":
-        fps = 25.0
-    elif camera == "lepton":
-        fps = 8.76
-    else:
-        raise ValueError(f"Unknown camera type {camera!r}. Please set an appropriate fps value for it.")
+    # Get pipeline configuration
+    if pipeline not in PIPELINE_CONFIG:
+        print(f"Error: Unknown pipeline {pipeline!r}. Supported: {', '.join(PIPELINE_CONFIG.keys())}")
+        return 1
 
-    DEFAULT_CSV = PROJECT_ROOT / "experiments" / "experiments_info" / f"{camera}_experiments.csv"
-    csv_path = DEFAULT_CSV
-    template_config_path = DEFAULT_TEMPLATE_CONFIG
-    main_script_path = DEFAULT_MAIN_SCRIPT
-    output_root = PROJECT_ROOT / "saved_results" / "yang_et_al" / "batch_runs" / camera
-    limit_rows = None
-    dry_run = False
-    save_plots = True  # Save plots to batch run directory instead of displaying
-    
+    cfg = PIPELINE_CONFIG[pipeline]
+    template_config_path = cfg["template_config"]
+    main_script_path = cfg["main_script"]
+    config_env_var = cfg["config_env_var"]
+    plots_env_var = cfg["plots_env_var"]
+    output_subdir = cfg["output_subdir"]
 
+    # Set defaults based on pipeline if not provided
+    if camera is None:
+        camera = "lepton" if pipeline == "yang" else "vario"
+    if roi_name is None:
+        roi_name = "tracker_landmark_threshold_30_c" if pipeline == "yang" else "dlib"
+
+    fps = get_fps_for_camera(camera)
+
+    # Resolve CSV and config paths
+    csv_path = PROJECT_ROOT / "experiments" / "experiments_info" / f"{camera}_experiments.csv"
+    output_root = PROJECT_ROOT / "saved_results" / output_subdir / "batch_runs" / camera
+
+    # Validate paths
     if not csv_path.exists():
-        raise FileNotFoundError(f"CSV not found: {csv_path}")
+        print(f"Error: CSV not found: {csv_path}")
+        return 1
     if not template_config_path.exists():
-        raise FileNotFoundError(f"Template config not found: {template_config_path}")
+        print(f"Error: Template config not found: {template_config_path}")
+        return 1
     if not main_script_path.exists():
-        raise FileNotFoundError(f"Yang main script not found: {main_script_path}")
+        print(f"Error: Main script not found: {main_script_path}")
+        return 1
 
+    # Load template config
     with open(template_config_path, "r", encoding="utf-8") as handle:
         template_config = yaml.safe_load(handle)
 
+    # Get face rows from CSV
     face_rows = iter_face_rows(csv_path)
     if limit_rows is not None:
-        face_rows = face_rows[: limit_rows]
+        face_rows = face_rows[:limit_rows]
 
+    print(f"\n{'='*60}")
+    print(f"Batch Runner Configuration")
+    print(f"{'='*60}")
+    print(f"Pipeline:        {pipeline}")
+    print(f"Camera:          {camera}")
+    print(f"FPS:             {fps}")
+    print(f"ROI Name:        {roi_name}")
+    print(f"CSV:             {csv_path}")
+    print(f"Output Root:     {output_root}")
+    print(f"Face Rows:       {len(face_rows)}")
+    print(f"Dry Run:         {dry_run}")
+    print(f"Save Plots:      {save_plots}")
+    print(f"{'='*60}\n")
+
+    # Create output root
     output_root.mkdir(parents=True, exist_ok=True)
+
     if dry_run:
-        print(f"Would run {len(face_rows)} face rows from {csv_path}")
-        for row in face_rows:
+        print(f"DRY RUN: Would process {len(face_rows)} face rows\n")
+        for idx, row in enumerate(face_rows, 1):
             print(
-                f"- {row['person'].strip()} | {row['before_after_sport'].strip()} | {row['area'].strip()} | "
-                f"{row['recording_path']} | gt={row['ground_truth_path']} | timespan={row['timeframe_use']} | offset={row['offset_ground_truth']}"
+                f"  {idx}. {row['person'].strip()} | {row['before_after_sport'].strip()} | "
+                f"{Path(row['recording_path']).stem}"
             )
         return 0
 
+    # Process each row
     failures: list[str] = []
     for index, row in enumerate(face_rows, start=1):
-        # Include camera identifier in the run name for clearer organization
         run_name = sanitize_name(
             f"{index:02d}_{camera}_{Path(row['recording_path']).stem}_{row['person'].strip()}_{row['before_after_sport'].strip()}_{row['area'].strip()}"
         )
@@ -218,20 +301,28 @@ def main() -> int:
         try:
             config_path = build_row_config(template_config, row, run_dir, fps, roi_name, camera=camera)
             print(f"[{index}/{len(face_rows)}] Running {run_name}")
-            plots_save_dir = run_dir / "plots" if save_plots else None
-            return_code = run_one_row(main_script_path, config_path, cwd=PROJECT_ROOT, plots_save_dir=plots_save_dir)
+            plots_save_dir = (run_dir / "plots") if save_plots else None
+            return_code = run_one_row(
+                main_script_path,
+                config_path,
+                cwd=PROJECT_ROOT,
+                plots_save_dir=plots_save_dir,
+                camera=camera,
+                config_env_var=config_env_var,
+                plots_env_var=plots_env_var,
+            )
             if return_code != 0:
                 failures.append(f"{run_name}: exited with code {return_code}")
         except Exception as exc:
             failures.append(f"{run_name}: {exc}")
 
     if failures:
-        print("\nBatch finished with failures:")
+        print(f"\nBatch finished with {len(failures)} failure(s):")
         for failure in failures:
-            print(f"- {failure}")
+            print(f"  - {failure}")
         return 1
 
-    print("\nBatch finished successfully.")
+    print(f"\nBatch finished successfully ({len(face_rows)} rows processed).")
     return 0
 
 

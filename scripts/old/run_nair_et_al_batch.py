@@ -144,11 +144,16 @@ def iter_face_rows(csv_path: Path) -> list[dict[str, str]]:
     return [row for row in rows if row.get("area", "").strip().lower() == "face"]
 
 
-def run_one_row(main_script: Path, config_path: Path, *, cwd: Path, plots_save_dir: Path | None = None) -> int:
+def run_one_row(main_script: Path, config_path: Path, *, cwd: Path, plots_save_dir: Path | None = None, camera: str | None = None) -> int:
     env = os.environ.copy()
     env["NAIR_CONFIG_PATH"] = str(config_path)
     if plots_save_dir is not None:
         env["NAIR_PLOTS_SAVE_DIR"] = str(plots_save_dir)
+    # FLIP_UPSIDE_DOWN: True for lepton camera
+    if camera == "lepton":
+        env["FLIP_UPSIDE_DOWN"] = "1"
+    else:
+        env["FLIP_UPSIDE_DOWN"] = "0"
     completed = subprocess.run([sys.executable, str(main_script)], cwd=str(cwd), env=env)
     return completed.returncode
 
@@ -211,7 +216,7 @@ def main() -> int:
             config_path = build_row_config(template_config, row, run_dir, fps, roi_name, camera=camera)
             print(f"[{index}/{len(face_rows)}] Running {run_name}")
             plots_save_dir = run_dir / "plots" if save_plots else None
-            return_code = run_one_row(main_script_path, config_path, cwd=PROJECT_ROOT, plots_save_dir=plots_save_dir)
+            return_code = run_one_row(main_script_path, config_path, cwd=PROJECT_ROOT, plots_save_dir=plots_save_dir, camera=camera)
             if return_code != 0:
                 failures.append(f"{run_name}: exited with code {return_code}")
         except Exception as exc:
