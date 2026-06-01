@@ -348,6 +348,7 @@ def plot_all_pixels_histogram(
 	thermal_frames: np.ndarray,
 	bins: int = 250,
 	title: str = "Histogram of All Pixel Values Across All Frames",
+	save_path: str | Path | None = None,
 ) -> None:
 	"""Plot a histogram using all pixel temperatures from all frames."""
 	all_values = np.asarray(thermal_frames, dtype=np.float32).ravel()
@@ -362,6 +363,10 @@ def plot_all_pixels_histogram(
 	ax.grid(alpha=0.3)
 	fig.subplots_adjust(bottom=0.22)
 	fig.text(0.5, 0.03, summary_text, ha="center", va="bottom", fontsize=10)
+	if save_path is not None:
+		save_path = Path(save_path)
+		save_path.parent.mkdir(parents=True, exist_ok=True)
+		fig.savefig(str(save_path), dpi=200)
 	plt.show()
 
 
@@ -383,6 +388,7 @@ def plot_single_frame_heatmap(
 	frame_index: int = 0,
 	title: str = "Thermal Heatmap (Single Frame)",
 	cmap: str = "inferno",
+	save_path: str | Path | None = None,
 ) -> None:
 	"""Plot one thermal frame as a heatmap."""
 	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
@@ -401,12 +407,17 @@ def plot_single_frame_heatmap(
 	ax.set_ylabel("Y Pixel")
 	fig.colorbar(im, ax=ax, label="Temperature (°C)")
 	plt.tight_layout()
+	if save_path is not None:
+		save_path = Path(save_path)
+		save_path.parent.mkdir(parents=True, exist_ok=True)
+		fig.savefig(str(save_path), dpi=200)
 	plt.show()
 
 
 def plot_neighbor_correlation_heatmap(
 	neighbor_corr_map: np.ndarray,
 	title: str = "Spatial Correlation of Temporal Noise (How similar are neighboring pixels' noise patterns over time?)",
+	save_path: str | Path | None = None,
 ) -> None:
 	"""Plot a heatmap of average correlation with neighboring pixels."""
 	neighbor_corr_map = np.asarray(neighbor_corr_map, dtype=np.float32)
@@ -428,6 +439,10 @@ def plot_neighbor_correlation_heatmap(
 	ax.set_ylabel("Pixel row (i)")
 	fig.colorbar(im, ax=ax, label=f"Average correlation with neighbors ({vmin:.3f} to {vmax:.3f})")
 	plt.tight_layout()
+	if save_path is not None:
+		save_path = Path(save_path)
+		save_path.parent.mkdir(parents=True, exist_ok=True)
+		fig.savefig(str(save_path), dpi=200)
 	plt.show()
 
 
@@ -436,6 +451,7 @@ def plot_roi_mean_signal_fft(
 	frame_rate_hz: float,
 	roi: tuple[int, int, int, int] | None = None,
 	title: str = "FFT of ROI Mean Temperature Signal",
+	save_path: str | Path | None = None,
 ) -> None:
 	"""Plot FFT magnitude of the temporal mean temperature signal in an ROI."""
 	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
@@ -461,6 +477,10 @@ def plot_roi_mean_signal_fft(
 	ax.set_ylabel("Magnitude")
 	ax.grid(alpha=0.3)
 	plt.tight_layout()
+	if save_path is not None:
+		save_path = Path(save_path)
+		save_path.parent.mkdir(parents=True, exist_ok=True)
+		fig.savefig(str(save_path), dpi=200)
 	plt.show()
 
 
@@ -484,14 +504,7 @@ def plot_pixelwise_mean_psd(
 	if frame_rate_hz <= 0:
 		raise ValueError(f"frame_rate_hz must be > 0, got {frame_rate_hz}")
 
-	frame_count = thermal_frames.shape[0]
-	nperseg = min(256, frame_count)
-
-	series = thermal_frames.reshape(frame_count, -1)
-	series = series - series.mean(axis=0, keepdims=True)
-
-	freqs, psd = signal.welch(series, fs=frame_rate_hz, nperseg=nperseg, axis=0)
-	mean_psd = psd.mean(axis=1)
+	freqs, mean_psd = get_pixelwise_mean_psd(thermal_frames, frame_rate_hz)
 
 	fig, ax = plt.subplots(figsize=(10, 4))
 	ax.plot(freqs, mean_psd, color="slateblue", linewidth=2)
@@ -501,6 +514,213 @@ def plot_pixelwise_mean_psd(
 	ax.grid(alpha=0.3)
 	plt.tight_layout()
 	plt.show()
+
+
+def get_pixelwise_mean_psd(
+	thermal_frames: np.ndarray,
+	frame_rate_hz: float,
+	nperseg: int | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+	"""
+	Compute the mean PSD across pixels (Welch) and return frequency axis and mean PSD.
+
+	Returns (freqs, mean_psd).
+	"""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+	if thermal_frames.shape[0] < 2:
+		raise ValueError("At least 2 frames are required for PSD computation.")
+	if frame_rate_hz <= 0:
+		raise ValueError(f"frame_rate_hz must be > 0, got {frame_rate_hz}")
+
+	frame_count = thermal_frames.shape[0]
+	if nperseg is None:
+		nperseg = min(256, frame_count)
+
+	series = thermal_frames.reshape(frame_count, -1)
+	series = series - series.mean(axis=0, keepdims=True)
+
+	freqs, psd = signal.welch(series, fs=frame_rate_hz, nperseg=nperseg, axis=0)
+	mean_psd = psd.mean(axis=1)
+	return freqs, mean_psd
+
+
+def plot_compare_pixelwise_mean_psd(
+	paths: Sequence[str | Path],
+	cameras: Sequence[str],
+	frame_rates_hz: Sequence[float],
+	labels: Sequence[str] | None = None,
+	roi: tuple[int, int, int, int] | None = None,
+) -> None:
+	"""
+	Compute and plot mean PSDs for multiple recordings on a single plot.
+
+	- `paths`: sequence of directories or single-file paths containing frames (ASC or .gray)
+	- `cameras`: sequence of camera types matching `paths` ("mwir", "vario", "lepton")
+	- `frame_rates_hz`: sequence of frame rates for each recording
+	- `labels`: optional legend labels; if None, camera names are used
+	- `roi`: optional ROI applied when loading frames
+	"""
+	if len(paths) != len(cameras) or len(paths) != len(frame_rates_hz):
+		raise ValueError("paths, cameras and frame_rates_hz must have the same length")
+
+	if labels is None:
+		labels = [str(c) for c in cameras]
+
+	# Load all frame stacks and determine a common nperseg (min frame count)
+	stacks: list[np.ndarray] = []
+	frame_counts: list[int] = []
+	for p, cam in zip(paths, cameras):
+		p = Path(p)
+		if p.is_dir():
+			if cam == "lepton":
+				filepaths = discover_gray_files(p)
+				frames = load_gray_frames(filepaths)
+				frames = frames / 100.0 - 273.15
+			else:
+				filepaths = discover_asc_files(p)
+				frames = load_thermal_frames_asc(filepaths, camera=cam)
+		else:
+			# single file
+			if cam == "lepton":
+				frames = load_gray_frames([p])
+				frames = frames / 100.0 - 273.15
+			else:
+				frames = load_thermal_frames_asc([p], camera=cam)
+
+		if roi is not None:
+			y_slice, x_slice = _normalize_roi(roi, frames.shape[1:])
+			frames = frames[:, y_slice, x_slice]
+
+		stacks.append(np.asarray(frames, dtype=np.float32))
+		frame_counts.append(frames.shape[0])
+
+	if not stacks:
+		raise ValueError("No recordings were loaded for comparison.")
+
+	common_nperseg = min(256, min(frame_counts))
+
+	# Compute PSDs
+	freqs_list: list[np.ndarray] = []
+	mean_psds: list[np.ndarray] = []
+	for frames, fs in zip(stacks, frame_rates_hz):
+		freqs, mean_psd = get_pixelwise_mean_psd(frames, frame_rate_hz=fs, nperseg=common_nperseg)
+		freqs_list.append(freqs)
+		mean_psds.append(mean_psd)
+
+	# For plotting, use the frequency axis of the first entry
+	freqs_plot = freqs_list[0]
+
+	fig, ax = plt.subplots(figsize=(10, 4))
+	for mean_psd, label in zip(mean_psds, labels):
+		ax.plot(freqs_plot, mean_psd, linewidth=2, label=label)
+
+	ax.set_title("Comparison of Mean PSDs Across Recordings")
+	ax.set_xlabel("Frequency (Hz)")
+	ax.set_ylabel("Power")
+	# Set y-axis max to the maximum amplitude across all PSDs
+	max_amp = max(float(p.max()) for p in mean_psds)
+	ax.set_ylim(0, max_amp * 1.05)
+	ax.grid(alpha=0.3)
+	ax.legend()
+	plt.tight_layout()
+	plt.show()
+
+
+def reduce_spatial_noise_gaussian(
+	thermal_frames: np.ndarray,
+	kernel_size: int,
+	sigma: float | None = None,
+) -> np.ndarray:
+	"""
+	Reduce spatial noise in thermal frames using a Gaussian blur kernel.
+
+	Args:
+		thermal_frames: Array with shape (n_frames, height, width).
+		kernel_size: Size of the Gaussian kernel (odd integer > 0).
+		sigma: Standard deviation of the Gaussian kernel. If None, OpenCV computes it.
+
+	Returns:
+		Smoothed frames with the same shape as input.
+	"""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+	if kernel_size < 1 or kernel_size % 2 == 0:
+		raise ValueError(f"kernel_size must be an odd positive integer, got {kernel_size}")
+
+	smoothed_frames = np.zeros_like(thermal_frames)
+	for i in range(thermal_frames.shape[0]):
+		smoothed_frames[i] = signal.gaussian_filter(thermal_frames[i], sigma=kernel_size / 2.0)
+
+	return smoothed_frames
+
+
+def find_optimal_kernel_size(
+	thermal_frames: np.ndarray,
+	kernel_sizes: list[int] | None = None,
+	roi: tuple[int, int, int, int] | None = None,
+	ddof: int = 1,
+) -> dict[str, object]:
+	"""
+	Find the optimal Gaussian kernel size for reducing spatial noise.
+
+	Tests different kernel sizes and calculates spatial noise for each smoothed version.
+	Returns the kernel size that minimizes spatial noise along with full results.
+
+	Args:
+		thermal_frames: Array with shape (n_frames, height, width).
+		kernel_sizes: List of kernel sizes to try (must be odd integers). 
+		             If None, defaults to [3, 5, 7, 9, 11, 15].
+		roi: Optional (x_min, x_max, y_min, y_max) ROI in pixel coordinates.
+		ddof: Delta degrees of freedom for standard deviation calculation.
+
+	Returns:
+		Dictionary with:
+		- 'optimal_kernel_size': The kernel size with lowest spatial noise.
+		- 'optimal_spatial_noise_c': Spatial noise value for optimal kernel.
+		- 'optimal_spatial_noise_mk': Spatial noise in mK.
+		- 'results_by_kernel': Dict mapping kernel_size -> spatial noise result dict.
+	"""
+	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
+	if thermal_frames.ndim != 3:
+		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
+
+	if kernel_sizes is None:
+		kernel_sizes = [3, 5, 7, 9, 11, 15]
+
+	results_by_kernel = {}
+	spatial_noise_values = {}
+
+	for kernel_size in kernel_sizes:
+		if kernel_size < 1 or kernel_size % 2 == 0:
+			print(f"  Skipping invalid kernel_size {kernel_size} (must be odd positive integer)")
+			continue
+
+		# Apply Gaussian smoothing
+		smoothed = reduce_spatial_noise_gaussian(thermal_frames, kernel_size=kernel_size)
+
+		# Calculate spatial noise for smoothed frames
+		spatial_result = calculate_spatial_noise_from_frame_std(smoothed, roi=roi, ddof=ddof)
+		results_by_kernel[kernel_size] = spatial_result
+		spatial_noise_values[kernel_size] = spatial_result["spatial_noise_c"]
+
+		print(f"  Kernel size {kernel_size:2d}: spatial noise = {spatial_result['spatial_noise_c']:.6f} °C ({spatial_result['spatial_noise_mk']:.2f} mK)")
+
+	if not spatial_noise_values:
+		raise ValueError("No valid kernel sizes were tested.")
+
+	# Find optimal kernel size
+	optimal_kernel_size = min(spatial_noise_values, key=spatial_noise_values.get)
+	optimal_result = results_by_kernel[optimal_kernel_size]
+
+	return {
+		"optimal_kernel_size": optimal_kernel_size,
+		"optimal_spatial_noise_c": optimal_result["spatial_noise_c"],
+		"optimal_spatial_noise_mk": optimal_result["spatial_noise_mk"],
+		"results_by_kernel": results_by_kernel,
+	}
 
 
 def format_netd_result(result: dict[str, float | int | tuple[int, int]]) -> str:
@@ -533,14 +753,22 @@ def format_neighbor_correlation_result(result: dict[str, object]) -> str:
 	)
 
 
+
 def main() -> None:
-	"""Run a NETD/noise analysis pipeline on a folder of ASC frames."""
-	#path = Path("data/infratec_mwir/Black_body_Ascii")
-	camera = "lepton"  # "mwir", "vario", or "lepton"
-	path = Path("data/lepton/raw_lepton_data/22052026/NETD_500frames")
-    
+	"""Run full pipeline on three hard-coded recordings and produce combined PSD plot."""
+
+	# Hard-coded list of three recordings to analyze (edit these paths as needed)
+	compare_paths = [
+		Path("/data3/ina/NETD/5_secs_NETD_MWIR"),
+		Path("/data3/ina/NETD/NETD_500frames_Vario"),
+		Path("/data3/ina/NETD/NETD_500frames_Lepton"),
+	]
+	compare_cameras = ["mwir", "vario", "lepton"]
+	compare_frame_rates = [100, 25.0, 8.76]
+
+	# Common settings
 	recursive = False
-	roi: tuple[int, int, int, int] | None = None # If None, whole image is used 
+	roi: tuple[int, int, int, int] | None = None
 	plot_histogram = True
 	plot_qq = False
 	plot_one_frame_heatmap = True
@@ -548,66 +776,75 @@ def main() -> None:
 	plot_roi_fft = True
 	plot_psd = True
 	heatmap_frame_index = 0
-	frame_rate_hz = 8.5
-	INPUT_FORMAT = "gray"  # "gray" or "asc"
-	if camera == "lepton":
-		INPUT_FORMAT = "gray"
 
-	if INPUT_FORMAT not in {"gray", "asc"}:
-		raise ValueError(f"Unsupported INPUT_FORMAT: {INPUT_FORMAT}")
-	if camera not in {"mwir", "vario", "lepton"}:
-		raise ValueError(f"Unsupported camera: {camera}")
+	# Storage for PSD plotting labels
+	labels: list[str] = []
 
-	if path.is_dir():
-		if INPUT_FORMAT == "gray":
-			filepaths = discover_gray_files(path)
+	# Run full pipeline for each recording
+	for path, camera, frame_rate in zip(compare_paths, compare_cameras, compare_frame_rates):
+		print(f"\n=== Processing recording: {path} (camera={camera}, frame_rate={frame_rate}) ===")
+
+		if not path.exists():
+			print(f"  Warning: path does not exist: {path} -- skipping")
+			continue
+
+		# Load frames
+		if camera == "lepton":
+			filepaths = discover_gray_files(path) if path.is_dir() else [path]
 			thermal_frames = load_gray_frames(filepaths)
-			if camera == "lepton":
-				thermal_frames = thermal_frames / 100.0 - 273.15
+			thermal_frames = thermal_frames / 100.0 - 273.15 # transform from Kelvin*100 to Celsius
 		else:
-			filepaths = discover_asc_files(path, recursive=recursive)
+			filepaths = discover_asc_files(path, recursive=recursive) if path.is_dir() else [path]
 			thermal_frames = load_thermal_frames_asc(filepaths, camera=camera)
-	else:
-		filepaths = [path]
-		if INPUT_FORMAT == "gray":
-			thermal_frames = load_gray_frames(filepaths)
-			if camera == "lepton":
-				thermal_frames = thermal_frames / 100.0 - 273.15
-		else:
-			thermal_frames = load_thermal_frames_asc(filepaths, camera=camera)
-	#thermal_frames_averaged = average_consecutive_frames(thermal_frames, window_size=frame_average_window)
 
-	# Calculate NETD (use raw frames to avoid underestimating temporal noise)
-	result = calculate_netd_from_pixelwise_std(thermal_frames, roi=roi)
-	print(format_netd_result(result))
+		# Calculate NETD (temporal noise)
+		result = calculate_netd_from_pixelwise_std(thermal_frames, roi=roi)
+		print(format_netd_result(result))
 
-	# Calculate spatial noise (how much differs pixel values in one frame)
-	spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames, roi=roi)
-	print(format_spatial_noise_result(spatial_noise_result))
+		# Spatial noise before smoothing
+		spatial_noise_result = calculate_spatial_noise_from_frame_std(thermal_frames, roi=roi)
+		print(format_spatial_noise_result(spatial_noise_result))
 
-	# Calculate how much temporal noise is correlated between neighboring pixels
-	neighbor_correlation_result = calculate_neighbor_temporal_correlation(thermal_frames, roi=roi)
-	print(format_neighbor_correlation_result(neighbor_correlation_result))
+		# Find optimal spatial smoothing kernel
+		print("  Finding optimal Gaussian kernel size for spatial noise reduction...")
+		kernel_optimization = find_optimal_kernel_size(thermal_frames, roi=roi)
+		opt_k = kernel_optimization["optimal_kernel_size"]
+		print(f"  Optimal kernel size: {opt_k} -> {kernel_optimization['optimal_spatial_noise_c']:.6f} °C")
 
-	if plot_histogram:
-		# Check whether noise is Gaussian distributed by plotting a histogram of all pixel values across all frames
-		# Disadvantage of using histogram for this: Bin size can heavily affect visual impression
-		plot_all_pixels_histogram(thermal_frames)
+		# Spatial noise after applying optimal smoothing
+		smoothed = reduce_spatial_noise_gaussian(thermal_frames, kernel_size=opt_k)
+		spatial_noise_after = calculate_spatial_noise_from_frame_std(smoothed, roi=roi)
+		print("  After smoothing:")
+		print(format_spatial_noise_result(spatial_noise_after))
 
-	if plot_qq:
-		plot_all_pixels_qq(thermal_frames)
+		# Per-recording plots (saved with camera name)
+		results_dir = Path("saved_results/analysis_plots")
+		if plot_histogram:
+			hist_path = results_dir / f"{camera}_{path.name}_histogram.png"
+			plot_all_pixels_histogram(thermal_frames, save_path=hist_path)
+		if plot_one_frame_heatmap:
+			heatmap_path = results_dir / f"{camera}_{path.name}_heatmap.png"
+			plot_single_frame_heatmap(thermal_frames, frame_index=heatmap_frame_index, save_path=heatmap_path)
+		if plot_neighbor_correlation_heatmap_enabled:
+			neighbor_path = results_dir / f"{camera}_{path.name}_neighbor_corr.png"
+			plot_neighbor_correlation_heatmap(neighbor_correlation_result["neighbor_corr_map"], save_path=neighbor_path)
+		if plot_roi_fft:
+			fft_path = results_dir / f"{camera}_{path.name}_roi_fft.png"
+			plot_roi_mean_signal_fft(thermal_frames, frame_rate_hz=frame_rate, roi=roi, save_path=fft_path)
 
-	if plot_one_frame_heatmap:
-		plot_single_frame_heatmap(thermal_frames, frame_index=heatmap_frame_index)
+ 
 
-	if plot_neighbor_correlation_heatmap_enabled:
-		plot_neighbor_correlation_heatmap(neighbor_correlation_result["neighbor_corr_map"])
+		# Collect label for combined PSD plot
+		labels.append(f"{camera} ({path.name})")
 
-	if plot_roi_fft:
-		plot_roi_mean_signal_fft(thermal_frames, frame_rate_hz=frame_rate_hz, roi=roi)
-
-	if plot_psd:
-		plot_pixelwise_mean_psd(thermal_frames, frame_rate_hz=frame_rate_hz)
+	# After processing all recordings, plot combined PSDs if requested and at least one recording processed
+	if plot_psd and len(labels) >= 1:
+		print("\nGenerating combined PSD comparison plot...")
+		# Use the same lists for the comparison plot function
+		valid_paths = [p for p in compare_paths if p.exists()]
+		valid_cameras = [c for p, c in zip(compare_paths, compare_cameras) if p.exists()]
+		valid_frame_rates = [fr for p, fr in zip(compare_paths, compare_frame_rates) if p.exists()]
+		plot_compare_pixelwise_mean_psd(valid_paths, valid_cameras, valid_frame_rates, labels=labels, roi=roi)
 
 
 if __name__ == "__main__":
