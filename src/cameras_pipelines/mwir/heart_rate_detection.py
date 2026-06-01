@@ -31,9 +31,9 @@ except ImportError:  # pragma: no cover - allows running the file directly
 	from data_extraction import extract_thermal_data
 
 try:
-	from .netd_analysis import average_consecutive_frames
+	from ...noise_analysis import average_consecutive_frames
 except ImportError:  # pragma: no cover - allows running the file directly
-	from netd_analysis import average_consecutive_frames
+	from src.noise_analysis import average_consecutive_frames
 
 try:
 	from .experiments_config import load_experiment_from_yaml
