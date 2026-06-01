@@ -1,181 +1,330 @@
+from __future__ import annotations
+
 import sys
-from collections import defaultdict
-import os
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import savgol_filter
-from scipy.signal import butter, filtfilt
-import pywt
+from scipy.ndimage import gaussian_filter
+from scipy.signal import butter, filtfilt, iirnotch, welch
 
-
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-sys.path.insert(0, project_root)
+project_root = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(project_root))
 
 from src.approaches.new_approach.classes.user_input import Config
-from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
-from src.metrics.metric_pipeline import evaluate_instantaneous_hr_against_ground_truth
+from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 
 
 CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
+OUTPUT_ROOT = Path("saved_results/new_approach")
 
-configs = Config.from_yaml(CONFIGS_PATH)
-output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
-
-print("Expects very small ROIs")
-
-FILTER_TYPE = 'bandpass'  # 'none', 'highpass', or 'bandpass' 
+FILTER_TYPE = "bandpass"  # "none", "highpass", "bandpass", "highpass and notch"
+GAUSSIAN_KERNEL_SIZE = 7
+GAUSSIAN_SIGMA = None
 HIGHPASS_CUTOFF_HZ = 0.4
 BANDPASS_LOW_HZ = 0.4
 BANDPASS_HIGH_HZ = 4.0
-FILTER_ORDER = 3
-TARGET_HZ = 8.0  # Hz # "Goal frequency length" for which is averaged to have after temporal filtering, has to be big enough to detect heart rate
-WAVELET = False
-
-# Get ROIs----------------------------------------------------------------------------
-roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
-
-# Spatial averaging of each ROI (should be very small ROIs)----------------------------
-# to average random noise out (by sqrt(n))
-
-# Create matrix with rows: subregions, columns: time frames, values: mean pixel intensity of the subregion in the frame
-result = defaultdict(list)
-subregions_names = []
-
-for frame in roi_pixel_data:
-    for roi, values in frame.items():
-        if roi not in result:
-            subregions_names.append(roi)  # remember first-seen order
-        result[roi].append(values["mean_value"])
-
-mean_values_subregions = [result[roi] for roi in subregions_names]
-raw_before_averaging = np.array(mean_values_subregions)
+FILTER_ORDER = 5
+NOTCH_FREQUENCY_HZ = 1.0
+NOTCH_QUALITY_FACTOR = 30.0
 
 
-# Interpolate NaNs per subregion over time (fallback to global mean if a subregion is fully NaN)
-mean_values_series = [np.asarray(series, dtype=float) for series in mean_values_subregions]
-flat_values = np.concatenate([series for series in mean_values_series if series.size])
-global_mean = np.nanmean(flat_values) if flat_values.size else 0.0
-if np.isnan(global_mean):
-    global_mean = 0.0
-
-interpolated_series = []
-for series in mean_values_series:
-    if series.size == 0:
-        interpolated_series.append(series)
-        continue
-
-    mask = ~np.isnan(series)
-    if mask.sum() == 0:
-        series = np.full_like(series, fill_value=global_mean, dtype=float)
-    elif mask.sum() == 1:
-        series[:] = series[mask][0]
-    else:
-        x = np.arange(series.size)
-        series[~mask] = np.interp(x[~mask], x[mask], series[mask])
-
-    interpolated_series.append(series)
-
-mean_values_subregions = [series.tolist() for series in interpolated_series]
+def safe_name(value: str) -> str:
+    return "".join(char if char.isalnum() or char in "._-" else "_" for char in value).strip("_")
 
 
-def apply_butterworth_highpass_filter(signal, cutoff, fs, order):
+def save_figure(fig: plt.Figure, save_path: Path) -> None:
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def interpolate_nan_columns(signal_matrix: np.ndarray) -> np.ndarray:
+    signal_matrix = np.asarray(signal_matrix, dtype=float)
+    if signal_matrix.ndim != 2:
+        raise ValueError(f"Expected a 2D array (time, pixels), got shape {signal_matrix.shape}")
+
+    result = signal_matrix.copy()
+    time_len, pixel_count = result.shape
+    time_axis = np.arange(time_len)
+    finite_global = np.isfinite(result)
+    global_mean = float(np.nanmean(result[finite_global])) if finite_global.any() else 0.0
+    if not np.isfinite(global_mean):
+        global_mean = 0.0
+
+    for pixel_idx in range(pixel_count):
+        series = result[:, pixel_idx]
+        finite = np.isfinite(series)
+        if finite.sum() == 0:
+            result[:, pixel_idx] = global_mean
+        elif finite.sum() == 1:
+            result[:, pixel_idx] = series[finite][0]
+        else:
+            result[~finite, pixel_idx] = np.interp(time_axis[~finite], time_axis[finite], series[finite])
+
+    return result
+
+
+def extract_roi_signals(roi_pixel_data: list[dict[str, dict[str, object]]], roi_name: str) -> tuple[np.ndarray, np.ndarray]:
+    coords = None
+    frames: list[np.ndarray] = []
+
+    for frame_data in roi_pixel_data:
+        roi_data = frame_data.get(roi_name)
+        if roi_data is None:
+            continue
+
+        current_coords = np.asarray(roi_data["coords"], dtype=int)
+        current_values = np.asarray(roi_data["adc_values"], dtype=float)
+        if coords is None:
+            coords = current_coords
+        elif current_coords.shape != coords.shape or not np.array_equal(current_coords, coords):
+            raise ValueError(f"ROI '{roi_name}' changes its pixel coordinates over time, which is not supported.")
+
+        frames.append(current_values)
+
+    if coords is None or not frames:
+        raise ValueError(f"No pixel data found for ROI '{roi_name}'.")
+
+    signals = np.vstack(frames)
+    return coords, signals
+
+
+def plot_signals_with_mean(
+    signals: np.ndarray,
+    fps: float,
+    title: str,
+    save_path: Path,
+) -> None:
+    signals = np.asarray(signals, dtype=float)
+    if signals.ndim != 2:
+        raise ValueError(f"Expected a 2D array (time, pixels), got shape {signals.shape}")
+
+    time_axis = np.arange(signals.shape[0]) / float(fps)
+    mean_signal = np.nanmean(signals, axis=1)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    for pixel_idx in range(signals.shape[1]):
+        ax.plot(time_axis, signals[:, pixel_idx], color="tab:blue", alpha=0.15, linewidth=0.8)
+    ax.plot(time_axis, mean_signal, color="black", linewidth=2.5, label="Mean signal")
+    ax.set_title(title)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Temperature")
+    ax.grid(alpha=0.25)
+    ax.legend(loc="upper right")
+    save_figure(fig, save_path)
+
+
+def plot_pixelwise_psd(
+    signals: np.ndarray,
+    fps: float,
+    title: str,
+    save_path: Path,
+) -> None:
+    signals = np.asarray(signals, dtype=float)
+    if signals.ndim != 2:
+        raise ValueError(f"Expected a 2D array (time, pixels), got shape {signals.shape}")
+    if signals.shape[0] < 2:
+        raise ValueError("At least 2 frames are required for PSD plotting.")
+
+    centered = signals - np.nanmean(signals, axis=0, keepdims=True)
+    centered = np.nan_to_num(centered, nan=0.0)
+    nperseg = min(256, centered.shape[0])
+    freqs, psd = welch(centered, fs=fps, nperseg=nperseg, axis=0)
+    mean_psd = psd.mean(axis=1)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    for pixel_idx in range(psd.shape[1]):
+        ax.plot(freqs, psd[:, pixel_idx], color="tab:blue", alpha=0.12, linewidth=0.8)
+    ax.plot(freqs, mean_psd, color="black", linewidth=2.5, label="Mean PSD")
+    ax.set_title(title)
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("Power")
+    ax.grid(alpha=0.25)
+    ax.legend(loc="upper right")
+    save_figure(fig, save_path)
+
+
+def normalize_roi_coords(coords: np.ndarray) -> tuple[np.ndarray, np.ndarray, int, int]:
+    coords = np.asarray(coords, dtype=int)
+    if coords.ndim != 2 or coords.shape[1] != 2:
+        raise ValueError(f"Expected coordinates with shape (n_pixels, 2), got {coords.shape}")
+
+    xs = coords[:, 0]
+    ys = coords[:, 1]
+    x_min, x_max = int(xs.min()), int(xs.max())
+    y_min, y_max = int(ys.min()), int(ys.max())
+    return xs - x_min, ys - y_min, x_max - x_min + 1, y_max - y_min + 1
+
+
+def reduce_spatial_noise_gaussian_roi(
+    signals: np.ndarray,
+    coords: np.ndarray,
+    kernel_size: int,
+    sigma: float | None = None,
+) -> np.ndarray:
+    signals = np.asarray(signals, dtype=float)
+    if signals.ndim != 2:
+        raise ValueError(f"Expected a 2D array (time, pixels), got shape {signals.shape}")
+    if kernel_size < 1 or kernel_size % 2 == 0:
+        raise ValueError(f"kernel_size must be a positive odd integer, got {kernel_size}")
+
+    rel_xs, rel_ys, width, height = normalize_roi_coords(coords)
+    sigma_used = float(sigma) if sigma is not None else kernel_size / 2.0
+    smoothed = np.empty_like(signals, dtype=float)
+
+    for frame_idx in range(signals.shape[0]):
+        values = signals[frame_idx]
+        image = np.zeros((height, width), dtype=float)
+        mask = np.zeros((height, width), dtype=float)
+        finite = np.isfinite(values)
+        image[rel_ys[finite], rel_xs[finite]] = np.nan_to_num(values[finite], nan=0.0)
+        mask[rel_ys[finite], rel_xs[finite]] = 1.0
+
+        filtered_image = gaussian_filter(image, sigma=sigma_used)
+        filtered_mask = gaussian_filter(mask, sigma=sigma_used)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            normalized = np.divide(
+                filtered_image,
+                filtered_mask,
+                out=np.zeros_like(filtered_image),
+                where=filtered_mask > 0,
+            )
+        smoothed[frame_idx] = normalized[rel_ys, rel_xs]
+
+    return smoothed
+
+
+def apply_highpass_filter(signals: np.ndarray, cutoff_hz: float, fs: float, order: int) -> np.ndarray:
     if fs <= 0:
         raise ValueError(f"Sampling frequency must be positive. Got fs={fs}.")
 
     nyquist = 0.5 * fs
-    if not (0 < cutoff < nyquist):
+    if not (0 < cutoff_hz < nyquist):
+        raise ValueError(f"Highpass cutoff must satisfy 0 < cutoff < Nyquist. Got cutoff={cutoff_hz}, Nyquist={nyquist}.")
+
+    b, a = butter(order, cutoff_hz / nyquist, btype="high")
+    return filtfilt(b, a, np.asarray(signals, dtype=float), axis=0)
+
+
+def apply_notch_filter(signals: np.ndarray, notch_frequency_hz: float, fs: float, q_factor: float) -> np.ndarray:
+    if fs <= 0:
+        raise ValueError(f"Sampling frequency must be positive. Got fs={fs}.")
+
+    nyquist = 0.5 * fs
+    if not (0 < notch_frequency_hz < nyquist):
         raise ValueError(
-            "Highpass cutoff must satisfy 0 < cutoff < Nyquist. "
-            f"Got cutoff={cutoff}, Nyquist={nyquist}."
+            f"Notch frequency must satisfy 0 < frequency < Nyquist. Got frequency={notch_frequency_hz}, Nyquist={nyquist}."
         )
 
-    normalized_cutoff = cutoff / nyquist
-    b, a = butter(order, normalized_cutoff, btype='high')
-    return filtfilt(b, a, signal, axis=0)
+    b, a = iirnotch(notch_frequency_hz / nyquist, q_factor)
+    return filtfilt(b, a, np.asarray(signals, dtype=float), axis=0)
 
 
-if FILTER_TYPE != 'none':
-    mean_values_subregions_transpose = np.asarray(mean_values_subregions, dtype=float).T  # (T, N)
+def apply_selected_filter(signals: np.ndarray, configs: Config) -> np.ndarray:
+    filter_type = FILTER_TYPE.lower().strip()
 
-    # Apply highpass to remove low-frequency nois that was found in NETD analysis
-    if FILTER_TYPE == 'highpass':
-        filtered_signal = apply_butterworth_highpass_filter(mean_values_subregions_transpose, HIGHPASS_CUTOFF_HZ, configs.fps, FILTER_ORDER)
-    # Apply bandpass to isolate heart rate frequencies
-    elif FILTER_TYPE == 'bandpass':
-        filtered_signal = apply_butterworth_bandpass_filter(
-            mean_values_subregions_transpose, BANDPASS_LOW_HZ, BANDPASS_HIGH_HZ, configs.fps, FILTER_ORDER
+    if filter_type == "none":
+        return np.asarray(signals, dtype=float)
+
+    if filter_type == "bandpass":
+        return apply_butterworth_bandpass_filter(
+            np.asarray(signals, dtype=float),
+            configs.bandpass_lowcut,
+            configs.bandpass_highcut,
+            configs.fps,
+            configs.bandpass_order,
         )
-    else:
-        raise ValueError(f"Unsupported FILTER_TYPE: {FILTER_TYPE}")
 
-    mean_values_subregions = filtered_signal.T
+    filtered = apply_highpass_filter(np.asarray(signals, dtype=float), HIGHPASS_CUTOFF_HZ, configs.fps, FILTER_ORDER)
 
-    if configs.plot_steps:
-        t = np.arange(mean_values_subregions.shape[1])
-        fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-        for i in range(mean_values_subregions_transpose.shape[1]):
-            label = subregions_names[i] if i < len(subregions_names) else f"ROI {i}"
-            axes[0].plot(t, mean_values_subregions_transpose[:, i], alpha=0.4, label=label)
-            axes[1].plot(t, mean_values_subregions[i], linewidth=1.5, label=label)
-        axes[0].set_title(f"Filter ({FILTER_TYPE}) before")
-        axes[1].set_title(f"Filter ({FILTER_TYPE}) after")
-        axes[1].set_xlabel("Frames")
-        axes[0].set_ylabel("Amplitude")
-        axes[1].set_ylabel("Amplitude")
-        axes[0].legend(loc='upper right', fontsize=8, ncol=2)
-        axes[1].legend(loc='upper right', fontsize=8, ncol=2)
-        plt.tight_layout()
-        plt.show()
+    if filter_type == "highpass and notch":
+        return apply_notch_filter(filtered, NOTCH_FREQUENCY_HZ, configs.fps, NOTCH_QUALITY_FACTOR)
+
+    if filter_type == "highpass":
+        return filtered
+
+    raise ValueError(f"Unsupported FILTER_TYPE: {FILTER_TYPE}")
 
 
+def process_roi(
+    roi_name: str,
+    roi_pixel_data: list[dict[str, dict[str, object]]],
+    configs: Config,
+) -> None:
+    coords, raw_signals = extract_roi_signals(roi_pixel_data, roi_name)
+    raw_signals = interpolate_nan_columns(raw_signals)
 
-#outlier detection 
-#verteilung rauschen - gaussian noise rausfiltern -> which type of gaussian noise?
-# 1. noise type -> eigene methode
+    roi_dir = OUTPUT_ROOT / safe_name(roi_name)
+    plot_signals_with_mean(
+        raw_signals,
+        configs.fps,
+        f"{roi_name} - Raw mean signal",
+        roi_dir / "01_raw_mean_signal.png",
+    )
+    plot_pixelwise_psd(
+        raw_signals,
+        configs.fps,
+        f"{roi_name} - Raw PSD",
+        roi_dir / "01_raw_psd.png",
+    )
+
+    smoothed_signals = reduce_spatial_noise_gaussian_roi(
+        raw_signals,
+        coords=coords,
+        kernel_size=GAUSSIAN_KERNEL_SIZE,
+        sigma=GAUSSIAN_SIGMA,
+    )
+    plot_signals_with_mean(
+        smoothed_signals,
+        configs.fps,
+        f"{roi_name} - Gaussian smoothed mean signal (kernel={GAUSSIAN_KERNEL_SIZE})",
+        roi_dir / "02_gaussian_smoothed_mean_signal.png",
+    )
+    plot_pixelwise_psd(
+        smoothed_signals,
+        configs.fps,
+        f"{roi_name} - Gaussian smoothed PSD (kernel={GAUSSIAN_KERNEL_SIZE})",
+        roi_dir / "02_gaussian_smoothed_psd.png",
+    )
+
+    filtered_signals = apply_selected_filter(smoothed_signals, configs)
+    plot_signals_with_mean(
+        filtered_signals,
+        configs.fps,
+        f"{roi_name} - Filtered mean signal ({FILTER_TYPE})",
+        roi_dir / f"03_{safe_name(FILTER_TYPE)}_mean_signal.png",
+    )
+    plot_pixelwise_psd(
+        filtered_signals,
+        configs.fps,
+        f"{roi_name} - Filtered PSD ({FILTER_TYPE})",
+        roi_dir / f"03_{safe_name(FILTER_TYPE)}_psd.png",
+    )
 
 
-# FFT-----------------------------------
-# For each signal, compute and plot the FFT.
-if configs.plot_steps:
-    fft_signals = np.asarray(mean_values_subregions, dtype=float)
-    if fft_signals.size:
-        fft_min_len = min(series.size for series in fft_signals)
-        if fft_min_len > 1:
-            fft_signals = np.asarray([series[:fft_min_len] for series in fft_signals], dtype=float)
-            fft_freqs = np.fft.rfftfreq(fft_min_len, d=1.0 / float(configs.fps))
-            fig, ax = plt.subplots(figsize=(10, 4))
-            for i in range(fft_signals.shape[0]):
-                fft_mag = np.abs(np.fft.rfft(fft_signals[i]))
-                label = subregions_names[i] if i < len(subregions_names) else f"ROI {i}"
-                ax.plot(fft_freqs, fft_mag, alpha=0.6, label=label)
-            ax.set_title("FFT magnitude per signal")
-            ax.set_xlabel("Frequency (Hz)")
-            ax.set_ylabel("Magnitude")
-            ax.legend(loc='upper right', fontsize=8, ncol=2)
-            plt.tight_layout()
-            plt.show()
+def main() -> None:
+    configs = Config.from_yaml(CONFIGS_PATH)
+    configs.plot_steps = False
+
+    print("Expects one big ROI")
+    roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
+    if not roi_pixel_data:
+        raise ValueError("No ROI pixel data was returned by the ROI pipeline.")
+
+    roi_names = list(roi_pixel_data[0].keys())
+    if not roi_names:
+        raise ValueError("No ROI names were found in the first frame.")
+
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    for roi_name in roi_names:
+        print(f"Processing ROI: {roi_name}")
+        process_roi(roi_name, roi_pixel_data, configs)
 
 
-# Peak detection, Metrics
-# TODO how to decide on final signal?
-ihr_eval = evaluate_instantaneous_hr_against_ground_truth(
-		predicted_signal=mean_values_subregions,
-		predicted_fs=float(configs.fps),
-		path_ground_truth=configs.path_ground_truth,
-		timespan=configs.timespan_signal_to_look_at,
-		time_first_frame_signal=float(configs.time_first_frame_signal or 0.0),
-		time_first_frame_ecg=float(configs.time_first_frame_ecg or 0.0),
-		flip_ground_truth=False,
-		tolerance_ms=150.0,
-		plot_steps=bool(configs.plot_steps),
-		plot_bland_altman=bool(configs.plot_steps),
-	)
-
-
-
-# Show raw signal
-# Apply spatial filter: Gaussian kernel (size given by user)
-# Show signal after spatial filter
-# Bandpass filter/ Highpass and notch filter
-# Decide on signal for peak detection: Relative vs absoulte FFT, see notes
+if __name__ == "__main__":
+    main()
