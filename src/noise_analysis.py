@@ -24,18 +24,20 @@ from typing import Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats, signal
+from scipy.ndimage import gaussian_filter
 
 try:
-	from .data_extraction import extract_thermal_data
+	from .cameras_pipelines.mwir.data_extraction import extract_thermal_data
 except ImportError:  # pragma: no cover - allows running the file directly
-	from data_extraction import extract_thermal_data
+	from cameras_pipelines.mwir.data_extraction import extract_thermal_data
 
 try:
 	from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 	from src.video_processing_methods.gray_file_methods import read_lepton35_gray
 except ImportError:  # pragma: no cover - allows running the file directly
 	import sys
-	project_root = Path(__file__).resolve().parents[3]
+	# Add project root (parent of `src`) so `import src...` works when running file directly
+	project_root = Path(__file__).resolve().parents[1]
 	sys.path.insert(0, str(project_root))
 	from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 	from src.video_processing_methods.gray_file_methods import read_lepton35_gray
@@ -367,12 +369,12 @@ def plot_all_pixels_histogram(
 		save_path = Path(save_path)
 		save_path.parent.mkdir(parents=True, exist_ok=True)
 		fig.savefig(str(save_path), dpi=200)
-	plt.show()
 
 
 def plot_all_pixels_qq(
 	thermal_frames: np.ndarray,
 	title: str = "Q-Q Plot of All Pixel Values",
+	save_path: str | Path | None = None,
 ) -> None:
 	"""Plot a Q-Q plot to assess normality of pixel values across all frames."""
 	all_values = np.asarray(thermal_frames, dtype=np.float32).ravel()
@@ -380,7 +382,12 @@ def plot_all_pixels_qq(
 	stats.probplot(all_values, dist="norm", plot=ax)
 	ax.set_title(title)
 	plt.tight_layout()
-	plt.show()
+	if save_path is not None:
+		save_path = Path(save_path)
+		save_path.parent.mkdir(parents=True, exist_ok=True)
+		fig.savefig(str(save_path), dpi=200)
+		plt.close(fig)
+	
 
 
 def plot_single_frame_heatmap(
@@ -411,7 +418,6 @@ def plot_single_frame_heatmap(
 		save_path = Path(save_path)
 		save_path.parent.mkdir(parents=True, exist_ok=True)
 		fig.savefig(str(save_path), dpi=200)
-	plt.show()
 
 
 def plot_neighbor_correlation_heatmap(
@@ -443,7 +449,6 @@ def plot_neighbor_correlation_heatmap(
 		save_path = Path(save_path)
 		save_path.parent.mkdir(parents=True, exist_ok=True)
 		fig.savefig(str(save_path), dpi=200)
-	plt.show()
 
 
 def plot_roi_mean_signal_fft(
@@ -481,13 +486,13 @@ def plot_roi_mean_signal_fft(
 		save_path = Path(save_path)
 		save_path.parent.mkdir(parents=True, exist_ok=True)
 		fig.savefig(str(save_path), dpi=200)
-	plt.show()
 
 
 def plot_pixelwise_mean_psd(
 	thermal_frames: np.ndarray,
 	frame_rate_hz: float,
 	title: str = "Mean PSD Across Pixels (Welch)",
+	save_path: str | Path | None = None,
 ) -> None:
 	"""Plot mean PSD across all pixels to assess noise type.
 	Takes every pixel’s time series (temperature vs. frame).
@@ -513,7 +518,11 @@ def plot_pixelwise_mean_psd(
 	ax.set_ylabel("Power")
 	ax.grid(alpha=0.3)
 	plt.tight_layout()
-	plt.show()
+	if save_path is not None:
+		save_path = Path(save_path)
+		save_path.parent.mkdir(parents=True, exist_ok=True)
+		fig.savefig(str(save_path), dpi=200)
+		plt.close(fig)
 
 
 def get_pixelwise_mean_psd(
@@ -552,6 +561,7 @@ def plot_compare_pixelwise_mean_psd(
 	frame_rates_hz: Sequence[float],
 	labels: Sequence[str] | None = None,
 	roi: tuple[int, int, int, int] | None = None,
+	save_path: str | Path | None = None,
 ) -> None:
 	"""
 	Compute and plot mean PSDs for multiple recordings on a single plot.
@@ -625,7 +635,11 @@ def plot_compare_pixelwise_mean_psd(
 	ax.grid(alpha=0.3)
 	ax.legend()
 	plt.tight_layout()
-	plt.show()
+	if save_path is not None:
+		save_path = Path(save_path)
+		save_path.parent.mkdir(parents=True, exist_ok=True)
+		fig.savefig(str(save_path), dpi=200)
+		plt.close(fig)
 
 
 def reduce_spatial_noise_gaussian(
@@ -652,7 +666,8 @@ def reduce_spatial_noise_gaussian(
 
 	smoothed_frames = np.zeros_like(thermal_frames)
 	for i in range(thermal_frames.shape[0]):
-		smoothed_frames[i] = signal.gaussian_filter(thermal_frames[i], sigma=kernel_size / 2.0)
+		used_sigma = sigma if sigma is not None else (kernel_size / 2.0)
+		smoothed_frames[i] = gaussian_filter(thermal_frames[i], sigma=used_sigma)
 
 	return smoothed_frames
 
@@ -688,7 +703,7 @@ def find_optimal_kernel_size(
 		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
 
 	if kernel_sizes is None:
-		kernel_sizes = [3, 5, 7, 9, 11, 15]
+		kernel_sizes = [3, 5, 7, 9, 11, 15, 21, 31, 51, 71, 101, 121, 151, 171, 201, 251]
 
 	results_by_kernel = {}
 	spatial_noise_values = {}
@@ -817,8 +832,12 @@ def main() -> None:
 		print("  After smoothing:")
 		print(format_spatial_noise_result(spatial_noise_after))
 
+		# Neighbor temporal correlation (use raw frames)
+		neighbor_correlation_result = calculate_neighbor_temporal_correlation(thermal_frames, roi=roi)
+		print(format_neighbor_correlation_result(neighbor_correlation_result))
+
 		# Per-recording plots (saved with camera name)
-		results_dir = Path("saved_results/analysis_plots")
+		results_dir = Path("saved_results/noise_analysis_plots")
 		if plot_histogram:
 			hist_path = results_dir / f"{camera}_{path.name}_histogram.png"
 			plot_all_pixels_histogram(thermal_frames, save_path=hist_path)
@@ -844,7 +863,8 @@ def main() -> None:
 		valid_paths = [p for p in compare_paths if p.exists()]
 		valid_cameras = [c for p, c in zip(compare_paths, compare_cameras) if p.exists()]
 		valid_frame_rates = [fr for p, fr in zip(compare_paths, compare_frame_rates) if p.exists()]
-		plot_compare_pixelwise_mean_psd(valid_paths, valid_cameras, valid_frame_rates, labels=labels, roi=roi)
+		combined_path = Path("saved_results/noise_analysis_plots/combined_psd.png")
+		plot_compare_pixelwise_mean_psd(valid_paths, valid_cameras, valid_frame_rates, labels=labels, roi=roi, save_path=combined_path)
 
 
 if __name__ == "__main__":
