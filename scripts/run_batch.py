@@ -113,6 +113,7 @@ def build_row_config(
     fps: float,
     roi_name: str,
     camera: str | None = None,
+    used_rois: list[str] | None = None,
 ) -> Path:
     recording_path = Path(row["recording_path"])
     base_path = PROJECT_ROOT
@@ -140,6 +141,7 @@ def build_row_config(
 
     config["processing"]["fps"] = fps
     config["processing"]["roi_name"] = roi_name
+    config["processing"]["used_rois"] = used_rois
 
     config["timing"]["time_first_frame_signal"] = offset_ground_truth
     config["timing"]["time_first_frame_ecg"] = 0.0
@@ -212,12 +214,13 @@ def get_fps_for_camera(camera: str) -> float:
 
 def main() -> int:
     # ===== CONFIGURATION (edit these variables) =====
-    pipeline = "yang"  # "yang", "nair", or "new"
+    pipeline = "new"  # "yang", "nair", or "new"
     camera = "lepton"  # "lepton", "vario", or "mwir" (None = use pipeline default)
-    roi_name = "tracker_landmark_threshold_30_c"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
+    roi_name = "temp"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
     limit_rows = None  # e.g., 5 (None = process all rows)
     dry_run = False  # True to print what would be done, False to execute
     save_plots = True  # True to save plots, False otherwise
+    used_rois = ["forehead"]
     # ===== END CONFIGURATION =====
 
     # Get pipeline configuration
@@ -300,7 +303,7 @@ def main() -> int:
         run_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            config_path = build_row_config(template_config, row, run_dir, fps, roi_name, camera=camera)
+            config_path = build_row_config(template_config, row, run_dir, fps, roi_name, camera=camera, used_rois=used_rois)
             print(f"[{index}/{len(face_rows)}] Running {run_name}")
             plots_save_dir = (run_dir / "plots") if save_plots else None
             return_code = run_one_row(

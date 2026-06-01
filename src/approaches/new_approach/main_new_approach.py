@@ -21,8 +21,9 @@ from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_ba
 
 
 DEFAULT_CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
-OUTPUT_ROOT = Path("saved_results/new_approach")
 CONFIG_PATH_ENV_VAR = "NEW_APPROACH_CONFIG_PATH"
+PLOTS_SAVE_DIR_ENV_VAR = "NEW_APPROACH_PLOTS_SAVE_DIR"
+DEFAULT_OUTPUT_ROOT = Path("saved_results/new_approach")
 
 FILTER_TYPE = "bandpass"  # "none", "highpass", "bandpass", "highpass and notch"
 GAUSSIAN_KERNEL_SIZE = 7
@@ -43,6 +44,13 @@ def save_figure(fig: plt.Figure, save_path: Path) -> None:
     save_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
+
+
+def get_output_root() -> Path:
+    plots_save_dir = os.environ.get(PLOTS_SAVE_DIR_ENV_VAR)
+    if plots_save_dir:
+        return Path(plots_save_dir)
+    return DEFAULT_OUTPUT_ROOT
 
 
 def interpolate_nan_columns(signal_matrix: np.ndarray) -> np.ndarray:
@@ -71,29 +79,36 @@ def interpolate_nan_columns(signal_matrix: np.ndarray) -> np.ndarray:
     return result
 
 
-def extract_roi_signals(roi_pixel_data: list[dict[str, dict[str, object]]], roi_name: str) -> tuple[np.ndarray, np.ndarray]:
-    coords = None
-    frames: list[np.ndarray] = []
+def extract_roi_signals(
+    roi_pixel_data: list[dict[str, dict[str, object]]],
+    roi_name: str,
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    coords_per_frame: list[np.ndarray] = []
+    values_per_frame: list[np.ndarray] = []
 
     for frame_data in roi_pixel_data:
         roi_data = frame_data.get(roi_name)
         if roi_data is None:
             continue
 
-        current_coords = np.asarray(roi_data["coords"], dtype=int)
-        current_values = np.asarray(roi_data["adc_values"], dtype=float)
-        if coords is None:
-            coords = current_coords
-        elif current_coords.shape != coords.shape or not np.array_equal(current_coords, coords):
-            raise ValueError(f"ROI '{roi_name}' changes its pixel coordinates over time, which is not supported.")
+        coords_per_frame.append(np.asarray(roi_data["coords"], dtype=int))
+        values_per_frame.append(np.asarray(roi_data["adc_values"], dtype=float))
 
-        frames.append(current_values)
-
-    if coords is None or not frames:
+    if not coords_per_frame or not values_per_frame:
         raise ValueError(f"No pixel data found for ROI '{roi_name}'.")
 
-    signals = np.vstack(frames)
-    return coords, signals
+    return coords_per_frame, values_per_frame
+
+
+def pad_frame_signals(frame_signals: list[np.ndarray]) -> np.ndarray:
+    if not frame_signals:
+        raise ValueError("frame_signals must not be empty")
+
+    max_length = max(signal.size for signal in frame_signals)
+    padded = np.full((len(frame_signals), max_length), np.nan, dtype=float)
+    for index, signal_values in enumerate(frame_signals):
+        padded[index, : signal_values.size] = signal_values
+    return padded
 
 
 def plot_signals_with_mean(
@@ -164,23 +179,30 @@ def normalize_roi_coords(coords: np.ndarray) -> tuple[np.ndarray, np.ndarray, in
 
 
 def reduce_spatial_noise_gaussian_roi(
-    signals: np.ndarray,
-    coords: np.ndarray,
+    frame_signals: list[np.ndarray],
+    coords_per_frame: list[np.ndarray],
     kernel_size: int,
     sigma: float | None = None,
 ) -> np.ndarray:
-    signals = np.asarray(signals, dtype=float)
-    if signals.ndim != 2:
-        raise ValueError(f"Expected a 2D array (time, pixels), got shape {signals.shape}")
+    if len(frame_signals) != len(coords_per_frame):
+        raise ValueError("frame_signals and coords_per_frame must have the same length")
     if kernel_size < 1 or kernel_size % 2 == 0:
         raise ValueError(f"kernel_size must be a positive odd integer, got {kernel_size}")
 
-    rel_xs, rel_ys, width, height = normalize_roi_coords(coords)
     sigma_used = float(sigma) if sigma is not None else kernel_size / 2.0
-    smoothed = np.empty_like(signals, dtype=float)
+    smoothed_frames: list[np.ndarray] = []
 
-    for frame_idx in range(signals.shape[0]):
-        values = signals[frame_idx]
+    for values, coords in zip(frame_signals, coords_per_frame):
+        values = np.asarray(values, dtype=float)
+        coords = np.asarray(coords, dtype=int)
+        if coords.ndim != 2 or coords.shape[1] != 2:
+            raise ValueError(f"Expected coordinates with shape (n_pixels, 2), got {coords.shape}")
+        if values.size != coords.shape[0]:
+            raise ValueError(
+                f"Pixel count mismatch for ROI smoothing: coords has {coords.shape[0]} pixels but values has {values.size}."
+            )
+
+        rel_xs, rel_ys, width, height = normalize_roi_coords(coords)
         image = np.zeros((height, width), dtype=float)
         mask = np.zeros((height, width), dtype=float)
         finite = np.isfinite(values)
@@ -196,9 +218,9 @@ def reduce_spatial_noise_gaussian_roi(
                 out=np.zeros_like(filtered_image),
                 where=filtered_mask > 0,
             )
-        smoothed[frame_idx] = normalized[rel_ys, rel_xs]
+        smoothed_frames.append(normalized[rel_ys, rel_xs])
 
-    return smoothed
+    return pad_frame_signals(smoothed_frames)
 
 
 def apply_highpass_filter(signals: np.ndarray, cutoff_hz: float, fs: float, order: int) -> np.ndarray:
@@ -257,11 +279,12 @@ def process_roi(
     roi_name: str,
     roi_pixel_data: list[dict[str, dict[str, object]]],
     configs: Config,
+    output_root: Path,
 ) -> None:
-    coords, raw_signals = extract_roi_signals(roi_pixel_data, roi_name)
-    raw_signals = interpolate_nan_columns(raw_signals)
+    coords_per_frame, raw_frame_signals = extract_roi_signals(roi_pixel_data, roi_name)
+    raw_signals = interpolate_nan_columns(pad_frame_signals(raw_frame_signals))
 
-    roi_dir = OUTPUT_ROOT / safe_name(roi_name)
+    roi_dir = output_root / safe_name(roi_name)
     plot_signals_with_mean(
         raw_signals,
         configs.fps,
@@ -276,11 +299,12 @@ def process_roi(
     )
 
     smoothed_signals = reduce_spatial_noise_gaussian_roi(
-        raw_signals,
-        coords=coords,
+        raw_frame_signals,
+        coords_per_frame=coords_per_frame,
         kernel_size=GAUSSIAN_KERNEL_SIZE,
         sigma=GAUSSIAN_SIGMA,
     )
+    smoothed_signals = interpolate_nan_columns(smoothed_signals)
     plot_signals_with_mean(
         smoothed_signals,
         configs.fps,
@@ -313,6 +337,7 @@ def main() -> None:
     config_path = os.environ.get(CONFIG_PATH_ENV_VAR) or os.environ.get("CONFIG_PATH") or DEFAULT_CONFIGS_PATH
     configs = Config.from_yaml(config_path)
     configs.plot_steps = False
+    output_root = get_output_root()
 
     print("Expects one big ROI")
     roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
@@ -329,10 +354,10 @@ def main() -> None:
             f"None of the configured ROIs {configs.used_rois!r} are available. Available ROIs: {roi_names!r}"
         )
 
-    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    output_root.mkdir(parents=True, exist_ok=True)
     for roi_name in selected_rois:
         print(f"Processing ROI: {roi_name}")
-        process_roi(roi_name, roi_pixel_data, configs)
+        process_roi(roi_name, roi_pixel_data, configs, output_root)
 
 
 if __name__ == "__main__":
