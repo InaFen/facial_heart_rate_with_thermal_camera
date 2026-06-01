@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -19,8 +20,9 @@ from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipe
 from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 
 
-CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
+DEFAULT_CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
 OUTPUT_ROOT = Path("saved_results/new_approach")
+CONFIG_PATH_ENV_VAR = "NEW_APPROACH_CONFIG_PATH"
 
 FILTER_TYPE = "bandpass"  # "none", "highpass", "bandpass", "highpass and notch"
 GAUSSIAN_KERNEL_SIZE = 7
@@ -308,7 +310,8 @@ def process_roi(
 
 
 def main() -> None:
-    configs = Config.from_yaml(CONFIGS_PATH)
+    config_path = os.environ.get(CONFIG_PATH_ENV_VAR) or os.environ.get("CONFIG_PATH") or DEFAULT_CONFIGS_PATH
+    configs = Config.from_yaml(config_path)
     configs.plot_steps = False
 
     print("Expects one big ROI")
@@ -320,8 +323,14 @@ def main() -> None:
     if not roi_names:
         raise ValueError("No ROI names were found in the first frame.")
 
+    selected_rois = [roi_name for roi_name in roi_names if not configs.used_rois or roi_name in configs.used_rois]
+    if not selected_rois:
+        raise ValueError(
+            f"None of the configured ROIs {configs.used_rois!r} are available. Available ROIs: {roi_names!r}"
+        )
+
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    for roi_name in roi_names:
+    for roi_name in selected_rois:
         print(f"Processing ROI: {roi_name}")
         process_roi(roi_name, roi_pixel_data, configs)
 

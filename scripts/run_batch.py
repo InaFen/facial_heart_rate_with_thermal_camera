@@ -45,6 +45,14 @@ PIPELINE_CONFIG = {
         "output_subdir": "nair_et_al",
         "generated_config_name": "configs_nair_et_al.generated.yaml",
     },
+    "new": {
+        "template_config": PROJECT_ROOT / "src" / "approaches" / "new_approach" / "configs_new_approach.yaml",
+        "main_script": PROJECT_ROOT / "src" / "approaches" / "new_approach" / "main_new_approach.py",
+        "config_env_var": "NEW_APPROACH_CONFIG_PATH",
+        "plots_env_var": "NEW_APPROACH_PLOTS_SAVE_DIR",
+        "output_subdir": "new_approach",
+        "generated_config_name": "configs_new_approach.generated.yaml",
+    },
 }
 
 TRACK_FACE_SETTINGS_BY_CAMERA = {
@@ -204,7 +212,7 @@ def get_fps_for_camera(camera: str) -> float:
 
 def main() -> int:
     # ===== CONFIGURATION (edit these variables) =====
-    pipeline = "yang"  # "yang" or "nair"
+    pipeline = "yang"  # "yang", "nair", or "new"
     camera = "lepton"  # "lepton", "vario", or "mwir" (None = use pipeline default)
     roi_name = "tracker_landmark_threshold_30_c"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
     limit_rows = None  # e.g., 5 (None = process all rows)
@@ -226,9 +234,9 @@ def main() -> int:
 
     # Set defaults based on pipeline if not provided
     if camera is None:
-        camera = "lepton" if pipeline == "yang" else "vario"
+        camera = "lepton" if pipeline in {"yang", "new"} else "vario"
     if roi_name is None:
-        roi_name = "tracker_landmark_threshold_30_c" if pipeline == "yang" else "dlib"
+        roi_name = "tracker_landmark_threshold_30_c" if pipeline in {"yang", "new"} else "dlib"
 
     fps = get_fps_for_camera(camera)
 
