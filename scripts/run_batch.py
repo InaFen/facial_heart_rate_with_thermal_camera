@@ -19,7 +19,6 @@ import re
 import subprocess
 import sys
 from copy import deepcopy
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -116,30 +115,12 @@ def build_row_config(
     print(f"Preparing inputs for recording: {recording_path}")
     existing_video = prepare_row_inputs(recording_path, run_dir)
 
-    # Prepare per-run copy (or fallback) of the .npy with camera prefix if requested
-    if camera:
-        new_recording_name = f"{camera}_{recording_path.name}"
-    else:
-        new_recording_name = recording_path.name
-    new_recording_path = run_dir / new_recording_name
-    if not new_recording_path.exists():
-        try:
-            os.symlink(recording_path, new_recording_path)
-            print(f"Created symlink to recording: {new_recording_path} -> {recording_path}")
-        except Exception as exc:
-            try:
-                shutil.copy2(recording_path, new_recording_path)
-                print(f"Symlink failed; copied recording to: {new_recording_path}")
-            except Exception as exc2:
-                print(f"Warning: failed to link or copy recording to run dir: {exc2}. Using original path.")
-                new_recording_path = recording_path
-
     config = deepcopy(template_config)
     config.setdefault("paths", {})
     config.setdefault("processing", {})
     config.setdefault("timing", {})
 
-    config["paths"]["gray_frames"] = str(new_recording_path)
+    config["paths"]["gray_frames"] = str(recording_path)
     config["paths"]["video"] = str(existing_video)
     config["paths"]["video_tracked_face"] = str(run_dir / "video_tracked_face.mp4")
     config["paths"]["video_thresholded_pixel"] = str(run_dir / "video_thresholded_pixel.mp4")
