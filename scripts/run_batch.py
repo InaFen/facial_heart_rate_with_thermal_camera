@@ -215,7 +215,7 @@ def get_fps_for_camera(camera: str) -> float:
 def main() -> int:
     # ===== CONFIGURATION (edit these variables) =====
     pipeline = "new"  # "yang", "nair", or "new"
-    camera = "lepton"  # "lepton", "vario", or "mwir" (None = use pipeline default)
+    camera = "mwir"  # "lepton", "vario", or "mwir" (None = use pipeline default)
     roi_name = "temp"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
     limit_rows = None  # e.g., 5 (None = process all rows)
     dry_run = False  # True to print what would be done, False to execute

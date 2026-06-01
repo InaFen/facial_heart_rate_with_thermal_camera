@@ -5,8 +5,9 @@ import os
 import json
 import re
 from scipy.signal import stft
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import numpy as np
 from pathlib import Path
 from datetime import datetime
 
@@ -25,6 +26,7 @@ from src.approaches.yang_et_al.utils_ground_truth import (
 
 CONFIGS_PATH = os.environ.get("NAIR_CONFIG_PATH", "src/approaches/nair_et_al/configs_nair_et_al.yaml")
 PLOTS_SAVE_DIR = os.environ.get("NAIR_PLOTS_SAVE_DIR", None)
+PLOTS_OUTPUT_DIR = Path(PLOTS_SAVE_DIR) if PLOTS_SAVE_DIR else Path(project_root) / "saved_results" / "nair_et_al" / "plots"
 
 configs = Config.from_yaml(CONFIGS_PATH)
 output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
@@ -43,6 +45,11 @@ print(f"SMOOTHNESS_PENALTY: {SMOOTHNESS_PENALTY}")
 print(f"NORMAL_HR_FREQ: {NORMAL_HR_FREQ}")
 print(f"ROI selection name: {getattr(configs, 'roi_name', None)}")
 print(f"ROI selection used_rois: {getattr(configs, 'used_rois', None)}")
+
+def save_figure(fig: plt.Figure, filename: str) -> None:
+    PLOTS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    fig.savefig(PLOTS_OUTPUT_DIR / filename, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 if not getattr(configs, "used_rois", None):
     raise ValueError("configs.used_rois must be defined in configs_nair_et_al.yaml, similar to the Yang-style YAML.")
@@ -133,7 +140,7 @@ for subregion in range(len(subregions_names)):
         axes[1].legend(loc='upper right', fontsize=8)
 
         plt.tight_layout()
-        plt.show()
+        save_figure(fig, "01_bandpass_before_after.png")
 
 # Apply SVD
 # Should be:
@@ -143,7 +150,7 @@ U, S, Vh = np.linalg.svd(bandpassed_mean_values_subregions, full_matrices=False)
 
 if configs.plot_steps:
     num_components = Vh.shape[0]
-    plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12, 6))
     for i in range(num_components):
         plt.subplot(num_components, 1, i + 1)
         plt.plot(Vh[i, :])
@@ -152,20 +159,20 @@ if configs.plot_steps:
         plt.ylabel('Amplitude')
         plt.grid()
     plt.tight_layout()
-    plt.show()
+    save_figure(fig, "02_svd_components.png")
 
 # Apply signal quality indices to select the best accumalated components
 optimal_vh_components = generate_ppg_signal(signals = Vh, fs = configs.fps, normal_hr_freq = NORMAL_HR_FREQ)
 
 if configs.plot_steps:
-    plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12, 6))
     plt.plot(optimal_vh_components[:])
     plt.title(f'Optimal Component')
     plt.xlabel('Frame')
     plt.ylabel('Amplitude')
     plt.grid()
     plt.tight_layout()
-    plt.show()
+    save_figure(fig, "03_optimal_component.png")
 
 # Short-Time-Fourier-Transform
 frequencies, times, short_fourier_ppg = stft(optimal_vh_components, fs=configs.fps, nperseg=STFT_WINDOW_SIZE,noverlap=STFT_OVERLAP)
@@ -178,14 +185,14 @@ heart_rate_candidates = frequencies * 60
 hr_curve = extract_curve(short_time_fourier_ppg_magnitude, heart_rate_candidates, SMOOTHNESS_PENALTY)
 
 if configs.plot_steps:
-    plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(12, 6))
     plt.plot(hr_curve[:])
     plt.title(f'Extracted Heart Rate Curve')
     plt.xlabel('Time Windows')
     plt.ylabel('Amplitude')
     plt.grid()
     plt.tight_layout()
-    plt.show()
+    save_figure(fig, "04_extracted_hr_curve.png")
 
 # HR Prediction
 # Calculate the time duration (T) of the signal
