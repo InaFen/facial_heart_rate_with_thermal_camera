@@ -52,55 +52,6 @@ mean_values_subregions = [result[roi] for roi in subregions_names]
 raw_before_averaging = np.array(mean_values_subregions)
 
 
-# Temporal filtering over ROI to remove NETD noise while preserving heart rate----------------------------
-# Can use either moving average or Savitzky-Golay filter (preserves peaks better)
-
-filtering_window_size_frames = int(configs.fps / TARGET_HZ)
-
-if filtering_window_size_frames > 1:
-    temporally_filtered_values_subregions = []
-    for roi_signal_values in mean_values_subregions:
-        roi_signal_array = np.asarray(roi_signal_values)
-        # moving_average
-        # Average over a sliding window: The result should have target_cutoff_hz (e.g. 8 Hz)
-        window_length = min(len(roi_signal_array), filtering_window_size_frames)
-        if window_length < 1:
-            temporally_filtered_values_subregions.append(roi_signal_array.tolist())
-            continue
-        averaging_kernel = np.ones(window_length) / window_length
-        filtered_roi_signal = np.convolve(roi_signal_array, averaging_kernel, mode="same")
-        
-        temporally_filtered_values_subregions.append(filtered_roi_signal.tolist())
-    mean_values_subregions = temporally_filtered_values_subregions
-
-if configs.plot_steps:
-    raw_after_averaging = np.array(mean_values_subregions)
-
-    t = np.arange(raw_before_averaging.shape[1])
-
-    fig, ax = plt.subplots(figsize=(10, 4))
-
-    for i in range(raw_before_averaging.shape[0]):
-        ax.plot(
-            t,
-            raw_before_averaging[i],
-            label=f"{subregions_names[i]} (before)",
-            alpha=0.4,
-        )
-        ax.plot(
-            t,
-            raw_after_averaging[i],
-            label=f"{subregions_names[i]} (after)",
-            linewidth=2,
-        )
-
-    ax.set_title("Mean values subregions (before vs after averaging)")
-    ax.set_ylabel("Amplitude")
-    ax.legend(loc='upper right', fontsize=8, ncol=2)
-
-    plt.tight_layout()
-    plt.show()
-
 # Interpolate NaNs per subregion over time (fallback to global mean if a subregion is fully NaN)
 mean_values_series = [np.asarray(series, dtype=float) for series in mean_values_subregions]
 flat_values = np.concatenate([series for series in mean_values_series if series.size])
