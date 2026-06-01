@@ -301,9 +301,9 @@ ihr_eval = evaluate_instantaneous_hr_against_ground_truth(
 	)
 
 
-# TODO understand wavelet
-# TODO one signal: use ICA? PCA? Or just pick one with best SNR in FFT? Or look at peaks?
-# Adern fließen nihct überall, evtl nicht dominant
 
-# decided on bandpass bc filters out high-, low-frequency noise
-# decided on moving average bc with random NETD noise its better than savitzky-golay which preserves peaks but also preserves noise peaks, while moving average smooths out noise more (but also smooths out peaks more, so need to choose window size carefully to not smooth out heart rate peaks too much)
+# Show raw signal
+# Apply spatial filter: Gaussian kernel (size given by user)
+# Show signal after spatial filter
+# Bandpass filter/ Highpass and notch filter
+# Decide on signal for peak detection: Relative vs absoulte FFT, see notes
