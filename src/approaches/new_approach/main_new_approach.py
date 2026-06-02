@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -17,6 +18,12 @@ sys.path.insert(0, str(project_root))
 
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
+from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+from src.approaches.new_approach.utils.utils_landmark_detection import (
+    _asc_to_kelvin_x100,
+    _parse_asc_file,
+    load_gray_frame,
+)
 from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 
 
@@ -77,6 +84,48 @@ if not selected_rois:
 output_root.mkdir(parents=True, exist_ok=True)
 fps = float(configs.fps)
 n_cells = SUBROI_GRID_ROWS * SUBROI_GRID_COLS
+
+# --- Load the source frames once, in the same order/range as roi_pixel_data,
+#     so the sub-ROI overlay video can be drawn onto the actual thermal frames
+#     (mirrors the whole-ROI video written by the ROI pipeline). -------------
+if configs.timespan_signal_to_look_at is not None:
+    _start_t, _end_t = configs.timespan_signal_to_look_at
+    src_start_frame = int(_start_t * fps)
+    src_end_frame = int(_end_t * fps)
+else:
+    src_start_frame = 0
+    src_end_frame = None
+
+source_frames: list[np.ndarray] = []
+gray_path = configs.path_gray_frames
+if os.path.isfile(gray_path) and gray_path.endswith(".npy"):
+    _stack = np.load(gray_path, allow_pickle=False)
+    _end = src_end_frame if src_end_frame is not None else _stack.shape[0]
+    source_frames = [_stack[i] for i in range(src_start_frame, min(_end, _stack.shape[0]))]
+elif os.path.isdir(gray_path):
+    _files = [f for f in os.listdir(gray_path) if os.path.isfile(os.path.join(gray_path, f))]
+    _ext = os.path.splitext(_files[0])[1].lower() if _files else ""
+    if _ext == ".asc":
+        _asc_paths = sorted(os.path.join(gray_path, f) for f in _files if f.lower().endswith(".asc"))
+        _end = src_end_frame if src_end_frame is not None else len(_asc_paths)
+        for _p in _asc_paths[src_start_frame:_end]:
+            _fr = _parse_asc_file(_p)
+            if configs.asc_unit == "kelvin":
+                _fr = _asc_to_kelvin_x100(_fr)
+            source_frames.append(_fr)
+    else:
+        _, _gray_files = sort_grayfiles_with_interpolations(gray_path)
+        _end = src_end_frame if src_end_frame is not None else len(_gray_files)
+        for _fname in _gray_files[src_start_frame:_end]:
+            source_frames.append(load_gray_frame(os.path.join(gray_path, _fname)))
+if not source_frames:
+    print(f"[sub-ROI video] No source frames could be loaded from {gray_path}; overlay video will be skipped.")
+
+# Distinct BGR colors per sub-ROI cell (matching the tab10 colormap used in plots).
+subroi_cmap = plt.get_cmap("tab10")
+cell_colors_bgr = [
+    tuple(int(round(c * 255)) for c in subroi_cmap(cell % 10)[:3][::-1]) for cell in range(n_cells)
+]
 
 # --- Process every selected ROI --------------------------------------------
 for roi_name in selected_rois:
@@ -381,6 +430,67 @@ for roi_name in selected_rois:
         fig.tight_layout()
         fig.savefig(roi_dir / f"{prefix}_subrois.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
+
+    # ------------------------------------------------------------------
+    # 6) Sub-ROI overlay video: draw the sub-ROI grid onto the source frames
+    #    (one video per ROI), similar to the whole-ROI video produced by the
+    #    ROI pipeline. The spatial sub-ROI layout is identical across stages,
+    #    so a single video per ROI is written. Each sub-ROI is filled with a
+    #    distinct translucent color and outlined, matching the plot colors.
+    # ------------------------------------------------------------------
+    if source_frames:
+        n_video = min(len(source_frames), n_frames)
+        frame_height, frame_width = source_frames[0].shape[:2]
+        video_path = str(roi_dir / "subrois_overlay.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+
+        for frame_idx in range(n_video):
+            frame = source_frames[frame_idx]
+            vmin, vmax = np.percentile(frame, [1, 99])
+            frame_clipped = np.clip(frame, vmin, vmax)
+            frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+
+            coords = coords_per_frame[frame_idx]
+            if coords.shape[0] > 0:
+                xs = coords[:, 0]
+                ys = coords[:, 1]
+                x_min, x_max = int(xs.min()), int(xs.max())
+                y_min, y_max = int(ys.min()), int(ys.max())
+                x_span = max(x_max - x_min + 1, 1)
+                y_span = max(y_max - y_min + 1, 1)
+
+                col_idx = np.clip(((xs - x_min) * SUBROI_GRID_COLS) // x_span, 0, SUBROI_GRID_COLS - 1)
+                row_idx = np.clip(((ys - y_min) * SUBROI_GRID_ROWS) // y_span, 0, SUBROI_GRID_ROWS - 1)
+                cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
+
+                # Keep only in-bounds pixels (coords are absolute image coordinates).
+                in_bounds = (ys >= 0) & (ys < frame_height) & (xs >= 0) & (xs < frame_width)
+
+                # Filled translucent color per sub-ROI.
+                overlay = frame_bgr.copy()
+                for cell in range(n_cells):
+                    sel = (cell_idx == cell) & in_bounds
+                    if not np.any(sel):
+                        continue
+                    overlay[ys[sel], xs[sel]] = cell_colors_bgr[cell]
+                frame_bgr = cv2.addWeighted(overlay, 0.5, frame_bgr, 0.5, 0)
+
+                # Outline each sub-ROI so the grid boundaries are visible.
+                for cell in range(n_cells):
+                    sel = (cell_idx == cell) & in_bounds
+                    if not np.any(sel):
+                        continue
+                    cell_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+                    cell_mask[ys[sel], xs[sel]] = 255
+                    contours, _ = cv2.findContours(cell_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(frame_bgr, contours, -1, cell_colors_bgr[cell], 1)
+
+            writer.write(frame_bgr)
+
+        writer.release()
+        print(f"Saved sub-ROI overlay video to: {video_path}")
 
 print("Done.")
 
