@@ -23,6 +23,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     _parse_asc_file,
     load_gray_frame,
 )
+from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, highpass_subroi_means, plot_subroi_psds
 
 
 DEFAULT_CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
@@ -36,8 +37,8 @@ GAUSSIAN_SIGMA = None
 # Sub-ROI grid: the ROI is divided into SUBROI_GRID_ROWS x SUBROI_GRID_COLS areas
 # (n = rows * cols sub-ROIs). For each sub-ROI the mean signal over time and its
 # PSD are plotted together in one figure (per processing stage).
-SUBROI_GRID_ROWS = 3
-SUBROI_GRID_COLS = 3
+SUBROI_GRID_ROWS = 8
+SUBROI_GRID_COLS = 8
 
 
 def safe_name(value: str) -> str:
@@ -205,31 +206,7 @@ for roi_name in selected_rois:
     #    Frames where a sub-ROI has no pixels stay NaN (shown as gaps, no
     #    interpolation).
     # ------------------------------------------------------------------
-    def compute_subroi_means(frame_values_list: list[np.ndarray]) -> np.ndarray:
-        subroi_means = np.full((n_frames, n_cells), np.nan, dtype=float)
-        for frame_idx in range(n_frames):
-            coords = coords_per_frame[frame_idx]
-            values = np.asarray(frame_values_list[frame_idx], dtype=float)
-            if coords.shape[0] == 0 or values.size == 0:
-                continue
-            xs = coords[:, 0]
-            ys = coords[:, 1]
-            x_min, x_max = int(xs.min()), int(xs.max())
-            y_min, y_max = int(ys.min()), int(ys.max())
-            x_span = max(x_max - x_min + 1, 1)
-            y_span = max(y_max - y_min + 1, 1)
-            col_idx = np.clip(((xs - x_min) * SUBROI_GRID_COLS) // x_span, 0, SUBROI_GRID_COLS - 1)
-            row_idx = np.clip(((ys - y_min) * SUBROI_GRID_ROWS) // y_span, 0, SUBROI_GRID_ROWS - 1)
-            cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
-
-            finite = np.isfinite(values)
-            sums = np.zeros(n_cells, dtype=float)
-            counts = np.zeros(n_cells, dtype=float)
-            np.add.at(sums, cell_idx, np.where(finite, np.nan_to_num(values, nan=0.0), 0.0))
-            np.add.at(counts, cell_idx, finite.astype(float))
-            with np.errstate(divide="ignore", invalid="ignore"):
-                subroi_means[frame_idx, :] = np.where(counts > 0, sums / np.maximum(counts, 1.0), np.nan)
-        return subroi_means
+    
 
     stages = [
         ("01_raw", raw_frame_signals, f"{roi_name} - Raw"),
@@ -258,29 +235,18 @@ for roi_name in selected_rois:
         plt.close(fig)
 
         # Sub-ROI mean signals, each sub-ROI in its OWN subplot.
-        subroi_means = compute_subroi_means(frame_values_list)
-        fig, axes = plt.subplots(
-            SUBROI_GRID_ROWS,
-            SUBROI_GRID_COLS,
-            figsize=(4.0 * SUBROI_GRID_COLS, 2.6 * SUBROI_GRID_ROWS),
-            sharex=True,
-            squeeze=False,
-        )
-        for cell in range(n_cells):
-            row = cell // SUBROI_GRID_COLS
-            col = cell % SUBROI_GRID_COLS
-            ax = axes[row][col]
-            ax.plot(time_axis, subroi_means[:, cell], color=cmap(cell % 10), linewidth=1.2)
-            ax.set_title(f"sub-ROI r{row}c{col}", fontsize=9)
-            ax.grid(alpha=0.25)
-            if row == SUBROI_GRID_ROWS - 1:
-                ax.set_xlabel("Time (s)")
-            if col == 0:
-                ax.set_ylabel("Temperature")
-        fig.suptitle(f"{label} sub-ROI mean signals ({SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS} grid)")
-        fig.tight_layout()
-        fig.savefig(roi_dir / f"{prefix}_subrois.png", dpi=200, bbox_inches="tight")
-        plt.close(fig)
+        subroi_means = compute_subroi_means(frame_values_list, coords_per_frame, len(frame_values_list), n_cells, SUBROI_GRID_ROWS, SUBROI_GRID_COLS)
+
+        plot_subroi_means(
+            n_cells=n_cells,
+            subroi_means=subroi_means,
+            time_axis=time_axis,
+            label=label,
+            roi_dir=roi_dir,
+            prefix=prefix,
+            SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+            SUBROI_GRID_COLS=SUBROI_GRID_COLS)
+        
 
     # ------------------------------------------------------------------
     # 6) Sub-ROI overlay video: draw the sub-ROI grid onto the source frames
@@ -296,53 +262,47 @@ for roi_name in selected_rois:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
 
-        for frame_idx in range(n_video):
-            frame = source_frames[frame_idx]
-            vmin, vmax = np.percentile(frame, [1, 99])
-            frame_clipped = np.clip(frame, vmin, vmax)
-            frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-            frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+        write_subrois_video(
+            writer = writer,
+            n_video=n_video,
+            source_frames=source_frames,
+            coords_per_frame=coords_per_frame,
+            video_path=video_path,
+            SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+            SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+            n_cells=n_cells,
+            cell_colors_bgr=cell_colors_bgr,
+            frame_height=frame_height,
+            frame_width=frame_width)
+        
+    plot_subroi_psds(
+        subroi_means=filtered_subroi_means,
+        time_axis=time_axis,
+        label=f"{roi_name} - Sub-ROI mean signals (high-pass filtered)",
+        roi_dir=roi_dir,
+        prefix="before_highpass",
+        SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+        SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+    )
 
-            coords = coords_per_frame[frame_idx]
-            if coords.shape[0] > 0:
-                xs = coords[:, 0]
-                ys = coords[:, 1]
-                # Per-frame sub-ROI grid (same per-frame bounding box as the
-                # sub-ROI mean plots), so the overlay matches the analyzed sub-ROIs.
-                x_min, x_max = int(xs.min()), int(xs.max())
-                y_min, y_max = int(ys.min()), int(ys.max())
-                x_span = max(x_max - x_min + 1, 1)
-                y_span = max(y_max - y_min + 1, 1)
-                col_idx = np.clip(((xs - x_min) * SUBROI_GRID_COLS) // x_span, 0, SUBROI_GRID_COLS - 1)
-                row_idx = np.clip(((ys - y_min) * SUBROI_GRID_ROWS) // y_span, 0, SUBROI_GRID_ROWS - 1)
-                cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
+    # add higpass   
+    filtered_subroi_means = highpass_subroi_means(
+        subroi_means,
+        fs=fps,
+        cutoff=0.7,
+        max_gap_frames=3,      # interpolate gaps of ≤3 frames
+        max_missing_fraction=0.15,
+    )
 
-                # Keep only in-bounds pixels (coords are absolute image coordinates).
-                in_bounds = (ys >= 0) & (ys < frame_height) & (xs >= 0) & (xs < frame_width)
-
-                # Filled translucent color per sub-ROI.
-                overlay = frame_bgr.copy()
-                for cell in range(n_cells):
-                    sel = (cell_idx == cell) & in_bounds
-                    if not np.any(sel):
-                        continue
-                    overlay[ys[sel], xs[sel]] = cell_colors_bgr[cell]
-                frame_bgr = cv2.addWeighted(overlay, 0.5, frame_bgr, 0.5, 0)
-
-                # Outline each sub-ROI so the grid boundaries are visible.
-                for cell in range(n_cells):
-                    sel = (cell_idx == cell) & in_bounds
-                    if not np.any(sel):
-                        continue
-                    cell_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
-                    cell_mask[ys[sel], xs[sel]] = 255
-                    contours, _ = cv2.findContours(cell_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    cv2.drawContours(frame_bgr, contours, -1, cell_colors_bgr[cell], 1)
-
-            writer.write(frame_bgr)
-
-        writer.release()
-        print(f"Saved sub-ROI overlay video to: {video_path}")
+    plot_subroi_psds(
+        subroi_means=filtered_subroi_means,
+        time_axis=time_axis,
+        label=f"{roi_name} - Sub-ROI mean signals (high-pass filtered)",
+        roi_dir=roi_dir,
+        prefix="after_highpass",
+        SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+        SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+    )
 
 print("Done.")
 
