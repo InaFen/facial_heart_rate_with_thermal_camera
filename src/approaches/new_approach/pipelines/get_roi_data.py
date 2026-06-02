@@ -26,9 +26,27 @@ from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_wi
 from src.approaches.yang_et_al.utils_face_tracking import track_face
 
 
+# Top forehead landmarks (left side: 103/67/109, center: 10, right side: 338/297/332).
+# If a chosen ROI contains ANY of these it reaches the top of the forehead and is
+# eligible for upward extension towards the hairline.
 FOREHEAD_EXTEND_LANDMARKS = {103, 67, 109, 10, 338, 297, 332}
 FOREHEAD_TEMP_TOLERANCE_PCT = 0.05  # Allow 5% deviation from mean
 FOREHEAD_MAX_EXTEND_PIXELS = 100  # Max pixels to extend upward
+
+# ROI names for which the upward forehead extension is activated. Each ROI is
+# expanded independently using only its own mask, so using e.g. only
+# "right_forehead" expands just the right forehead, not the whole forehead.
+FOREHEAD_ROI_NAMES = {"forehead", "left_forehead", "right_forehead"}
+
+
+def _normalize_roi_name(name: str) -> str:
+    """Normalize an ROI name for matching (case/space/hyphen insensitive)."""
+    return str(name).strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def is_forehead_roi(name: str) -> bool:
+    """Return True if the ROI name is a forehead-type ROI eligible for extension."""
+    return _normalize_roi_name(name) in FOREHEAD_ROI_NAMES
 
 
 def extend_forehead_roi_upward(
@@ -68,11 +86,15 @@ def extend_forehead_roi_upward(
     Returns:
         Extended mask as 2D binary array
     """
-    required_set = set(FOREHEAD_EXTEND_LANDMARKS)
+    # The ROI must reach the top of the forehead to be extendable. For the full
+    # forehead all top landmarks are present; for a left/right forehead only the
+    # corresponding side's top landmarks are present. Hence we trigger on ANY
+    # overlap with the top-forehead landmark set rather than requiring all of them.
+    trigger_set = set(FOREHEAD_EXTEND_LANDMARKS)
     provided_set = set(landmark_indices)
-    if not required_set.issubset(provided_set):
-        # Not a full forehead ROI; return original mask
-        print(f"[extend_forehead] Required landmarks {required_set} not found in {provided_set}. Skipping extension.")
+    if not trigger_set & provided_set:
+        # ROI does not reach the top of the forehead; nothing to extend.
+        print(f"[extend_forehead] No top-forehead landmarks {trigger_set} found in {provided_set}. Skipping extension.")
         return mask
 
     height, width = frame.shape
@@ -197,9 +219,10 @@ def apply_roi_masks_to_npy_frames(
             if mask.shape != frame.shape:
                 raise ValueError(f"Mask shape {mask.shape} does not match frame shape {frame.shape} for ROI {roi_name}")
             
-            # Apply forehead upward extension if applicable
-            if roi_name == "forehead" and roi_landmarks and roi_name in roi_landmarks:
-                #print(f"[NPY] Extending forehead ROI upward for frame {frame_idx} with {len(roi_landmarks[roi_name])} landmarks")
+            # Apply forehead upward extension if applicable (forehead / left_forehead / right_forehead).
+            # Each forehead-type ROI is expanded independently using only its own mask.
+            if is_forehead_roi(roi_name) and roi_landmarks and roi_name in roi_landmarks:
+                #print(f"[NPY] Extending forehead ROI '{roi_name}' upward for frame {frame_idx} with {len(roi_landmarks[roi_name])} landmarks")
                 mask = extend_forehead_roi_upward(
                     frame=frame,
                     mask=mask,
@@ -586,13 +609,13 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
         isinstance(roi_pixel_data, list) and len(roi_pixel_data) > 0):
         # Check if forehead extension was applied (roi_landmarks was passed)
         if (not gray_frames_path_is_npy and getattr(configs, 'used_rois', None) and 
-            "forehead" in configs.used_rois):
+            any(is_forehead_roi(rn) for rn in configs.used_rois)):
             print("[ROI Pipeline] Reconstructing masks from extended forehead coordinates...")
             # Reconstruct extended masks from roi_pixel_data coordinates
             for frame_idx, frame_data in enumerate(roi_pixel_data):
                 if frame_idx < len(roi_pixel_log):
                     for roi_name in list(roi_pixel_log[frame_idx].keys()):
-                        if roi_name == "forehead" and roi_name in frame_data:
+                        if is_forehead_roi(roi_name) and roi_name in frame_data:
                             if "coords" in frame_data[roi_name]:
                                 coords = frame_data[roi_name]["coords"]
                                 if coords:  # Only reconstruct if coords are not empty
@@ -602,13 +625,13 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                                         if 0 <= y < height and 0 <= x < width:
                                             new_mask[y, x] = 255
                                     roi_pixel_log[frame_idx][roi_name] = new_mask
-        elif gray_frames_path_is_npy and getattr(configs, 'used_rois', None) and "forehead" in configs.used_rois:
+        elif gray_frames_path_is_npy and getattr(configs, 'used_rois', None) and any(is_forehead_roi(rn) for rn in configs.used_rois):
             print("[ROI Pipeline] Reconstructing masks from extended forehead coordinates (NPY)...")
             # Same logic for NPY frames
             for frame_idx, frame_data in enumerate(roi_pixel_data):
                 if frame_idx < len(roi_pixel_log):
                     for roi_name in list(roi_pixel_log[frame_idx].keys()):
-                        if roi_name == "forehead" and roi_name in frame_data:
+                        if is_forehead_roi(roi_name) and roi_name in frame_data:
                             if "coords" in frame_data[roi_name]:
                                 coords = frame_data[roi_name]["coords"]
                                 if coords:

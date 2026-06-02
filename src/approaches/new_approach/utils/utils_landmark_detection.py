@@ -954,7 +954,10 @@ def apply_roi_masks_to_gray_frames(
         roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "values", "mean_value"}}
     """
     # Import extension function here to avoid circular imports
-    from src.approaches.new_approach.pipelines.get_roi_data import extend_forehead_roi_upward
+    from src.approaches.new_approach.pipelines.get_roi_data import (
+        extend_forehead_roi_upward,
+        is_forehead_roi,
+    )
     
     _, gray_files = sort_grayfiles_with_interpolations(gray_dir)
     if not gray_files:
@@ -997,9 +1000,10 @@ def apply_roi_masks_to_gray_frames(
             if mask.shape != frame.shape:
                 raise ValueError(f"Mask shape {mask.shape} does not match frame shape {frame.shape} for ROI {roi_name}")
 
-            # Apply forehead upward extension if applicable
-            if roi_name == "forehead" and roi_landmarks and roi_name in roi_landmarks:
-                print(f"[Gray] Extending forehead ROI upward for frame {idx} with {len(roi_landmarks[roi_name])} landmarks")
+            # Apply forehead upward extension if applicable (forehead / left_forehead / right_forehead).
+            # Each forehead-type ROI is expanded independently using only its own mask.
+            if is_forehead_roi(roi_name) and roi_landmarks and roi_name in roi_landmarks:
+                print(f"[Gray] Extending forehead ROI '{roi_name}' upward for frame {idx} with {len(roi_landmarks[roi_name])} landmarks")
                 mask = extend_forehead_roi_upward(
                     frame=frame,
                     mask=mask,
