@@ -3,6 +3,7 @@ from typing import Dict, List
 import os
 import cv2
 import numpy as np
+import yaml
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.utils.utils_landmark_detection import (
     apply_facemesh_to_thermal_video,
@@ -47,6 +48,83 @@ def _normalize_roi_name(name: str) -> str:
 def is_forehead_roi(name: str) -> bool:
     """Return True if the ROI name is a forehead-type ROI eligible for extension."""
     return _normalize_roi_name(name) in FOREHEAD_ROI_NAMES
+
+
+# Path to the shared ROI landmark definitions file (single source of truth).
+# Located in the new_approach package root, next to the per-approach configs.
+ROI_LANDMARKS_OPTIONS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "roi_landmarks_options.yaml",
+)
+
+_ROI_LANDMARKS_OPTIONS_CACHE: Dict[str, List[int]] = None
+
+
+def load_roi_landmarks_options(path: str = None) -> Dict[str, List[int]]:
+    """
+    Load the named ROI landmark definitions from the shared options file.
+
+    The result is cached when the default path is used. Returns a mapping of
+    {roi_name: [landmark indices]}.
+    """
+    global _ROI_LANDMARKS_OPTIONS_CACHE
+    if path is None and _ROI_LANDMARKS_OPTIONS_CACHE is not None:
+        return _ROI_LANDMARKS_OPTIONS_CACHE
+
+    file_path = path or ROI_LANDMARKS_OPTIONS_PATH
+    options: Dict[str, List[int]] = {}
+    if os.path.isfile(file_path):
+        with open(file_path, "r") as f:
+            data = yaml.safe_load(f) or {}
+        # Support both a top-level 'roi_landmarks_options' key and a bare mapping.
+        options = data.get("roi_landmarks_options", data) or {}
+
+    if path is None:
+        _ROI_LANDMARKS_OPTIONS_CACHE = options
+    return options
+
+
+def get_roi_landmarks_options(configs: Config) -> Dict[str, List[int]]:
+    """
+    Return the effective ROI landmark options for a run.
+
+    The shared external definitions are used as the base; any inline
+    `configs.roi_landmarks_options` (e.g. still defined in a per-approach YAML)
+    is merged on top and takes precedence, preserving backward compatibility.
+    """
+    options = dict(load_roi_landmarks_options())
+    inline = getattr(configs, "roi_landmarks_options", None) or {}
+    options.update(inline)
+    return options
+
+
+def select_roi_landmarks(
+    used_rois: List[str],
+    options: Dict[str, List[int]],
+    strict: bool = True,
+) -> Dict[str, List[int]]:
+    """
+    Select the landmark definitions for the requested ROI names.
+
+    Parameters:
+        used_rois: list of ROI names to select.
+        options: mapping of all available ROI landmark definitions.
+        strict: if True, raise on an unknown ROI name; if False, silently skip it.
+
+    Returns:
+        Mapping {roi_name: [landmark indices]} for the requested ROIs.
+    """
+    selected: Dict[str, List[int]] = {}
+    for rn in used_rois:
+        if rn in options:
+            selected[rn] = options[rn]
+        elif strict:
+            raise ValueError(
+                f"Requested ROI '{rn}' not found in 'roi_landmarks_options'.\n"
+                f"Please add the ROI definition to {ROI_LANDMARKS_OPTIONS_PATH} "
+                "(or to an inline 'roi_landmarks_options' mapping in the config)."
+            )
+    return selected
 
 
 def extend_forehead_roi_upward(
@@ -473,25 +551,19 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     flip_upside_down=flip_flag,
                 )
             else: # Standard method is facemesh-based
-                # Build ROI landmarks to pass to facemesh: prefer explicit selection via configs.used_rois
-                # and configs.roi_landmarks_options. Fall back to the older roi_landmarks_subgrid_face for compatibility.
+                # Build ROI landmarks to pass to facemesh: select the requested
+                # ROIs (configs.used_rois) from the shared roi_landmarks_options
+                # file (merged with any inline config definitions).
                 if getattr(configs, 'used_rois', None):
-                    roi_landmarks_selected = {}
-                    for rn in configs.used_rois:
-                        if rn in getattr(configs, 'roi_landmarks_options', {}):
-                            roi_landmarks_selected[rn] = configs.roi_landmarks_options[rn]
-                        else:
-                            raise ValueError(
-                                f"Requested ROI '{rn}' not found in 'roi_landmarks_options'.\n"
-                                "Please add the ROI definition to 'roi_landmarks_options' in the config."
-                            )
+                    roi_options = get_roi_landmarks_options(configs)
+                    roi_landmarks_selected = select_roi_landmarks(configs.used_rois, roi_options)
                     if not roi_landmarks_selected:
                         raise ValueError(
                             "No valid ROIs selected from 'used_rois'. Ensure 'used_rois' names exist in 'roi_landmarks_options'."
                         )
                 else:
                     raise ValueError(
-                        "No ROI definitions found in config. Please provide 'roi_landmarks_options' mapping in the YAML."
+                        "No ROI definitions found in config. Please provide 'used_rois' and a 'roi_landmarks_options' file/mapping."
                     )
 
                 roi_pixel_log = apply_facemesh_to_thermal_video(
@@ -547,10 +619,10 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                 # Pass roi_landmarks to enable forehead upward extension
                 roi_landmarks_for_extraction = None
                 if not configs.manual_roi_enabled and getattr(configs, 'used_rois', None):
-                    roi_landmarks_for_extraction = {}
-                    for rn in configs.used_rois:
-                        if rn in getattr(configs, 'roi_landmarks_options', {}):
-                            roi_landmarks_for_extraction[rn] = configs.roi_landmarks_options[rn]
+                    roi_options = get_roi_landmarks_options(configs)
+                    roi_landmarks_for_extraction = select_roi_landmarks(
+                        configs.used_rois, roi_options, strict=False
+                    )
                     print(f"[ROI Pipeline] Built roi_landmarks_for_extraction: {list(roi_landmarks_for_extraction.keys())}")
                 else:
                     print(f"[ROI Pipeline] Skipping roi_landmarks (manual_roi_enabled={configs.manual_roi_enabled}, used_rois={getattr(configs, 'used_rois', None)})")
@@ -582,10 +654,10 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     # Build roi_landmarks for gray frame extraction to enable forehead upward extension
                     roi_landmarks_for_gray = None
                     if not configs.manual_roi_enabled and getattr(configs, 'used_rois', None):
-                        roi_landmarks_for_gray = {}
-                        for rn in configs.used_rois:
-                            if rn in getattr(configs, 'roi_landmarks_options', {}):
-                                roi_landmarks_for_gray[rn] = configs.roi_landmarks_options[rn]
+                        roi_options = get_roi_landmarks_options(configs)
+                        roi_landmarks_for_gray = select_roi_landmarks(
+                            configs.used_rois, roi_options, strict=False
+                        )
                         print(f"[ROI Pipeline] Built roi_landmarks_for_gray: {list(roi_landmarks_for_gray.keys())}")
                     else:
                         print(f"[ROI Pipeline] Skipping roi_landmarks for gray (manual_roi_enabled={configs.manual_roi_enabled}, used_rois={getattr(configs, 'used_rois', None)})")

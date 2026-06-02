@@ -53,8 +53,21 @@ def save_figure(fig: plt.Figure, filename: str) -> None:
 
 if not getattr(configs, "used_rois", None):
     raise ValueError("configs.used_rois must be defined in configs_nair_et_al.yaml, similar to the Yang-style YAML.")
-if not getattr(configs, "roi_landmarks_options", None):
-    raise ValueError("configs.roi_landmarks_options must be defined in configs_nair_et_al.yaml.")
+# ROI landmark definitions live in the shared file
+# `src/approaches/new_approach/roi_landmarks_options.yaml` (merged with any inline
+# configs.roi_landmarks_options). Verify the requested ROIs resolve.
+from src.approaches.new_approach.pipelines.get_roi_data import (
+    get_roi_landmarks_options,
+    select_roi_landmarks,
+)
+_roi_options = get_roi_landmarks_options(configs)
+if not _roi_options:
+    raise ValueError(
+        "No ROI landmark definitions found. Define them in the shared file "
+        "'src/approaches/new_approach/roi_landmarks_options.yaml' (or inline in configs_nair_et_al.yaml)."
+    )
+# Raises if any name in used_rois is unknown.
+select_roi_landmarks(configs.used_rois, _roi_options)
 
 ############
 # Preprocessing: Landmark detection & denoising 
