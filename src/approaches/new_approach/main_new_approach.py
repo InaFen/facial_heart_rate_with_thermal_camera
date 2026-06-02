@@ -11,7 +11,6 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter
-from scipy.signal import butter, filtfilt, iirnotch, welch
 
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root))
@@ -24,7 +23,6 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     _parse_asc_file,
     load_gray_frame,
 )
-from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 
 
 DEFAULT_CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
@@ -32,15 +30,8 @@ CONFIG_PATH_ENV_VAR = "NEW_APPROACH_CONFIG_PATH"
 PLOTS_SAVE_DIR_ENV_VAR = "NEW_APPROACH_PLOTS_SAVE_DIR"
 DEFAULT_OUTPUT_ROOT = Path("saved_results/new_approach")
 
-FILTER_TYPE = "bandpass"  # "none", "highpass", "bandpass", "highpass and notch"
 GAUSSIAN_KERNEL_SIZE = 7
 GAUSSIAN_SIGMA = None
-HIGHPASS_CUTOFF_HZ = 0.4
-BANDPASS_LOW_HZ = 0.4
-BANDPASS_HIGH_HZ = 4.0
-FILTER_ORDER = 5
-NOTCH_FREQUENCY_HZ = 1.0
-NOTCH_QUALITY_FACTOR = 30.0
 
 # Sub-ROI grid: the ROI is divided into SUBROI_GRID_ROWS x SUBROI_GRID_COLS areas
 # (n = rows * cols sub-ROIs). For each sub-ROI the mean signal over time and its
@@ -61,9 +52,6 @@ configs.plot_steps = False
 
 plots_save_dir = os.environ.get(PLOTS_SAVE_DIR_ENV_VAR)
 output_root = Path(plots_save_dir) if plots_save_dir else DEFAULT_OUTPUT_ROOT
-
-filter_type_normalized = FILTER_TYPE.lower().strip()
-safe_filter = safe_name(FILTER_TYPE)
 
 # --- Run ROI extraction pipeline -------------------------------------------
 print("Expects one big ROI")
@@ -136,9 +124,9 @@ for roi_name in selected_rois:
 
     # ------------------------------------------------------------------
     # 1) Extract per-frame coordinates and raw pixel values for this ROI.
-    #    Frames with no pixels are kept as empty (0, 2) coord arrays so the
-    #    time axis stays consistent; they become NaN rows that are
-    #    interpolated over time later.
+    #    The raw pixels are kept as-is (ragged, variable length per frame);
+    #    frames with no pixels become empty (0, 2) coord arrays and show up
+    #    as gaps (NaN) in the plots. No padding/interpolation is applied.
     # ------------------------------------------------------------------
     coords_per_frame: list[np.ndarray] = []
     raw_frame_signals: list[np.ndarray] = []
@@ -162,78 +150,11 @@ for roi_name in selected_rois:
     time_axis = time_axis_full / fps
 
     # ------------------------------------------------------------------
-    # 1b) Build a STABLE union grid of absolute (x, y) pixel positions across
-    #     all frames. Every distinct location becomes one fixed column, so
-    #     column j always refers to the SAME physical pixel in every frame.
-    #     A pixel missing from a given frame is NaN there and filled by
-    #     temporal interpolation. This keeps the rectangular (time x pixels)
-    #     shape required by the temporal filter / Welch PSD while making each
-    #     per-pixel time series physically meaningful (rather than positional).
-    # ------------------------------------------------------------------
-    _nonempty = [c for c in coords_per_frame if c.shape[0] > 0]
-    all_coords = np.vstack(_nonempty) if _nonempty else np.zeros((0, 2), dtype=int)
-    union_coords = np.unique(all_coords, axis=0)  # sorted lexicographically by (x, y)
-    n_union = union_coords.shape[0]
-    if n_union == 0:
-        raise ValueError(f"ROI '{roi_name}' has no pixels in any frame.")
-
-    # Monotonic integer key per location for fast lookup (y < KEY_MULT always),
-    # consistent with the lexicographic order produced by np.unique above.
-    KEY_MULT = np.int64(1) << 20
-    union_keys = union_coords[:, 0].astype(np.int64) * KEY_MULT + union_coords[:, 1].astype(np.int64)
-    # Union-column index for each frame's pixels (aligned with coords_per_frame).
-    frame_union_cols: list[np.ndarray] = []
-    for coords in coords_per_frame:
-        if coords.shape[0] == 0:
-            frame_union_cols.append(np.zeros((0,), dtype=np.intp))
-            continue
-        keys = coords[:, 0].astype(np.int64) * KEY_MULT + coords[:, 1].astype(np.int64)
-        frame_union_cols.append(np.searchsorted(union_keys, keys))
-
-    # Assign every union pixel to a FIXED sub-ROI grid cell (stable across time),
-    # using the union bounding box. Reused by the sub-ROI plots and overlay video.
-    ux = union_coords[:, 0]
-    uy = union_coords[:, 1]
-    ux_min, ux_max = int(ux.min()), int(ux.max())
-    uy_min, uy_max = int(uy.min()), int(uy.max())
-    ux_span = max(ux_max - ux_min + 1, 1)
-    uy_span = max(uy_max - uy_min + 1, 1)
-    union_col_cell = np.clip(((ux - ux_min) * SUBROI_GRID_COLS) // ux_span, 0, SUBROI_GRID_COLS - 1)
-    union_row_cell = np.clip(((uy - uy_min) * SUBROI_GRID_ROWS) // uy_span, 0, SUBROI_GRID_ROWS - 1)
-    union_cell = union_row_cell * SUBROI_GRID_COLS + union_col_cell  # (n_union,)
-    cell_onehot = np.zeros((n_union, n_cells), dtype=float)
-    cell_onehot[np.arange(n_union), union_cell] = 1.0
-    cell_counts = cell_onehot.sum(axis=0)  # pixels per sub-ROI cell
-
-    # ------------------------------------------------------------------
-    # 2) Scatter ragged per-frame raw values into the (time x union-pixels)
-    #    matrix by absolute position, then interpolate NaNs along time.
-    # ------------------------------------------------------------------
-    raw_padded = np.full((n_frames, n_union), np.nan, dtype=float)
-    for index, (signal_values, cols) in enumerate(zip(raw_frame_signals, frame_union_cols)):
-        if cols.size:
-            raw_padded[index, cols] = signal_values
-
-    finite_global = np.isfinite(raw_padded)
-    global_mean = float(np.nanmean(raw_padded[finite_global])) if finite_global.any() else 0.0
-    if not np.isfinite(global_mean):
-        global_mean = 0.0
-    raw_signals = raw_padded.copy()
-    for pixel_idx in range(raw_signals.shape[1]):
-        series = raw_signals[:, pixel_idx]
-        finite = np.isfinite(series)
-        if finite.sum() == 0:
-            raw_signals[:, pixel_idx] = global_mean
-        elif finite.sum() == 1:
-            raw_signals[:, pixel_idx] = series[finite][0]
-        else:
-            raw_signals[~finite, pixel_idx] = np.interp(
-                time_axis_full[~finite], time_axis_full[finite], series[finite]
-            )
-
-    # ------------------------------------------------------------------
-    # 3) Spatial Gaussian noise reduction inside each frame's ROI.
-    #    Empty frames produce an empty result (-> NaN row after padding).
+    # 2) Spatial Gaussian noise reduction inside each frame's ROI.
+    #    This is a purely per-frame (spatial) operation, so frames do NOT
+    #    need to have the same number of pixels: the raw values are kept as
+    #    ragged, variable-length arrays and only smoothed spatially within
+    #    each frame. No padding, interpolation or cross-frame alignment.
     # ------------------------------------------------------------------
     if GAUSSIAN_KERNEL_SIZE < 1 or GAUSSIAN_KERNEL_SIZE % 2 == 0:
         raise ValueError(f"GAUSSIAN_KERNEL_SIZE must be a positive odd integer, got {GAUSSIAN_KERNEL_SIZE}")
@@ -277,89 +198,57 @@ for roi_name in selected_rois:
             )
         smoothed_frames.append(normalized[rel_ys, rel_xs])
 
-    smoothed_padded = np.full((n_frames, n_union), np.nan, dtype=float)
-    for index, (signal_values, cols) in enumerate(zip(smoothed_frames, frame_union_cols)):
-        if signal_values.size:
-            smoothed_padded[index, cols] = signal_values
-
-    finite_global_s = np.isfinite(smoothed_padded)
-    global_mean_s = float(np.nanmean(smoothed_padded[finite_global_s])) if finite_global_s.any() else 0.0
-    if not np.isfinite(global_mean_s):
-        global_mean_s = 0.0
-    smoothed_signals = smoothed_padded.copy()
-    for pixel_idx in range(smoothed_signals.shape[1]):
-        series = smoothed_signals[:, pixel_idx]
-        finite = np.isfinite(series)
-        if finite.sum() == 0:
-            smoothed_signals[:, pixel_idx] = global_mean_s
-        elif finite.sum() == 1:
-            smoothed_signals[:, pixel_idx] = series[finite][0]
-        else:
-            smoothed_signals[~finite, pixel_idx] = np.interp(
-                time_axis_full[~finite], time_axis_full[finite], series[finite]
-            )
-
     # ------------------------------------------------------------------
-    # 4) Temporal filtering of the smoothed signals.
+    # 3) For each stage (raw and Gaussian-smoothed): divide the ROI into a
+    #    SUBROI_GRID_ROWS x SUBROI_GRID_COLS grid using each frame's own
+    #    bounding box and compute every sub-ROI's mean signal per frame.
+    #    Frames where a sub-ROI has no pixels stay NaN (shown as gaps, no
+    #    interpolation).
     # ------------------------------------------------------------------
-    nyquist = 0.5 * fps
-    if filter_type_normalized == "none":
-        filtered_signals = np.asarray(smoothed_signals, dtype=float)
-    elif filter_type_normalized == "bandpass":
-        filtered_signals = apply_butterworth_bandpass_filter(
-            np.asarray(smoothed_signals, dtype=float),
-            configs.bandpass_lowcut,
-            configs.bandpass_highcut,
-            fps,
-            configs.bandpass_order,
-        )
-    else:
-        if fps <= 0:
-            raise ValueError(f"Sampling frequency must be positive. Got fs={fps}.")
-        if not (0 < HIGHPASS_CUTOFF_HZ < nyquist):
-            raise ValueError(
-                f"Highpass cutoff must satisfy 0 < cutoff < Nyquist. "
-                f"Got cutoff={HIGHPASS_CUTOFF_HZ}, Nyquist={nyquist}."
-            )
-        b_hp, a_hp = butter(FILTER_ORDER, HIGHPASS_CUTOFF_HZ / nyquist, btype="high")
-        filtered_signals = filtfilt(b_hp, a_hp, np.asarray(smoothed_signals, dtype=float), axis=0)
+    def compute_subroi_means(frame_values_list: list[np.ndarray]) -> np.ndarray:
+        subroi_means = np.full((n_frames, n_cells), np.nan, dtype=float)
+        for frame_idx in range(n_frames):
+            coords = coords_per_frame[frame_idx]
+            values = np.asarray(frame_values_list[frame_idx], dtype=float)
+            if coords.shape[0] == 0 or values.size == 0:
+                continue
+            xs = coords[:, 0]
+            ys = coords[:, 1]
+            x_min, x_max = int(xs.min()), int(xs.max())
+            y_min, y_max = int(ys.min()), int(ys.max())
+            x_span = max(x_max - x_min + 1, 1)
+            y_span = max(y_max - y_min + 1, 1)
+            col_idx = np.clip(((xs - x_min) * SUBROI_GRID_COLS) // x_span, 0, SUBROI_GRID_COLS - 1)
+            row_idx = np.clip(((ys - y_min) * SUBROI_GRID_ROWS) // y_span, 0, SUBROI_GRID_ROWS - 1)
+            cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
 
-        if filter_type_normalized == "highpass and notch":
-            if not (0 < NOTCH_FREQUENCY_HZ < nyquist):
-                raise ValueError(
-                    f"Notch frequency must satisfy 0 < frequency < Nyquist. "
-                    f"Got frequency={NOTCH_FREQUENCY_HZ}, Nyquist={nyquist}."
-                )
-            b_n, a_n = iirnotch(NOTCH_FREQUENCY_HZ / nyquist, NOTCH_QUALITY_FACTOR)
-            filtered_signals = filtfilt(b_n, a_n, filtered_signals, axis=0)
-        elif filter_type_normalized != "highpass":
-            raise ValueError(f"Unsupported FILTER_TYPE: {FILTER_TYPE}")
+            finite = np.isfinite(values)
+            sums = np.zeros(n_cells, dtype=float)
+            counts = np.zeros(n_cells, dtype=float)
+            np.add.at(sums, cell_idx, np.where(finite, np.nan_to_num(values, nan=0.0), 0.0))
+            np.add.at(counts, cell_idx, finite.astype(float))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                subroi_means[frame_idx, :] = np.where(counts > 0, sums / np.maximum(counts, 1.0), np.nan)
+        return subroi_means
 
-    # ------------------------------------------------------------------
-    # 5) Plot every processing stage:
-    #    a) all pixel signals + mean over time
-    #    b) pixelwise PSD + mean PSD
-    #    c) sub-ROI mean signals over time AND their PSDs (one figure)
-    # ------------------------------------------------------------------
     stages = [
-        ("01_raw", raw_signals, f"{roi_name} - Raw"),
+        ("01_raw", raw_frame_signals, f"{roi_name} - Raw"),
         (
             "02_gaussian_smoothed",
-            smoothed_signals,
+            smoothed_frames,
             f"{roi_name} - Gaussian smoothed (kernel={GAUSSIAN_KERNEL_SIZE})",
         ),
-        (f"03_{safe_filter}", filtered_signals, f"{roi_name} - Filtered ({FILTER_TYPE})"),
     ]
 
-    for prefix, signals, label in stages:
-        signals = np.asarray(signals, dtype=float)
-        mean_signal = np.nanmean(signals, axis=1)
-
-        # (a) Pixel signals with mean over time
+    cmap = plt.get_cmap("tab10")
+    for prefix, frame_values_list, label in stages:
+        # Whole-ROI mean signal over time (mean of all pixels per frame).
+        mean_signal = np.array(
+            [np.nanmean(v) if np.asarray(v).size else np.nan for v in frame_values_list],
+            dtype=float,
+        )
         fig, ax = plt.subplots(figsize=(12, 5))
-        for pixel_idx in range(signals.shape[1]):
-            ax.plot(time_axis, signals[:, pixel_idx], color="tab:blue", alpha=0.15, linewidth=0.8)
-        ax.plot(time_axis, mean_signal, color="black", linewidth=2.5, label="Mean signal")
+        ax.plot(time_axis, mean_signal, color="black", linewidth=2.0, label="Mean signal")
         ax.set_title(f"{label} mean signal")
         ax.set_xlabel("Time (s)")
         ax.set_ylabel("Temperature")
@@ -368,87 +257,27 @@ for roi_name in selected_rois:
         fig.savefig(roi_dir / f"{prefix}_mean_signal.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
 
-        # (b) Pixelwise PSD with mean PSD
-        if signals.shape[0] >= 2:
-            centered = signals - np.nanmean(signals, axis=0, keepdims=True)
-            centered = np.nan_to_num(centered, nan=0.0)
-            nperseg = min(256, centered.shape[0])
-            freqs, psd = welch(centered, fs=fps, nperseg=nperseg, axis=0)
-            mean_psd = psd.mean(axis=1)
-
-            fig, ax = plt.subplots(figsize=(12, 5))
-            for pixel_idx in range(psd.shape[1]):
-                ax.plot(freqs, psd[:, pixel_idx], color="tab:blue", alpha=0.12, linewidth=0.8)
-            ax.plot(freqs, mean_psd, color="black", linewidth=2.5, label="Mean PSD")
-            ax.set_title(f"{label} PSD")
-            ax.set_xlabel("Frequency (Hz)")
-            ax.set_ylabel("Power")
-            ax.grid(alpha=0.25)
-            ax.legend(loc="upper right")
-            fig.savefig(roi_dir / f"{prefix}_psd.png", dpi=200, bbox_inches="tight")
-            plt.close(fig)
-
-        # (c) Sub-ROI analysis: each sub-ROI is a FIXED spatial region defined by
-        #     the stable union->cell assignment (`union_cell`). Since all stages
-        #     share the same union-column layout, the per-sub-ROI mean for every
-        #     frame is a simple matrix product of the (time x union) signals with
-        #     the (union x cells) one-hot assignment.
-        signals_filled = np.nan_to_num(signals, nan=0.0)
-        cell_sums = signals_filled @ cell_onehot  # (n_frames, n_cells)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            subroi_means = np.where(
-                cell_counts[None, :] > 0,
-                cell_sums / np.maximum(cell_counts[None, :], 1.0),
-                np.nan,
-            )
-
-        # Interpolate NaNs (empty sub-ROIs / frames) along time for plotting.
-        subroi_plot = subroi_means.copy()
-        for cell in range(n_cells):
-            series = subroi_plot[:, cell]
-            finite = np.isfinite(series)
-            if finite.sum() == 0:
-                subroi_plot[:, cell] = 0.0
-            elif finite.sum() == 1:
-                subroi_plot[:, cell] = series[finite][0]
-            else:
-                subroi_plot[~finite, cell] = np.interp(
-                    time_axis_full[~finite], time_axis_full[finite], series[finite]
-                )
-
-        fig, (ax_time, ax_psd) = plt.subplots(2, 1, figsize=(12, 9))
-        cmap = plt.get_cmap("tab10")
+        # Sub-ROI mean signals, each sub-ROI in its OWN subplot.
+        subroi_means = compute_subroi_means(frame_values_list)
+        fig, axes = plt.subplots(
+            SUBROI_GRID_ROWS,
+            SUBROI_GRID_COLS,
+            figsize=(4.0 * SUBROI_GRID_COLS, 2.6 * SUBROI_GRID_ROWS),
+            sharex=True,
+            squeeze=False,
+        )
         for cell in range(n_cells):
             row = cell // SUBROI_GRID_COLS
             col = cell % SUBROI_GRID_COLS
-            color = cmap(cell % 10)
-            ax_time.plot(
-                time_axis,
-                subroi_plot[:, cell],
-                color=color,
-                linewidth=1.2,
-                label=f"sub-ROI r{row}c{col}",
-            )
-
-        if subroi_plot.shape[0] >= 2:
-            centered_sub = subroi_plot - np.nanmean(subroi_plot, axis=0, keepdims=True)
-            centered_sub = np.nan_to_num(centered_sub, nan=0.0)
-            nperseg_sub = min(256, centered_sub.shape[0])
-            freqs_sub, psd_sub = welch(centered_sub, fs=fps, nperseg=nperseg_sub, axis=0)
-            for cell in range(n_cells):
-                ax_psd.plot(freqs_sub, psd_sub[:, cell], color=cmap(cell % 10), linewidth=1.2)
-
-        ax_time.set_title(f"{label} sub-ROI mean signals ({SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS} grid)")
-        ax_time.set_xlabel("Time (s)")
-        ax_time.set_ylabel("Temperature")
-        ax_time.grid(alpha=0.25)
-        ax_time.legend(loc="upper right", fontsize=8, ncol=2)
-
-        ax_psd.set_title(f"{label} sub-ROI PSD ({SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS} grid)")
-        ax_psd.set_xlabel("Frequency (Hz)")
-        ax_psd.set_ylabel("Power")
-        ax_psd.grid(alpha=0.25)
-
+            ax = axes[row][col]
+            ax.plot(time_axis, subroi_means[:, cell], color=cmap(cell % 10), linewidth=1.2)
+            ax.set_title(f"sub-ROI r{row}c{col}", fontsize=9)
+            ax.grid(alpha=0.25)
+            if row == SUBROI_GRID_ROWS - 1:
+                ax.set_xlabel("Time (s)")
+            if col == 0:
+                ax.set_ylabel("Temperature")
+        fig.suptitle(f"{label} sub-ROI mean signals ({SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS} grid)")
         fig.tight_layout()
         fig.savefig(roi_dir / f"{prefix}_subrois.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
@@ -478,11 +307,15 @@ for roi_name in selected_rois:
             if coords.shape[0] > 0:
                 xs = coords[:, 0]
                 ys = coords[:, 1]
-                # Use the SAME fixed union->cell mapping as the sub-ROI plots so
-                # the overlay matches the analyzed sub-ROIs exactly.
-                keys = xs.astype(np.int64) * KEY_MULT + ys.astype(np.int64)
-                cols_u = np.searchsorted(union_keys, keys)
-                cell_idx = union_cell[cols_u]
+                # Per-frame sub-ROI grid (same per-frame bounding box as the
+                # sub-ROI mean plots), so the overlay matches the analyzed sub-ROIs.
+                x_min, x_max = int(xs.min()), int(xs.max())
+                y_min, y_max = int(ys.min()), int(ys.max())
+                x_span = max(x_max - x_min + 1, 1)
+                y_span = max(y_max - y_min + 1, 1)
+                col_idx = np.clip(((xs - x_min) * SUBROI_GRID_COLS) // x_span, 0, SUBROI_GRID_COLS - 1)
+                row_idx = np.clip(((ys - y_min) * SUBROI_GRID_ROWS) // y_span, 0, SUBROI_GRID_ROWS - 1)
+                cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
 
                 # Keep only in-bounds pixels (coords are absolute image coordinates).
                 in_bounds = (ys >= 0) & (ys < frame_height) & (xs >= 0) & (xs < frame_width)
