@@ -435,67 +435,83 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
             )
         roi_pixel_data_for_return = roi_pixel_data
 
-        local_start_idx = 0 if limit_to_timespan else start_frame
-        if 0 <= local_start_idx < len(roi_pixel_log):
-            roi_masks = roi_pixel_log[local_start_idx]
-            output_dir = os.path.dirname(configs.path_video_tracked_face) or configs.path_gray_frames
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f"roi_first_frame_{start_frame:06d}.png")
 
-            # If extracting from video, read the first frame of the video for visualization, else read the corresponding gray frame
-            if extract_from_video_instead_of_gray_files:
-                cap = cv2.VideoCapture(configs.path_video)
-                if cap.isOpened():
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        if frame.dtype != np.uint8:
-                            vmin, vmax = np.percentile(frame, [1, 99])
-                            frame_clipped = np.clip(frame, vmin, vmax)
-                            display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                        else:
-                            display_frame = frame.copy()
-                    cap.release()
-            else:
-                if gray_frames_path_is_npy:
-                    frame = npy_frames_slice[0]
-                    vmin, vmax = np.percentile(frame, [1, 99])
-                    frame_clipped = np.clip(frame, vmin, vmax)
-                    display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-                else:
-                    files_in_dir = [
-                        f for f in os.listdir(configs.path_gray_frames)
-                        if os.path.isfile(os.path.join(configs.path_gray_frames, f))
-                    ]
-                    if not files_in_dir:
-                        raise ValueError(f"No files found in {configs.path_gray_frames}")
+        # save the fifth frame (index 4) relative to the selected timespan or global frames
+        desired_offset = 4  # 0-based index -> 4 is the fifth frame
+        base_idx = 0 if limit_to_timespan else (start_frame or 0)
+        frame_to_save = base_idx + desired_offset
+        # clamp into valid range
+        if frame_to_save < 0:
+            frame_to_save = 0
+        if frame_to_save >= len(roi_pixel_log):
+            frame_to_save = len(roi_pixel_log) - 1
 
-                    sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
-                    if sample_ext == ".asc":
-                        # Read the corresponding ASC frame for visualization
-                        asc_paths = sorted(
-                            [os.path.join(configs.path_gray_frames, f) for f in files_in_dir if f.lower().endswith(".asc")]
-                        )
-                        if start_frame >= len(asc_paths):
-                            raise ValueError(f"start_frame {start_frame} exceeds available asc frames {len(asc_paths)}")
+        roi_masks = roi_pixel_log[frame_to_save]
+        output_dir = os.path.dirname(configs.path_video_tracked_face) or configs.path_gray_frames
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f"roi_frame_{frame_to_save:06d}.png")
 
-                        frame = _parse_asc_file(asc_paths[start_frame])
-                        if configs.asc_unit == "kelvin":
-                            frame = _asc_to_kelvin_x100(frame)
-
+        # If extracting from video, read the selected frame of the video for visualization, else read the corresponding gray frame
+        if extract_from_video_instead_of_gray_files:
+            cap = cv2.VideoCapture(configs.path_video)
+            if cap.isOpened():
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_to_save)
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    if frame.dtype != np.uint8:
                         vmin, vmax = np.percentile(frame, [1, 99])
                         frame_clipped = np.clip(frame, vmin, vmax)
                         display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
                     else:
-                        # Read the corresponding gray frame for visualization
-                        _, gray_files = sort_grayfiles_with_interpolations(configs.path_gray_frames)
-                        if start_frame >= len(gray_files):
-                            raise ValueError(f"start_frame {start_frame} exceeds available gray frames {len(gray_files)}")
+                        display_frame = frame.copy()
+                cap.release()
+        else:
+            if gray_frames_path_is_npy:
+                # npy_frames_slice is the selected slice if timespan limited, otherwise full
+                idx_in_slice = frame_to_save - (start_frame or 0) if limit_to_timespan else frame_to_save
+                idx_in_slice = max(0, min(idx_in_slice, len(npy_frames_slice) - 1))
+                frame = npy_frames_slice[idx_in_slice]
+                vmin, vmax = np.percentile(frame, [1, 99])
+                frame_clipped = np.clip(frame, vmin, vmax)
+                display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+            else:
+                files_in_dir = [
+                    f for f in os.listdir(configs.path_gray_frames)
+                    if os.path.isfile(os.path.join(configs.path_gray_frames, f))
+                ]
+                if not files_in_dir:
+                    raise ValueError(f"No files found in {configs.path_gray_frames}")
 
-                        frame = load_gray_frame(os.path.join(configs.path_gray_frames, gray_files[start_frame]))
-                        vmin, vmax = np.percentile(frame, [1, 99])
-                        frame_clipped = np.clip(frame, vmin, vmax)
-                        display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
+                if sample_ext == ".asc":
+                    asc_paths = sorted(
+                        [os.path.join(configs.path_gray_frames, f) for f in files_in_dir if f.lower().endswith(".asc")]
+                    )
+                    if frame_to_save >= len(asc_paths):
+                        # clamp
+                        frame_idx = len(asc_paths) - 1
+                    else:
+                        frame_idx = frame_to_save
+
+                    frame = _parse_asc_file(asc_paths[frame_idx])
+                    if configs.asc_unit == "kelvin":
+                        frame = _asc_to_kelvin_x100(frame)
+
+                    vmin, vmax = np.percentile(frame, [1, 99])
+                    frame_clipped = np.clip(frame, vmin, vmax)
+                    display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+                else:
+                    # Read the corresponding gray frame for visualization
+                    _, gray_files = sort_grayfiles_with_interpolations(configs.path_gray_frames)
+                    if frame_to_save >= len(gray_files):
+                        frame_idx = len(gray_files) - 1
+                    else:
+                        frame_idx = frame_to_save
+
+                    frame = load_gray_frame(os.path.join(configs.path_gray_frames, gray_files[frame_idx]))
+                    vmin, vmax = np.percentile(frame, [1, 99])
+                    frame_clipped = np.clip(frame, vmin, vmax)
+                    display_frame = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 
             overlay = (
                 cv2.cvtColor(display_frame, cv2.COLOR_GRAY2BGR)
