@@ -276,13 +276,13 @@ for roi_name in selected_rois:
             frame_width=frame_width)
         
     plot_subroi_psds(
-        subroi_means=filtered_subroi_means,
-        time_axis=time_axis,
-        label=f"{roi_name} - Sub-ROI mean signals (high-pass filtered)",
-        roi_dir=roi_dir,
-        prefix="before_highpass",
-        SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
-        SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+        subroi_means = subroi_means,
+        fs = fps,
+        fmin= 0,
+        fmax= None,
+        nperseg= None,
+        roi_dir= roi_dir,
+        prefix= "before_highpass"
     )
 
     # add higpass   
@@ -294,14 +294,16 @@ for roi_name in selected_rois:
         max_missing_fraction=0.15,
     )
 
+    #TODO add notch filter/ use bandpass
+
     plot_subroi_psds(
-        subroi_means=filtered_subroi_means,
-        time_axis=time_axis,
-        label=f"{roi_name} - Sub-ROI mean signals (high-pass filtered)",
-        roi_dir=roi_dir,
-        prefix="after_highpass",
-        SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
-        SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+        subroi_means = filtered_subroi_means,
+        fs = fps,
+        fmin= 0,
+        fmax= None,
+        nperseg= None,
+        roi_dir= roi_dir,
+        prefix= "after_highpass"
     )
 
 print("Done.")
