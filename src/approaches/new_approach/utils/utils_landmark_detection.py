@@ -938,6 +938,7 @@ def apply_roi_masks_to_gray_frames(
     output_npz: str = None,
     start_frame: int = 0,
     end_frame: int = None,
+    roi_landmarks: Dict[str, List[int]] = None,
 ) -> List[Dict[str, Dict[str, object]]]:
     """Apply ROI masks (from video detection) to original .gray frames to extract temperatures.
 
@@ -947,10 +948,14 @@ def apply_roi_masks_to_gray_frames(
         output_npz: optional path to save extracted data as npz
         start_frame: Start frame index to process (inclusive). Default: 0
         end_frame: End frame index to process (exclusive). Default: None (process to end)
+        roi_landmarks: optional dict mapping ROI name to list of landmark indices (for forehead extension)
 
     Returns:
         roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "values", "mean_value"}}
     """
+    # Import extension function here to avoid circular imports
+    from src.approaches.new_approach.pipelines.get_roi_data import extend_forehead_roi_upward
+    
     _, gray_files = sort_grayfiles_with_interpolations(gray_dir)
     if not gray_files:
         raise ValueError(f"No .gray files found in {gray_dir}")
@@ -991,6 +996,14 @@ def apply_roi_masks_to_gray_frames(
         for roi_name, mask in masks.items():
             if mask.shape != frame.shape:
                 raise ValueError(f"Mask shape {mask.shape} does not match frame shape {frame.shape} for ROI {roi_name}")
+
+            # Apply forehead upward extension if applicable
+            if roi_name == "forehead" and roi_landmarks and roi_name in roi_landmarks:
+                mask = extend_forehead_roi_upward(
+                    frame=frame,
+                    mask=mask,
+                    landmark_indices=roi_landmarks[roi_name],
+                )
 
             ys, xs = np.where(mask == 255)
             coords = list(zip(xs.tolist(), ys.tolist()))
