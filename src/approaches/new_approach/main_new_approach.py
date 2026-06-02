@@ -138,7 +138,7 @@ for roi_name in selected_rois:
     # 1) Extract per-frame coordinates and raw pixel values for this ROI.
     #    Frames with no pixels are kept as empty (0, 2) coord arrays so the
     #    time axis stays consistent; they become NaN rows that are
-    #    interpolated over time later (fixes the (0,)-shape ValueError).
+    #    interpolated over time later.
     # ------------------------------------------------------------------
     coords_per_frame: list[np.ndarray] = []
     raw_frame_signals: list[np.ndarray] = []
@@ -162,13 +162,57 @@ for roi_name in selected_rois:
     time_axis = time_axis_full / fps
 
     # ------------------------------------------------------------------
-    # 2) Pad ragged per-frame raw signals into a (time, pixels) matrix and
-    #    interpolate NaNs along time (per pixel column).
+    # 1b) Build a STABLE union grid of absolute (x, y) pixel positions across
+    #     all frames. Every distinct location becomes one fixed column, so
+    #     column j always refers to the SAME physical pixel in every frame.
+    #     A pixel missing from a given frame is NaN there and filled by
+    #     temporal interpolation. This keeps the rectangular (time x pixels)
+    #     shape required by the temporal filter / Welch PSD while making each
+    #     per-pixel time series physically meaningful (rather than positional).
     # ------------------------------------------------------------------
-    max_len_raw = max(signal.size for signal in raw_frame_signals)
-    raw_padded = np.full((n_frames, max_len_raw), np.nan, dtype=float)
-    for index, signal_values in enumerate(raw_frame_signals):
-        raw_padded[index, : signal_values.size] = signal_values
+    _nonempty = [c for c in coords_per_frame if c.shape[0] > 0]
+    all_coords = np.vstack(_nonempty) if _nonempty else np.zeros((0, 2), dtype=int)
+    union_coords = np.unique(all_coords, axis=0)  # sorted lexicographically by (x, y)
+    n_union = union_coords.shape[0]
+    if n_union == 0:
+        raise ValueError(f"ROI '{roi_name}' has no pixels in any frame.")
+
+    # Monotonic integer key per location for fast lookup (y < KEY_MULT always),
+    # consistent with the lexicographic order produced by np.unique above.
+    KEY_MULT = np.int64(1) << 20
+    union_keys = union_coords[:, 0].astype(np.int64) * KEY_MULT + union_coords[:, 1].astype(np.int64)
+    # Union-column index for each frame's pixels (aligned with coords_per_frame).
+    frame_union_cols: list[np.ndarray] = []
+    for coords in coords_per_frame:
+        if coords.shape[0] == 0:
+            frame_union_cols.append(np.zeros((0,), dtype=np.intp))
+            continue
+        keys = coords[:, 0].astype(np.int64) * KEY_MULT + coords[:, 1].astype(np.int64)
+        frame_union_cols.append(np.searchsorted(union_keys, keys))
+
+    # Assign every union pixel to a FIXED sub-ROI grid cell (stable across time),
+    # using the union bounding box. Reused by the sub-ROI plots and overlay video.
+    ux = union_coords[:, 0]
+    uy = union_coords[:, 1]
+    ux_min, ux_max = int(ux.min()), int(ux.max())
+    uy_min, uy_max = int(uy.min()), int(uy.max())
+    ux_span = max(ux_max - ux_min + 1, 1)
+    uy_span = max(uy_max - uy_min + 1, 1)
+    union_col_cell = np.clip(((ux - ux_min) * SUBROI_GRID_COLS) // ux_span, 0, SUBROI_GRID_COLS - 1)
+    union_row_cell = np.clip(((uy - uy_min) * SUBROI_GRID_ROWS) // uy_span, 0, SUBROI_GRID_ROWS - 1)
+    union_cell = union_row_cell * SUBROI_GRID_COLS + union_col_cell  # (n_union,)
+    cell_onehot = np.zeros((n_union, n_cells), dtype=float)
+    cell_onehot[np.arange(n_union), union_cell] = 1.0
+    cell_counts = cell_onehot.sum(axis=0)  # pixels per sub-ROI cell
+
+    # ------------------------------------------------------------------
+    # 2) Scatter ragged per-frame raw values into the (time x union-pixels)
+    #    matrix by absolute position, then interpolate NaNs along time.
+    # ------------------------------------------------------------------
+    raw_padded = np.full((n_frames, n_union), np.nan, dtype=float)
+    for index, (signal_values, cols) in enumerate(zip(raw_frame_signals, frame_union_cols)):
+        if cols.size:
+            raw_padded[index, cols] = signal_values
 
     finite_global = np.isfinite(raw_padded)
     global_mean = float(np.nanmean(raw_padded[finite_global])) if finite_global.any() else 0.0
@@ -233,12 +277,10 @@ for roi_name in selected_rois:
             )
         smoothed_frames.append(normalized[rel_ys, rel_xs])
 
-    max_len_smoothed = max((signal.size for signal in smoothed_frames), default=0)
-    max_len_smoothed = max(max_len_smoothed, 1)
-    smoothed_padded = np.full((n_frames, max_len_smoothed), np.nan, dtype=float)
-    for index, signal_values in enumerate(smoothed_frames):
+    smoothed_padded = np.full((n_frames, n_union), np.nan, dtype=float)
+    for index, (signal_values, cols) in enumerate(zip(smoothed_frames, frame_union_cols)):
         if signal_values.size:
-            smoothed_padded[index, : signal_values.size] = signal_values
+            smoothed_padded[index, cols] = signal_values
 
     finite_global_s = np.isfinite(smoothed_padded)
     global_mean_s = float(np.nanmean(smoothed_padded[finite_global_s])) if finite_global_s.any() else 0.0
@@ -346,39 +388,19 @@ for roi_name in selected_rois:
             fig.savefig(roi_dir / f"{prefix}_psd.png", dpi=200, bbox_inches="tight")
             plt.close(fig)
 
-        # (c) Sub-ROI analysis: divide the ROI into a grid of sub-ROIs and
-        #     compute the per-sub-ROI mean signal for every frame. Column j of
-        #     row f in `signals` corresponds to coords_per_frame[f][j], so we
-        #     can align values with coordinates per frame.
-        subroi_means = np.full((n_frames, n_cells), np.nan, dtype=float)
-        for frame_idx in range(n_frames):
-            coords = coords_per_frame[frame_idx]
-            n_pixels = coords.shape[0]
-            if n_pixels == 0:
-                continue
-            values = signals[frame_idx, :n_pixels]
-
-            xs = coords[:, 0]
-            ys = coords[:, 1]
-            x_min, x_max = int(xs.min()), int(xs.max())
-            y_min, y_max = int(ys.min()), int(ys.max())
-            x_span = max(x_max - x_min + 1, 1)
-            y_span = max(y_max - y_min + 1, 1)
-
-            col_idx = ((xs - x_min) * SUBROI_GRID_COLS) // x_span
-            row_idx = ((ys - y_min) * SUBROI_GRID_ROWS) // y_span
-            col_idx = np.clip(col_idx, 0, SUBROI_GRID_COLS - 1)
-            row_idx = np.clip(row_idx, 0, SUBROI_GRID_ROWS - 1)
-            cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
-
-            finite = np.isfinite(values)
-            sums = np.zeros(n_cells, dtype=float)
-            counts = np.zeros(n_cells, dtype=float)
-            np.add.at(sums, cell_idx, np.where(finite, np.nan_to_num(values, nan=0.0), 0.0))
-            np.add.at(counts, cell_idx, finite.astype(float))
-            with np.errstate(divide="ignore", invalid="ignore"):
-                cell_means = np.where(counts > 0, sums / np.maximum(counts, 1.0), np.nan)
-            subroi_means[frame_idx, :] = cell_means
+        # (c) Sub-ROI analysis: each sub-ROI is a FIXED spatial region defined by
+        #     the stable union->cell assignment (`union_cell`). Since all stages
+        #     share the same union-column layout, the per-sub-ROI mean for every
+        #     frame is a simple matrix product of the (time x union) signals with
+        #     the (union x cells) one-hot assignment.
+        signals_filled = np.nan_to_num(signals, nan=0.0)
+        cell_sums = signals_filled @ cell_onehot  # (n_frames, n_cells)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            subroi_means = np.where(
+                cell_counts[None, :] > 0,
+                cell_sums / np.maximum(cell_counts[None, :], 1.0),
+                np.nan,
+            )
 
         # Interpolate NaNs (empty sub-ROIs / frames) along time for plotting.
         subroi_plot = subroi_means.copy()
@@ -456,14 +478,11 @@ for roi_name in selected_rois:
             if coords.shape[0] > 0:
                 xs = coords[:, 0]
                 ys = coords[:, 1]
-                x_min, x_max = int(xs.min()), int(xs.max())
-                y_min, y_max = int(ys.min()), int(ys.max())
-                x_span = max(x_max - x_min + 1, 1)
-                y_span = max(y_max - y_min + 1, 1)
-
-                col_idx = np.clip(((xs - x_min) * SUBROI_GRID_COLS) // x_span, 0, SUBROI_GRID_COLS - 1)
-                row_idx = np.clip(((ys - y_min) * SUBROI_GRID_ROWS) // y_span, 0, SUBROI_GRID_ROWS - 1)
-                cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
+                # Use the SAME fixed union->cell mapping as the sub-ROI plots so
+                # the overlay matches the analyzed sub-ROIs exactly.
+                keys = xs.astype(np.int64) * KEY_MULT + ys.astype(np.int64)
+                cols_u = np.searchsorted(union_keys, keys)
+                cell_idx = union_cell[cols_u]
 
                 # Keep only in-bounds pixels (coords are absolute image coordinates).
                 in_bounds = (ys >= 0) & (ys < frame_height) & (xs >= 0) & (xs < frame_width)
