@@ -99,54 +99,62 @@ def extend_forehead_roi_upward(
     # itself does, but stop when they hit the much colder/warmer hairline.
     tolerance = max(abs(skin_ref) * tolerance_pct, 2.0 * skin_spread)
 
-    # Horizontal span of the forehead (between the landmarks).
-    x_min = int(np.min(xs))
-    x_max = int(np.max(xs))
-
-    # For each column, find the topmost masked pixel so we know where to start
-    # climbing upward for that specific column.
-    col_top = {}
-    for x_col, y_row in zip(xs, ys):
-        if x_col not in col_top or y_row < col_top[x_col]:
-            col_top[x_col] = y_row
-
     # Number of consecutive deviating pixels tolerated before stopping a column.
     # This bridges thin warm artifacts (e.g. stray hair strands) without leaking
     # past the actual hairline.
     max_consecutive_outliers = 2
-    # Window for local smoothing (vertical) to reduce per-pixel noise.
-    smooth_half = 1
 
-    for x_col in range(x_min, x_max + 1):
-        if x_col not in col_top:
-            # Gap in the base mask for this column; skip to keep shape faithful.
-            continue
+    # --- Vectorized per-column upward growth -------------------------------
+    # Vertically smooth the frame once (3-row window) instead of recomputing a
+    # local mean for every candidate pixel. Edges use the clamped (available)
+    # window, matching the previous per-pixel behaviour.
+    sm = frame_f.copy()
+    if height >= 3:
+        sm[1:-1, :] = (frame_f[:-2, :] + frame_f[1:-1, :] + frame_f[2:, :]) / 3.0
+        sm[0, :] = (frame_f[0, :] + frame_f[1, :]) / 2.0
+        sm[-1, :] = (frame_f[-1, :] + frame_f[-2, :]) / 2.0
 
-        start_y = int(col_top[x_col])
-        outlier_run = 0
+    # Topmost masked pixel per column (vectorized): the start of each climb.
+    # Columns absent from the base mask are skipped to keep the shape faithful.
+    order = np.lexsort((ys, xs))  # sort by column, then row
+    xs_sorted = xs[order]
+    ys_sorted = ys[order]
+    first_idx = np.concatenate(([0], np.nonzero(np.diff(xs_sorted))[0] + 1))
+    cols = xs_sorted[first_idx]                 # unique columns present
+    start_y = ys_sorted[first_idx]              # topmost y per column
+    n_cols = cols.size
 
-        for step in range(1, max_extend_px + 1):
-            new_y = start_y - step
-            if new_y < 0:
-                break
+    if n_cols and max_extend_px > 0:
+        # Candidate pixel y for every (step, column): y = start_y - (step+1).
+        steps = np.arange(1, max_extend_px + 1)[:, None]          # (S, 1)
+        cand_y = start_y[None, :] - steps                         # (S, n_cols)
+        valid = cand_y >= 0
+        cand_y_clamped = np.clip(cand_y, 0, height - 1)
 
-            # Locally smoothed temperature around the candidate pixel (vertical
-            # window) to be robust against single-pixel noise.
-            y0 = max(0, new_y - smooth_half)
-            y1 = min(height, new_y + smooth_half + 1)
-            local_val = float(np.mean(frame_f[y0:y1, x_col]))
+        # "Good" = looks like forehead skin (and still inside the image).
+        vals = sm[cand_y_clamped, cols[None, :]]                  # (S, n_cols)
+        good = (np.abs(vals - skin_ref) <= tolerance) & valid
 
-            if abs(local_val - skin_ref) > tolerance:
-                # Deviates from skin -> likely hair. Allow a couple of stray
-                # pixels, but stop the column once the deviation persists.
-                outlier_run += 1
-                if outlier_run > max_consecutive_outliers:
-                    break
-                continue
+        # Terminate a column at the first run of (max_consecutive_outliers + 1)
+        # consecutive bad pixels (the hairline). A pixel is accepted iff it is
+        # good and lies before that termination step.
+        bad = ~good
+        run = max_consecutive_outliers + 1
+        triple = np.zeros_like(bad)
+        if bad.shape[0] >= run:
+            acc = bad[run - 1:].copy()
+            for k in range(1, run):
+                acc &= bad[run - 1 - k: bad.shape[0] - k]
+            triple[run - 1:] = acc
+        has_term = triple.any(axis=0)
+        cutoff = np.where(has_term, triple.argmax(axis=0), max_extend_px)
 
-            # Still forehead skin: accept the pixel and reset the outlier run.
-            outlier_run = 0
-            extended_mask[new_y, x_col] = 255
+        step_idx = np.arange(max_extend_px)[:, None]
+        accepted = good & (step_idx < cutoff[None, :])
+
+        ys_acc = cand_y[accepted]
+        xs_acc = np.broadcast_to(cols[None, :], accepted.shape)[accepted]
+        extended_mask[ys_acc, xs_acc] = 255
 
     # Light morphological closing to smooth the upper boundary and fill the small
     # one-pixel gaps left by the per-column growth, without changing the shape.
