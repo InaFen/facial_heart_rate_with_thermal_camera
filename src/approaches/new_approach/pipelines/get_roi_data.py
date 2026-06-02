@@ -27,7 +27,7 @@ from src.approaches.yang_et_al.utils_face_tracking import track_face
 
 
 FOREHEAD_EXTEND_LANDMARKS = {103, 67, 109, 10, 338, 297, 332}
-FOREHEAD_TEMP_TOLERANCE_PCT = 0.15  # Allow 15% deviation from mean
+FOREHEAD_TEMP_TOLERANCE_PCT = 0.05  # Allow 5% deviation from mean
 FOREHEAD_MAX_EXTEND_PIXELS = 100  # Max pixels to extend upward
 
 
@@ -39,22 +39,32 @@ def extend_forehead_roi_upward(
     max_extend_px: int = FOREHEAD_MAX_EXTEND_PIXELS,
 ) -> np.ndarray:
     """
-    Extend the forehead ROI upward (decreasing Y) from base landmarks if specific landmarks are present.
-    
+    Extend the forehead ROI upward (decreasing Y) following the hairline shape.
+
+    Instead of growing the whole forehead width as a single rectangular block,
+    each column of the forehead is grown independently upward. Because every
+    column stops at its own hairline, the resulting upper boundary follows the
+    natural (curved) shape of the forehead rather than producing a square.
+
     Algorithm:
-    1. Check if all specific forehead landmarks are in the provided list.
-    2. Extract pixels at base landmarks and compute mean temperature.
-    3. Extend upward (Y-1, Y-2, ...) row by row.
-    4. For each new row, check if temperature is within tolerance of mean.
-    5. Stop when temperature deviates significantly (> tolerance_pct).
-    
+    1. Check that the required forehead landmarks are present; otherwise skip.
+    2. Compute a robust reference temperature from the base forehead ROI
+       (median + MAD) which represents skin temperature ("mean temperature x").
+    3. For each column within the forehead's horizontal span, start at the
+       topmost masked pixel of that column and walk upward pixel by pixel.
+    4. Keep a pixel while its (locally smoothed) temperature stays similar to
+       the skin reference; stop that column as soon as it deviates significantly
+       (assumed to be the hairline / end of the forehead).
+    5. Clean up the result with a light morphological closing to remove small
+       holes / jagged single-pixel artifacts while preserving the overall shape.
+
     Parameters:
         frame: 2D numpy array (height, width) with temperature/intensity values
         mask: 2D binary mask (height, width) with 255 indicating ROI pixels
         landmark_indices: list of mediapipe landmark indices that define the base forehead
-        tolerance_pct: allowed deviation as fraction (0.15 = 15%)
-        max_extend_px: maximum pixels to extend upward
-    
+        tolerance_pct: allowed deviation as fraction of the skin reference value
+        max_extend_px: maximum pixels to extend upward per column
+
     Returns:
         Extended mask as 2D binary array
     """
@@ -64,50 +74,85 @@ def extend_forehead_roi_upward(
         # Not a full forehead ROI; return original mask
         print(f"[extend_forehead] Required landmarks {required_set} not found in {provided_set}. Skipping extension.")
         return mask
-    
+
     height, width = frame.shape
     extended_mask = mask.copy()
-    
+
     # Get all current ROI pixels
     ys, xs = np.where(mask == 255)
     if len(ys) == 0:
         return extended_mask
-    
-    # Compute reference mean temperature from the base forehead ROI (the "mean temperature x").
-    base_temps = frame[ys, xs].astype(np.float64)
-    mean_temp = float(np.mean(base_temps))
-    tolerance = abs(mean_temp) * tolerance_pct
-    
-    # Find the topmost Y coordinate in the current mask.
-    min_y = int(np.min(ys))
-    
-    # Determine the horizontal span of the forehead so we only extend the
-    # forehead column-wise (and not across the cold background of the frame).
-    # We use the X-extent of the existing mask, which corresponds to the span
-    # between the forehead landmarks.
+
+    frame_f = frame.astype(np.float64)
+
+    # Robust reference temperature of the skin from the base forehead ROI.
+    # Median + MAD is far less sensitive to outliers (e.g. a few hair/edge
+    # pixels already inside the base mask) than mean + std.
+    base_temps = frame_f[ys, xs]
+    skin_ref = float(np.median(base_temps))
+    mad = float(np.median(np.abs(base_temps - skin_ref)))
+    # Convert MAD to a std-equivalent (factor 1.4826) for a sensible spread.
+    skin_spread = 1.4826 * mad if mad > 0 else float(np.std(base_temps))
+
+    # Tolerance combines a percentage of the skin value and the natural spread
+    # of the forehead skin, so columns are allowed to vary as much as the skin
+    # itself does, but stop when they hit the much colder/warmer hairline.
+    tolerance = max(abs(skin_ref) * tolerance_pct, 2.0 * skin_spread)
+
+    # Horizontal span of the forehead (between the landmarks).
     x_min = int(np.min(xs))
     x_max = int(np.max(xs))
-    cols = np.arange(x_min, x_max + 1)
-    
-    # Extend upward (decreasing Y) row by row until the temperature deviates
-    # significantly from the forehead mean (expected to be the hairline).
-    for extend_step in range(1, max_extend_px + 1):
-        new_y = min_y - extend_step
-        if new_y < 0:
-            break
-        
-        # Temperatures of the forehead-width pixels in this candidate row.
-        row_temps = frame[new_y, cols].astype(np.float64)
-        row_mean = float(np.mean(row_temps))
-        
-        # Stop when the row temperature deviates too much from the forehead mean
-        # (this is assumed to be the hairline / end of the forehead).
-        if abs(row_mean - mean_temp) > tolerance:
-            break
-        
-        # Row is still "forehead-like": add the forehead-width pixels to the mask.
-        extended_mask[new_y, cols] = 255
-    
+
+    # For each column, find the topmost masked pixel so we know where to start
+    # climbing upward for that specific column.
+    col_top = {}
+    for x_col, y_row in zip(xs, ys):
+        if x_col not in col_top or y_row < col_top[x_col]:
+            col_top[x_col] = y_row
+
+    # Number of consecutive deviating pixels tolerated before stopping a column.
+    # This bridges thin warm artifacts (e.g. stray hair strands) without leaking
+    # past the actual hairline.
+    max_consecutive_outliers = 2
+    # Window for local smoothing (vertical) to reduce per-pixel noise.
+    smooth_half = 1
+
+    for x_col in range(x_min, x_max + 1):
+        if x_col not in col_top:
+            # Gap in the base mask for this column; skip to keep shape faithful.
+            continue
+
+        start_y = int(col_top[x_col])
+        outlier_run = 0
+
+        for step in range(1, max_extend_px + 1):
+            new_y = start_y - step
+            if new_y < 0:
+                break
+
+            # Locally smoothed temperature around the candidate pixel (vertical
+            # window) to be robust against single-pixel noise.
+            y0 = max(0, new_y - smooth_half)
+            y1 = min(height, new_y + smooth_half + 1)
+            local_val = float(np.mean(frame_f[y0:y1, x_col]))
+
+            if abs(local_val - skin_ref) > tolerance:
+                # Deviates from skin -> likely hair. Allow a couple of stray
+                # pixels, but stop the column once the deviation persists.
+                outlier_run += 1
+                if outlier_run > max_consecutive_outliers:
+                    break
+                continue
+
+            # Still forehead skin: accept the pixel and reset the outlier run.
+            outlier_run = 0
+            extended_mask[new_y, x_col] = 255
+
+    # Light morphological closing to smooth the upper boundary and fill the small
+    # one-pixel gaps left by the per-column growth, without changing the shape.
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    extended_mask = cv2.morphologyEx(extended_mask, cv2.MORPH_CLOSE, kernel)
+
     return extended_mask
 
 
