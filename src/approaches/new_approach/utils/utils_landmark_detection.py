@@ -999,6 +999,7 @@ def apply_roi_masks_to_gray_frames(
 
             # Apply forehead upward extension if applicable
             if roi_name == "forehead" and roi_landmarks and roi_name in roi_landmarks:
+                print(f"[Gray] Extending forehead ROI upward for frame {idx} with {len(roi_landmarks[roi_name])} landmarks")
                 mask = extend_forehead_roi_upward(
                     frame=frame,
                     mask=mask,

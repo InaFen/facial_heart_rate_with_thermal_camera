@@ -28,7 +28,7 @@ from src.approaches.yang_et_al.utils_face_tracking import track_face
 
 FOREHEAD_EXTEND_LANDMARKS = {103, 67, 109, 10, 338, 297, 332}
 FOREHEAD_TEMP_TOLERANCE_PCT = 0.15  # Allow 15% deviation from mean
-FOREHEAD_MAX_EXTEND_PIXELS = 50  # Max pixels to extend upward
+FOREHEAD_MAX_EXTEND_PIXELS = 100  # Max pixels to extend upward
 
 
 def extend_forehead_roi_upward(
@@ -58,8 +58,11 @@ def extend_forehead_roi_upward(
     Returns:
         Extended mask as 2D binary array
     """
-    if not all(idx in landmark_indices for idx in FOREHEAD_EXTEND_LANDMARKS):
+    required_set = set(FOREHEAD_EXTEND_LANDMARKS)
+    provided_set = set(landmark_indices)
+    if not required_set.issubset(provided_set):
         # Not a full forehead ROI; return original mask
+        print(f"[extend_forehead] Required landmarks {required_set} not found in {provided_set}. Skipping extension.")
         return mask
     
     height, width = frame.shape
@@ -70,38 +73,40 @@ def extend_forehead_roi_upward(
     if len(ys) == 0:
         return extended_mask
     
-    # Compute mean temperature from base ROI
+    # Compute reference mean temperature from the base forehead ROI (the "mean temperature x").
     base_temps = frame[ys, xs].astype(np.float64)
-    mean_temp = np.mean(base_temps)
-    tolerance = mean_temp * tolerance_pct
+    mean_temp = float(np.mean(base_temps))
+    tolerance = abs(mean_temp) * tolerance_pct
     
-    # Find the topmost Y coordinate in the current mask
+    # Find the topmost Y coordinate in the current mask.
     min_y = int(np.min(ys))
     
-    # Extend upward row by row
+    # Determine the horizontal span of the forehead so we only extend the
+    # forehead column-wise (and not across the cold background of the frame).
+    # We use the X-extent of the existing mask, which corresponds to the span
+    # between the forehead landmarks.
+    x_min = int(np.min(xs))
+    x_max = int(np.max(xs))
+    cols = np.arange(x_min, x_max + 1)
+    
+    # Extend upward (decreasing Y) row by row until the temperature deviates
+    # significantly from the forehead mean (expected to be the hairline).
     for extend_step in range(1, max_extend_px + 1):
         new_y = min_y - extend_step
         if new_y < 0:
             break
         
-        # Get all pixels in this new row that are within the X bounds of current mask
-        xs_in_mask = np.where(extended_mask[new_y, :] == 0)[0]  # Currently not in mask
-        if len(xs_in_mask) == 0:
-            xs_in_mask = np.where(mask[min_y, :] == 255)[0]  # Use min_y X range
+        # Temperatures of the forehead-width pixels in this candidate row.
+        row_temps = frame[new_y, cols].astype(np.float64)
+        row_mean = float(np.mean(row_temps))
         
-        if len(xs_in_mask) == 0:
-            break
-        
-        row_temps = frame[new_y, xs_in_mask].astype(np.float64)
-        row_mean = np.mean(row_temps)
-        
-        # Check if row temperature is similar to base mean
+        # Stop when the row temperature deviates too much from the forehead mean
+        # (this is assumed to be the hairline / end of the forehead).
         if abs(row_mean - mean_temp) > tolerance:
-            # Temperature deviates too much; stop extending
             break
         
-        # Add this row to the mask
-        extended_mask[new_y, xs_in_mask] = 255
+        # Row is still "forehead-like": add the forehead-width pixels to the mask.
+        extended_mask[new_y, cols] = 255
     
     return extended_mask
 
@@ -141,6 +146,7 @@ def apply_roi_masks_to_npy_frames(
             
             # Apply forehead upward extension if applicable
             if roi_name == "forehead" and roi_landmarks and roi_name in roi_landmarks:
+                #print(f"[NPY] Extending forehead ROI upward for frame {frame_idx} with {len(roi_landmarks[roi_name])} landmarks")
                 mask = extend_forehead_roi_upward(
                     frame=frame,
                     mask=mask,
@@ -469,6 +475,9 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     for rn in configs.used_rois:
                         if rn in getattr(configs, 'roi_landmarks_options', {}):
                             roi_landmarks_for_extraction[rn] = configs.roi_landmarks_options[rn]
+                    print(f"[ROI Pipeline] Built roi_landmarks_for_extraction: {list(roi_landmarks_for_extraction.keys())}")
+                else:
+                    print(f"[ROI Pipeline] Skipping roi_landmarks (manual_roi_enabled={configs.manual_roi_enabled}, used_rois={getattr(configs, 'used_rois', None)})")
                 
                 roi_pixel_data = apply_roi_masks_to_npy_frames(
                     frame_stack=npy_frames_slice,
@@ -501,6 +510,9 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                         for rn in configs.used_rois:
                             if rn in getattr(configs, 'roi_landmarks_options', {}):
                                 roi_landmarks_for_gray[rn] = configs.roi_landmarks_options[rn]
+                        print(f"[ROI Pipeline] Built roi_landmarks_for_gray: {list(roi_landmarks_for_gray.keys())}")
+                    else:
+                        print(f"[ROI Pipeline] Skipping roi_landmarks for gray (manual_roi_enabled={configs.manual_roi_enabled}, used_rois={getattr(configs, 'used_rois', None)})")
                     
                     roi_pixel_data = apply_roi_masks_to_gray_frames(
                         gray_dir=configs.path_gray_frames,
@@ -517,22 +529,42 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
 
     # Update roi_pixel_log with extended masks if forehead extension was applied
     # This ensures the video and PNG visualization show the extended ROI
-    if not extract_from_video_instead_of_gray_files and roi_pixel_data and isinstance(roi_pixel_data, list) and len(roi_pixel_data) > 0:
-        if isinstance(roi_pixel_data[0], dict) and any("coords" in roi_data.get(roi_name, {}) for roi_data in roi_pixel_data for roi_name in ["forehead"]):
+    if (not extract_from_video_instead_of_gray_files and roi_pixel_data and 
+        isinstance(roi_pixel_data, list) and len(roi_pixel_data) > 0):
+        # Check if forehead extension was applied (roi_landmarks was passed)
+        if (not gray_frames_path_is_npy and getattr(configs, 'used_rois', None) and 
+            "forehead" in configs.used_rois):
+            print("[ROI Pipeline] Reconstructing masks from extended forehead coordinates...")
             # Reconstruct extended masks from roi_pixel_data coordinates
             for frame_idx, frame_data in enumerate(roi_pixel_data):
                 if frame_idx < len(roi_pixel_log):
                     for roi_name in list(roi_pixel_log[frame_idx].keys()):
-                        if roi_name in frame_data and "coords" in frame_data[roi_name]:
-                            # Reconstruct mask from extended coordinates
-                            coords = frame_data[roi_name]["coords"]
-                            if coords:
-                                height, width = roi_pixel_log[frame_idx][roi_name].shape
-                                new_mask = np.zeros((height, width), dtype=np.uint8)
-                                for x, y in coords:
-                                    if 0 <= y < height and 0 <= x < width:
-                                        new_mask[y, x] = 255
-                                roi_pixel_log[frame_idx][roi_name] = new_mask
+                        if roi_name == "forehead" and roi_name in frame_data:
+                            if "coords" in frame_data[roi_name]:
+                                coords = frame_data[roi_name]["coords"]
+                                if coords:  # Only reconstruct if coords are not empty
+                                    height, width = roi_pixel_log[frame_idx][roi_name].shape
+                                    new_mask = np.zeros((height, width), dtype=np.uint8)
+                                    for x, y in coords:
+                                        if 0 <= y < height and 0 <= x < width:
+                                            new_mask[y, x] = 255
+                                    roi_pixel_log[frame_idx][roi_name] = new_mask
+        elif gray_frames_path_is_npy and getattr(configs, 'used_rois', None) and "forehead" in configs.used_rois:
+            print("[ROI Pipeline] Reconstructing masks from extended forehead coordinates (NPY)...")
+            # Same logic for NPY frames
+            for frame_idx, frame_data in enumerate(roi_pixel_data):
+                if frame_idx < len(roi_pixel_log):
+                    for roi_name in list(roi_pixel_log[frame_idx].keys()):
+                        if roi_name == "forehead" and roi_name in frame_data:
+                            if "coords" in frame_data[roi_name]:
+                                coords = frame_data[roi_name]["coords"]
+                                if coords:
+                                    height, width = roi_pixel_log[frame_idx][roi_name].shape
+                                    new_mask = np.zeros((height, width), dtype=np.uint8)
+                                    for x, y in coords:
+                                        if 0 <= y < height and 0 <= x < width:
+                                            new_mask[y, x] = 255
+                                    roi_pixel_log[frame_idx][roi_name] = new_mask
 
     roi_pixel_data_for_return = roi_pixel_data
 
