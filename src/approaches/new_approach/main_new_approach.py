@@ -321,7 +321,7 @@ for roi_name in roi_names:
 
     # Choose sub-ROI for final heart rate detection based on power in HR frequency band/ total power ---------------
     best_idx, ratios = select_best_subroi_by_hr_band_power(
-        subroi_means = filtered_subroi_means,
+        subroi_signals = filtered_subroi_means,
         fs = fps,
         hr_band = HR_BAND)
     
