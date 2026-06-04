@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import datetime
+import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -24,6 +27,10 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     load_gray_frame,
 )
 from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi_by_hr_band_power
+from src.approaches.yang_et_al.utils_ground_truth import (
+	load_ground_truth_signal,
+	get_ground_truth_segment
+)
 
 # Values to adapt--------------------------------
 DEFAULT_CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
@@ -43,6 +50,8 @@ SUBROI_GRID_COLS = 8
 LOWCUT_BANDPASS = 0.01
 HIGHCUT_BANDPASS = 0.7
 ORDER_BANDPASS = 4
+
+HR_BAND = (0.9, 2.8)
 
 
 def safe_name(value: str) -> str:
@@ -308,12 +317,108 @@ for roi_name in roi_names:
         prefix= "after_bandpass"
     )
 
-    # Choose sub-ROI for final heart rate detection based on power in HR frequency band/ total power
-    select_best_subroi_by_hr_band_power(
+    # Choose sub-ROI for final heart rate detection based on power in HR frequency band/ total power ---------------
+    best_idx, ratios = select_best_subroi_by_hr_band_power(
         subroi_means = filtered_subroi_means,
         fs = fps,
-        hr_band = (0.9, 2.8))
+        hr_band = HR_BAND)
+    
+    # Plot selected sub-ROI
+    # Get selected signal
+    best_signal = filtered_subroi_means[:, best_idx]
+
+    t = np.arange(len(best_signal)) / fps
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(t, best_signal)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Signal")
+    plt.title(f"Selected Sub-ROI {best_idx} (SQI={ratios[best_idx]:.3f})")
+    plt.tight_layout()
+    fig.savefig(roi_dir / f"selected_subroi_signal.png", dpi=200, bbox_inches="tight")
+    plt.close()
 
 
-print("Done.")
+print("Own pipeline done.")
+
+# Ground truth steps---------------------------------------------------------
+if configs.timespan_signal_to_look_at is not None:
+	start_time, end_time = configs.timespan_signal_to_look_at
+	signal_offset = float(configs.time_first_frame_signal or 0.0)
+	ecg_offset = float(configs.time_first_frame_ecg or 0.0)
+	ground_truth_signal, ground_truth_fs = load_ground_truth_signal(
+		configs.path_ground_truth,
+		flip=False,
+	)
+	ground_truth_segment, ground_truth_time = get_ground_truth_segment(
+		ground_truth_signal,
+		ground_truth_fs,
+		start_time,
+		end_time,
+		signal_offset=signal_offset,
+		ecg_offset=ecg_offset,
+	)
+
+
+# Save results at end of pipeline
+try:
+    # Directory for saved results inside project
+    save_root = Path(project_root) / "saved_results" / "nair_et_al"
+    save_root.mkdir(parents=True, exist_ok=True)
+
+    # Build descriptive filename: signalName_roiName_timespan
+    signal_path_cfg = getattr(configs, "path_gray_frames", "") or ""
+    signal_name = Path(signal_path_cfg).stem if signal_path_cfg else "signal"
+    roi_name_cfg = getattr(configs, "roi_name", "roi") or "roi"
+    timespan_cfg = getattr(configs, "timespan_signal_to_look_at", None)
+    if timespan_cfg:
+        try:
+            start_s, end_s = timespan_cfg
+            timespan_str = f"{float(start_s):.2f}-{float(end_s):.2f}s"
+        except Exception:
+            timespan_str = str(timespan_cfg)
+    else:
+        timespan_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    base_name = f"{signal_name}_{roi_name_cfg}_{timespan_str}"
+    safe_base = re.sub(r"[^A-Za-z0-9_-]", "_", base_name)
+    save_file = save_root / f"{safe_base}.npz"
+
+    metadata = {
+        "pipeline": "nair_et_al",
+        "path_signal": getattr(configs, "path_gray_frames", ""),
+        "path_ground_truth": getattr(configs, "path_ground_truth", ""),
+        "timespan_signal_to_look_at": getattr(configs, "timespan_signal_to_look_at", None),
+        "roi_name": getattr(configs, "roi_name", ""),
+        "heart_rate_estimate_bpm": None,
+        "fps": float(configs.fps),
+        "fps_ground_truth": float(ground_truth_fs) if "ground_truth_fs" in globals() else None,
+    }
+
+    if "ground_truth_segment" in globals():
+        np.savez_compressed(
+            save_file,
+            predicted_signal=np.asarray(best_signal[:], dtype=float),
+            ground_truth_segment=np.asarray(ground_truth_segment, dtype=float),
+            heart_rate_estimate=None,
+            metadata=json.dumps(metadata),
+        )
+    else:
+        np.savez_compressed(
+            save_file,
+            predicted_signal=np.asarray(best_signal[:], dtype=float),
+            heart_rate_estimate=None,
+            metadata=json.dumps(metadata),
+        )
+
+    try:
+        meta_path = save_file.with_suffix('.json')
+        with open(meta_path, 'w', encoding='utf-8') as jf:
+            json.dump(metadata, jf, ensure_ascii=False, indent=2)
+        print(f"Saved pipeline results to: {save_file}")
+        print(f"Saved metadata JSON to: {meta_path}")
+    except Exception as e:
+        print(f"Warning: failed to save metadata JSON: {e}")
+except Exception as e:
+    print(f"Warning: failed to save results: {e}")
 
