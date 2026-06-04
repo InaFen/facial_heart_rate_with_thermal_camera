@@ -182,10 +182,8 @@ for roi_name in roi_names:
         # Store soley the smoothed pixel values (not coordinates, relative or absoulte, are stored)
         smoothed_frames.append(normalized[rel_ys, rel_xs])
 
-    # Compute subROI means ----------------------------------------------------------------
-        subroi_means = compute_subroi_means(frame_values_list, coords_per_frame, len(frame_values_list), n_cells, SUBROI_GRID_ROWS, SUBROI_GRID_COLS)
-
-    # Plot before and after smoothing ------------------------------------------------
+    
+    # Compute subROI means and plot before and after smoothing ------------------------------------------------
     # For each stage (raw and Gaussian-smoothed): divide the ROI into a
     # SUBROI_GRID_ROWS x SUBROI_GRID_COLS grid using each frame's own
     # bounding box and compute every sub-ROI's mean signal per frame.
@@ -218,6 +216,10 @@ for roi_name in roi_names:
         ax.legend(loc="upper right")
         fig.savefig(roi_dir / f"{prefix}_mean_signal.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
+
+        # Compute subROI means ----------------------------------------------------------------
+        subroi_means = compute_subroi_means(frame_values_list, coords_per_frame, len(frame_values_list), n_cells, SUBROI_GRID_ROWS, SUBROI_GRID_COLS)
+
 
         # Sub-ROI mean signals, each sub-ROI in its own subplot
         plot_subroi_means(
