@@ -23,7 +23,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     _parse_asc_file,
     load_gray_frame,
 )
-from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, highpass_subroi_means, plot_subroi_psds
+from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds
 
 # Values to adapt--------------------------------
 DEFAULT_CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
@@ -39,6 +39,10 @@ GAUSSIAN_SIGMA = None
 # (n = rows * cols sub-ROIs)
 SUBROI_GRID_ROWS = 8
 SUBROI_GRID_COLS = 8
+
+LOWCUT_BANDPASS = 0.01
+HIGHCUT_BANDPASS = 0.7
+ORDER_BANDPASS = 4
 
 
 def safe_name(value: str) -> str:
@@ -169,6 +173,9 @@ for roi_name in roi_names:
         # Store soley the smoothed pixel values (not coordinates, relative or absoulte, are stored)
         smoothed_frames.append(normalized[rel_ys, rel_xs])
 
+    # Compute subROI means ----------------------------------------------------------------
+        subroi_means = compute_subroi_means(frame_values_list, coords_per_frame, len(frame_values_list), n_cells, SUBROI_GRID_ROWS, SUBROI_GRID_COLS)
+
     # Plot before and after smoothing ------------------------------------------------
     # For each stage (raw and Gaussian-smoothed): divide the ROI into a
     # SUBROI_GRID_ROWS x SUBROI_GRID_COLS grid using each frame's own
@@ -203,9 +210,7 @@ for roi_name in roi_names:
         fig.savefig(roi_dir / f"{prefix}_mean_signal.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
 
-        # Sub-ROI mean signals, each sub-ROI in its own subplot.
-        subroi_means = compute_subroi_means(frame_values_list, coords_per_frame, len(frame_values_list), n_cells, SUBROI_GRID_ROWS, SUBROI_GRID_COLS)
-
+        # Sub-ROI mean signals, each sub-ROI in its own subplot
         plot_subroi_means(
             n_cells=n_cells,
             subroi_means=subroi_means,
@@ -269,7 +274,8 @@ for roi_name in roi_names:
             cell_colors_bgr=cell_colors_bgr,
             frame_height=frame_height,
             frame_width=frame_width)
-        
+
+    # PSDs of sub-ROIs before and after temporal denoising -----------    
     plot_subroi_psds(
         subroi_means = subroi_means,
         fs = fps,
@@ -277,19 +283,20 @@ for roi_name in roi_names:
         fmax= None,
         nperseg= None,
         roi_dir= roi_dir,
-        prefix= "before_highpass"
+        prefix= "before_bandpass"
     )
 
-    # add higpass   
-    filtered_subroi_means = highpass_subroi_means(
+    # Apply bandpass ----------------------------------------------------------------------  
+    filtered_subroi_means = bandpass_subroi_means(
         subroi_means,
         fs=fps,
-        cutoff=0.7,
-        max_gap_frames=3,      # interpolate gaps of ≤3 frames
-        max_missing_fraction=0.15,
+        lowcut=LOWCUT_BANDPASS,
+        highcut=HIGHCUT_BANDPASS,
+        order=ORDER_BANDPASS,
+        max_gap_frames=3,      # interpolate gaps of ≤3 frames # TODO double check
+        max_missing_fraction=0.15, # TODO double check
     )
 
-    #TODO add notch filter/ use bandpass
 
     plot_subroi_psds(
         subroi_means = filtered_subroi_means,
@@ -298,7 +305,7 @@ for roi_name in roi_names:
         fmax= None,
         nperseg= None,
         roi_dir= roi_dir,
-        prefix= "after_highpass"
+        prefix= "after_bandpass"
     )
 
 print("Done.")
