@@ -373,5 +373,6 @@ def select_best_subroi_by_hr_band_power(
             band_power_ratios[i] = hr_power / total_power
 
     best_idx = np.nanargmax(band_power_ratios)
+    print(f"Selected sub-ROI {best_idx} with HR-band power ratio {band_power_ratios[best_idx]:.3f}")
 
     return best_idx, band_power_ratios
