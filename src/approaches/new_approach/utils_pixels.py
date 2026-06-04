@@ -1,6 +1,14 @@
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import welch
+import numpy as np
+from scipy.signal import butter, filtfilt
+
+from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
+
 
 def compute_subroi_means(frame_values_list: list[np.ndarray], coords_per_frame: list[np.ndarray], n_frames: int, n_cells: int, SUBROI_GRID_ROWS: int, SUBROI_GRID_COLS: int) -> np.ndarray:
         subroi_means = np.full((n_frames, n_cells), np.nan, dtype=float)
@@ -106,10 +114,6 @@ def plot_subroi_means(n_cells: int, subroi_means: np.ndarray, time_axis: np.ndar
     plt.close(fig)
 
 
-import numpy as np
-from scipy.signal import butter, filtfilt
-
-
 def interpolate_small_gaps(signal, max_gap_frames):
     signal = signal.astype(float).copy()
 
@@ -192,10 +196,6 @@ def highpass_subroi_means(
         filtered[valid, cell] = filtered_signal
 
     return filtered
-
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import welch
 
 
 def plot_subroi_psds(
@@ -280,3 +280,98 @@ def plot_subroi_psds(
     #save plot
 
     fig.savefig(roi_dir / f"{prefix}_psds.png", dpi=200, bbox_inches="tight")
+
+
+def bandpass_subroi_means(
+    subroi_means,
+    fs,
+    lowcut,
+    highcut,
+    order=4,
+    max_gap_frames=5,
+    max_missing_fraction=0.2,
+):
+    filtered = np.full_like(subroi_means, np.nan, dtype=float)
+
+    for cell in range(subroi_means.shape[1]):
+        signal = subroi_means[:, cell]
+
+        # Interpolate only small gaps
+        signal_interp = interpolate_small_gaps(
+            signal,
+            max_gap_frames=max_gap_frames,
+        )
+
+        remaining_missing = np.mean(~np.isfinite(signal_interp))
+
+        # Reject signal if too much missing data remains
+        if remaining_missing > max_missing_fraction:
+            continue
+
+        valid = np.isfinite(signal_interp)
+
+        # Need enough valid samples for filtering
+        if valid.sum() < 3 * (order + 1):
+            continue
+
+        filtered_signal = apply_butterworth_bandpass_filter(
+            signal_interp[valid][:, np.newaxis],
+            lowcut=lowcut,
+            highcut=highcut,
+            fs=fs,
+            order=order,
+        ).squeeze()
+
+        filtered[valid, cell] = filtered_signal
+
+    return filtered
+
+
+def select_best_subroi_by_hr_band_power(
+    subroi_signals,
+    fs,
+    hr_band=(0.7, 3.0),
+):
+    """
+    Select the sub-ROI whose signal has the highest fraction of power
+    within the heart-rate frequency band.
+
+    Parameters
+    ----------
+    subroi_signals : array, shape (T, N)
+        One signal per sub-ROI.
+    fs : float
+        Sampling frequency in Hz.
+    hr_band : tuple(float, float)
+        Heart-rate band in Hz (default: 0.7–3.0 Hz = 42–180 bpm).
+
+    Returns
+    -------
+    best_idx : int
+        Index of the selected sub-ROI.
+    band_power_ratios : ndarray, shape (N,)
+        HR-band power / total power for each sub-ROI.
+    """
+
+    n_subrois = subroi_signals.shape[1]
+    band_power_ratios = np.full(n_subrois, np.nan)
+
+    for i in range(n_subrois):
+        signal = subroi_signals[:, i]
+
+        if not np.all(np.isfinite(signal)):
+            continue
+
+        freqs, psd = welch(signal, fs=fs)
+
+        total_power = np.trapz(psd, freqs)
+
+        hr_mask = (freqs >= hr_band[0]) & (freqs <= hr_band[1])
+        hr_power = np.trapz(psd[hr_mask], freqs[hr_mask])
+
+        if total_power > 0:
+            band_power_ratios[i] = hr_power / total_power
+
+    best_idx = np.nanargmax(band_power_ratios)
+
+    return best_idx, band_power_ratios

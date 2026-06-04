@@ -23,7 +23,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     _parse_asc_file,
     load_gray_frame,
 )
-from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds
+from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi_by_hr_band_power
 
 # Values to adapt--------------------------------
 DEFAULT_CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
@@ -307,6 +307,13 @@ for roi_name in roi_names:
         roi_dir= roi_dir,
         prefix= "after_bandpass"
     )
+
+    # Choose sub-ROI for final heart rate detection based on power in HR frequency band/ total power
+    select_best_subroi_by_hr_band_power(
+        subroi_means = filtered_subroi_means,
+        fs = fps,
+        hr_band = (0.9, 2.8))
+
 
 print("Done.")
 
