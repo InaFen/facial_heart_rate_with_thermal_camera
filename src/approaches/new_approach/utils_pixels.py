@@ -357,10 +357,20 @@ def select_best_subroi_by_hr_band_power(
     band_power_ratios = np.full(n_subrois, np.nan)
 
     for i in range(n_subrois):
-        signal = subroi_signals[:, i]
+        signal = subroi_signals[:, i].astype(float)
 
-        if not np.all(np.isfinite(signal)):
+        finite = np.isfinite(signal)
+        # Skip sub-ROIs that are entirely empty (no usable samples at all).
+        if finite.sum() < 2:
             continue
+
+        # Fill any residual NaNs (long gaps / leading/trailing NaNs that the
+        # small-gap interpolation in the bandpass step left behind) so Welch
+        # gets a fully finite signal. Edges are held constant via np.interp.
+        if not finite.all():
+            #idx = np.arange(len(signal))
+            #signal = np.interp(idx, idx[finite], signal[finite])
+            continue    # skip sub-ROIs with residual NaNs, as they likely have too much missing data for reliable HR-band power estimation
 
         freqs, psd = welch(signal, fs=fs)
 
@@ -372,7 +382,16 @@ def select_best_subroi_by_hr_band_power(
         if total_power > 0:
             band_power_ratios[i] = hr_power / total_power
 
-    best_idx = np.nanargmax(band_power_ratios)
+    if not np.any(np.isfinite(band_power_ratios)):
+        raise ValueError(
+            "No usable sub-ROI signal for HR-band selection: every sub-ROI is "
+            "empty or has no power. This usually means the sub-ROI grid is too "
+            "fine (too many empty cells) or too much of the signal is missing. "
+            "Try a coarser SUBROI_GRID, or relax max_gap_frames / "
+            "max_missing_fraction in bandpass_subroi_means."
+        )
+
+    best_idx = int(np.nanargmax(band_power_ratios))
     print(f"Selected sub-ROI {best_idx} with HR-band power ratio {band_power_ratios[best_idx]:.3f}")
 
     return best_idx, band_power_ratios
