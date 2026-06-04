@@ -45,13 +45,44 @@ GAUSSIAN_SIGMA = None
 # to make sure that the amount of elements per frame is constant over frames, without having to interpolate pixels which might be wrongful as ROI size changes over frames
 # (n = rows * cols sub-ROIs)
 SUBROI_GRID_ROWS = 8
-SUBROI_GRID_COLS = 8
+SUBROI_GRID_COLS = SUBROI_GRID_ROWS
 
 LOWCUT_BANDPASS = 0.01
 HIGHCUT_BANDPASS = 0.7
 ORDER_BANDPASS = 4
 
 HR_BAND = (0.9, 2.8)
+
+# --- run_batch overrides ---------------------------------------------------
+# When launched via scripts/run_batch.py, the spatial Gaussian + temporal
+# bandpass settings are provided per camera, and the sub-ROI grid size per ROI.
+# These env vars override the defaults above (standalone runs keep the defaults).
+GAUSSIAN_KERNEL_SIZE = int(os.environ.get("NEW_APPROACH_GAUSSIAN_KERNEL_SIZE", GAUSSIAN_KERNEL_SIZE))
+LOWCUT_BANDPASS = float(os.environ.get("NEW_APPROACH_LOWCUT_BANDPASS", LOWCUT_BANDPASS))
+HIGHCUT_BANDPASS = float(os.environ.get("NEW_APPROACH_HIGHCUT_BANDPASS", HIGHCUT_BANDPASS))
+ORDER_BANDPASS = int(os.environ.get("NEW_APPROACH_ORDER_BANDPASS", ORDER_BANDPASS))
+
+# Default per-ROI sub-ROI grid (rows; cols = rows). Overridable via the
+# NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI env var (JSON mapping {roi_name: rows}).
+SUBROI_GRID_ROWS_BY_ROI = {
+    "forehead": 8,
+    "left_forehead": 5,
+    "right_forehead": 5,
+    "glabella": 3,
+}
+_grid_by_roi_env = os.environ.get("NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI")
+if _grid_by_roi_env:
+    try:
+        SUBROI_GRID_ROWS_BY_ROI.update(
+            {str(k).strip().lower(): int(v) for k, v in json.loads(_grid_by_roi_env).items()}
+        )
+    except (ValueError, TypeError) as exc:
+        print(f"[new_approach] Could not parse NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI: {exc}")
+
+
+def resolve_subroi_grid_rows(roi_name: str) -> int:
+    """Return the sub-ROI grid row count for an ROI (falls back to the default)."""
+    return int(SUBROI_GRID_ROWS_BY_ROI.get(str(roi_name).strip().lower(), SUBROI_GRID_ROWS))
 
 
 def safe_name(value: str) -> str:
@@ -69,7 +100,6 @@ output_root = Path(plots_save_dir) if plots_save_dir else DEFAULT_OUTPUT_ROOT
 
 output_root.mkdir(parents=True, exist_ok=True)
 fps = float(configs.fps)
-n_cells = SUBROI_GRID_ROWS * SUBROI_GRID_COLS
 
 # Run ROI pipeline -------------------------------------------
 print("Expects one big ROI (will be automatically split in sub-ROIs later)")
@@ -97,6 +127,14 @@ else:
 # --- Process every selected ROI --------------------------------------------
 for roi_name in roi_names:
     print(f"Processing ROI: {roi_name}")
+
+    # Per-ROI sub-ROI grid: larger ROIs (whole forehead) are split into more
+    # sub-ROIs than smaller ones (single-side forehead, glabella). Driven by
+    # SUBROI_GRID_ROWS_BY_ROI (overridable via run_batch env var).
+    SUBROI_GRID_ROWS = resolve_subroi_grid_rows(roi_name)
+    SUBROI_GRID_COLS = SUBROI_GRID_ROWS
+    n_cells = SUBROI_GRID_ROWS * SUBROI_GRID_COLS
+    print(f"  sub-ROI grid: {SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS} ({n_cells} sub-ROIs)")
 
     roi_dir = output_root / safe_name(roi_name)
     roi_dir.mkdir(parents=True, exist_ok=True)

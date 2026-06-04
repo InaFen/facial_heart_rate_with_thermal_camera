@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import csv
+import json
 import os
 import re
 import subprocess
@@ -59,6 +60,26 @@ TRACK_FACE_SETTINGS_BY_CAMERA = {
     "lepton": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": -0.35, "use_rescaling": False},
     "vario": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True},
     "mwir": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True},
+}
+
+# new_approach: per-camera spatial Gaussian + temporal bandpass settings. Passed
+# to main_new_approach.py via NEW_APPROACH_* env vars (override the in-script
+# defaults). Tune per camera (resolution / fps) as needed.
+NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA = {
+    "lepton": {"gaussian_kernel_size": 7, "lowcut_bandpass": 0.01, "highcut_bandpass": 0.7, "order_bandpass": 4},
+    "vario": {"gaussian_kernel_size": 7, "lowcut_bandpass": 0.01, "highcut_bandpass": 0.7, "order_bandpass": 4},
+    "mwir": {"gaussian_kernel_size": 9, "lowcut_bandpass": 0.01, "highcut_bandpass": 0.7, "order_bandpass": 4},
+}
+
+# new_approach: per-ROI sub-ROI grid size (rows; columns are set equal to rows).
+# Larger ROIs (whole forehead) are split into more sub-ROIs than smaller ones
+# (single-side forehead, glabella). ROI names not listed fall back to the
+# in-script default. Passed via NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI (JSON).
+NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI = {
+    "forehead": 8,
+    "left_forehead": 5,
+    "right_forehead": 5,
+    "glabella": 3,
 }
 
 
@@ -179,6 +200,7 @@ def run_one_row(
     cwd: Path,
     plots_save_dir: Path | None = None,
     camera: str | None = None,
+    pipeline: str | None = None,
     config_env_var: str = "CONFIG_PATH",
     plots_env_var: str = "PLOTS_SAVE_DIR",
 ) -> int:
@@ -188,6 +210,15 @@ def run_one_row(
         env[plots_env_var] = str(plots_save_dir)
     if camera:
         env["CAMERA_NAME"] = str(camera)
+    # new_approach: camera-dependent filter settings + ROI-dependent sub-ROI grid.
+    if pipeline == "new":
+        filter_settings = NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA.get(camera or "", {})
+        if filter_settings:
+            env["NEW_APPROACH_GAUSSIAN_KERNEL_SIZE"] = str(filter_settings["gaussian_kernel_size"])
+            env["NEW_APPROACH_LOWCUT_BANDPASS"] = str(filter_settings["lowcut_bandpass"])
+            env["NEW_APPROACH_HIGHCUT_BANDPASS"] = str(filter_settings["highcut_bandpass"])
+            env["NEW_APPROACH_ORDER_BANDPASS"] = str(filter_settings["order_bandpass"])
+        env["NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI"] = json.dumps(NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI)
     track_face_settings = TRACK_FACE_SETTINGS_BY_CAMERA.get(camera or "", {})
     if track_face_settings:
         env["TRACK_FACE_BLOCK_SIZE"] = str(track_face_settings["block_size"])
@@ -314,6 +345,7 @@ def main() -> int:
                 cwd=PROJECT_ROOT,
                 plots_save_dir=plots_save_dir,
                 camera=camera,
+                pipeline=pipeline,
                 config_env_var=config_env_var,
                 plots_env_var=plots_env_var,
             )
