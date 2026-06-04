@@ -28,6 +28,10 @@ CONFIGS_PATH = os.environ.get("NAIR_CONFIG_PATH", "src/approaches/nair_et_al/con
 PLOTS_SAVE_DIR = os.environ.get("NAIR_PLOTS_SAVE_DIR", None)
 PLOTS_OUTPUT_DIR = Path(PLOTS_SAVE_DIR) if PLOTS_SAVE_DIR else Path(project_root) / "saved_results" / "nair_et_al" / "plots"
 
+# When a plots directory is provided (e.g. run_batch with save_plots=True), save
+# all `plot_steps` figures even if configs.plot_steps is False.
+SAVE_ALL_PLOTS = PLOTS_SAVE_DIR is not None
+
 configs = Config.from_yaml(CONFIGS_PATH)
 output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
 
@@ -126,7 +130,7 @@ bandpassed_mean_values_subregions = np.zeros_like(mean_values_subregions, dtype=
 for subregion in range(len(subregions_names)):
     bandpassed_mean_values_subregions[subregion] = apply_butterworth_bandpass_filter(signal = mean_values_subregions[subregion], lowcut = configs.bandpass_lowcut, highcut = configs.bandpass_highcut, fs = configs.fps, order = configs.bandpass_order)
 
-    if configs.plot_steps:
+    if configs.plot_steps or SAVE_ALL_PLOTS:
         # Plot signal before and after bandpass filtering for all subregions
         bandpassed = np.array(bandpassed_mean_values_subregions)
         raw = np.array(mean_values_subregions)
@@ -161,7 +165,7 @@ for subregion in range(len(subregions_names)):
 # Columns = time frames -> siginificant temporal signals in V (Nair et al.)
 U, S, Vh = np.linalg.svd(bandpassed_mean_values_subregions, full_matrices=False)
 
-if configs.plot_steps:
+if configs.plot_steps or SAVE_ALL_PLOTS:
     num_components = Vh.shape[0]
     fig = plt.figure(figsize=(12, 6))
     for i in range(num_components):
@@ -177,7 +181,7 @@ if configs.plot_steps:
 # Apply signal quality indices to select the best accumalated components
 optimal_vh_components = generate_ppg_signal(signals = Vh, fs = configs.fps, normal_hr_freq = NORMAL_HR_FREQ)
 
-if configs.plot_steps:
+if configs.plot_steps or SAVE_ALL_PLOTS:
     fig = plt.figure(figsize=(12, 6))
     plt.plot(optimal_vh_components[:])
     plt.title(f'Optimal Component')
@@ -197,7 +201,7 @@ heart_rate_candidates = frequencies * 60
 # Choose smooth, dominant curve in the STFT magnitude as heart rate curve
 hr_curve = extract_curve(short_time_fourier_ppg_magnitude, heart_rate_candidates, SMOOTHNESS_PENALTY)
 
-if configs.plot_steps:
+if configs.plot_steps or SAVE_ALL_PLOTS:
     fig = plt.figure(figsize=(12, 6))
     plt.plot(hr_curve[:])
     plt.title(f'Extracted Heart Rate Curve')
