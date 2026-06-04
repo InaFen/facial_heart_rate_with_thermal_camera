@@ -186,6 +186,8 @@ def run_one_row(
     env[config_env_var] = str(config_path)
     if plots_save_dir is not None:
         env[plots_env_var] = str(plots_save_dir)
+    if camera:
+        env["CAMERA_NAME"] = str(camera)
     track_face_settings = TRACK_FACE_SETTINGS_BY_CAMERA.get(camera or "", {})
     if track_face_settings:
         env["TRACK_FACE_BLOCK_SIZE"] = str(track_face_settings["block_size"])
@@ -214,13 +216,13 @@ def get_fps_for_camera(camera: str) -> float:
 
 def main() -> int:
     # ===== CONFIGURATION (edit these variables) =====
-    pipeline = "new"  # "yang", "nair", or "new"
+    pipeline = "nair"  # "yang", "nair", or "new"
     camera = "mwir"  # "lepton", "vario", or "mwir" (None = use pipeline default)
-    roi_name = "temp"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
+    roi_name = "dlib"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
     limit_rows = None  # e.g., 5 (None = process all rows)
     dry_run = False  # True to print what would be done, False to execute
     save_plots = True  # True to save plots, False otherwise
-    used_rois = ["forehead"]
+    used_rois = ["left_forehead"]
     # ===== END CONFIGURATION =====
 
     # Get pipeline configuration

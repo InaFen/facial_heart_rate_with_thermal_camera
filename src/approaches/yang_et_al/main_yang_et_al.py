@@ -291,9 +291,12 @@ print("Finished Yang et al. approach pipeline.")
 
 # Save results at end of pipeline
 try:
-	# Directory for saved results inside project
-	save_root = Path(project_root) / "saved_results" / "yang_et_al"
-	save_root.mkdir(parents=True, exist_ok=True)
+	# Directory for saved results inside project, grouped per camera
+    # (e.g. saved_results/nair_et_al/results/vario). The camera name is provided
+    # by run_batch via the CAMERA_NAME env var; falls back to "unknown".
+    camera_name = os.environ.get("CAMERA_NAME", "unknown") or "unknown"
+    save_root = Path(project_root) / "saved_results" / "yang_et_al" / "results" / camera_name
+    save_root.mkdir(parents=True, exist_ok=True) 
 	# Build descriptive filename: signalName_roiName_timespan
 	signal_path_cfg = getattr(configs, "path_gray_frames", "") or ""
 	signal_name = Path(signal_path_cfg).stem if signal_path_cfg else "signal"
