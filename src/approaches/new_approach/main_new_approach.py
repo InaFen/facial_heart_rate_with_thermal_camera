@@ -25,7 +25,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
 )
 from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, highpass_subroi_means, plot_subroi_psds
 
-
+# Values to adapt--------------------------------
 DEFAULT_CONFIGS_PATH = "src/approaches/new_approach/configs_new_approach.yaml"
 CONFIG_PATH_ENV_VAR = "NEW_APPROACH_CONFIG_PATH"
 PLOTS_SAVE_DIR_ENV_VAR = "NEW_APPROACH_PLOTS_SAVE_DIR"
@@ -34,9 +34,9 @@ DEFAULT_OUTPUT_ROOT = Path("saved_results/new_approach")
 GAUSSIAN_KERNEL_SIZE = 7
 GAUSSIAN_SIGMA = None
 
-# Sub-ROI grid: the ROI is divided into SUBROI_GRID_ROWS x SUBROI_GRID_COLS areas
-# (n = rows * cols sub-ROIs). For each sub-ROI the mean signal over time and its
-# PSD are plotted together in one figure (per processing stage).
+# Sub-ROI grid: the ROI is divided into SUBROI_GRID_ROWS x SUBROI_GRID_COLS areas before temproal denoising
+# to make sure that the amount of elements per frame is constant over frames, without having to interpolate pixels which might be wrongful as ROI size changes over frames
+# (n = rows * cols sub-ROIs)
 SUBROI_GRID_ROWS = 8
 SUBROI_GRID_COLS = 8
 
@@ -46,7 +46,7 @@ def safe_name(value: str) -> str:
 
 
 
-# --- Resolve config and output locations -----------------------------------
+# Get configs -----------------------------------
 config_path = os.environ.get(CONFIG_PATH_ENV_VAR) or os.environ.get("CONFIG_PATH") or DEFAULT_CONFIGS_PATH
 configs = Config.from_yaml(config_path)
 configs.plot_steps = False
@@ -54,8 +54,8 @@ configs.plot_steps = False
 plots_save_dir = os.environ.get(PLOTS_SAVE_DIR_ENV_VAR)
 output_root = Path(plots_save_dir) if plots_save_dir else DEFAULT_OUTPUT_ROOT
 
-# --- Run ROI extraction pipeline -------------------------------------------
-print("Expects one big ROI")
+# Run ROI pipeline -------------------------------------------
+print("Expects one big ROI (will be automatically split in sub-ROIs later)")
 roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
 if not roi_pixel_data:
     raise ValueError("No ROI pixel data was returned by the ROI pipeline.")
@@ -63,12 +63,6 @@ if not roi_pixel_data:
 roi_names = list(roi_pixel_data[0].keys())
 if not roi_names:
     raise ValueError("No ROI names were found in the first frame.")
-
-selected_rois = [roi_name for roi_name in roi_names if not configs.used_rois or roi_name in configs.used_rois]
-if not selected_rois:
-    raise ValueError(
-        f"None of the configured ROIs {configs.used_rois!r} are available. Available ROIs: {roi_names!r}"
-    )
 
 output_root.mkdir(parents=True, exist_ok=True)
 fps = float(configs.fps)
@@ -117,7 +111,7 @@ cell_colors_bgr = [
 ]
 
 # --- Process every selected ROI --------------------------------------------
-for roi_name in selected_rois:
+for roi_name in roi_names:
     print(f"Processing ROI: {roi_name}")
 
     roi_dir = output_root / safe_name(roi_name)
