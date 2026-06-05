@@ -114,7 +114,6 @@ if not roi_names:
 # --- Load the source frames once, in the same order/range as roi_pixel_data,
 #     so the sub-ROI overlay video can be drawn onto the actual thermal frames
 #     (mirrors the whole-ROI video written by the ROI pipeline). -------------
-# TODO
 if configs.timespan_signal_to_look_at is not None:
     _start_t, _end_t = configs.timespan_signal_to_look_at
     src_start_frame = int(_start_t * fps)
