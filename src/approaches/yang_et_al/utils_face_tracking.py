@@ -798,3 +798,125 @@ def filter_out_pixels_below_threshold_in_roi_pixel_data(roi_pixel_data, threshol
         ]
 
     return filtered_roi_pixel_data
+
+
+def save_threshold_snapshot(
+    configs,
+    roi_pixel_data,
+    threshold_value,
+    output_path,
+    frame_offset: int = 4,
+    kept_color: tuple = (0, 255, 0),
+    alpha: float = 0.55,
+):
+    """
+    Save a snapshot visualizing which ROI pixels survive the temperature threshold.
+
+    Mirrors the ``roi_frame_*.png`` saved by the ROI pipeline, but for the Yang
+    pipeline after thresholding: the full thermal frame is shown as grayscale
+    background (so the rest of the image stays visible) and the pixels that
+    remain after thresholding are colored, showing what is left after the
+    threshold.
+
+    Parameters:
+        configs: Config object (provides path_gray_frames, timespan, fps, asc_unit).
+        roi_pixel_data: thresholded per-frame ROI data (timespan-limited), i.e. the
+            output of ``filter_out_pixels_below_threshold_in_roi_pixel_data``.
+        threshold_value: threshold value used (for the filename / log only).
+        output_path: PNG path to write.
+        frame_offset: which frame within ``roi_pixel_data`` to render (default 4 =
+            5th frame, matching the ROI pipeline snapshot).
+        kept_color: BGR color used for the kept (surviving) pixels.
+        alpha: blend strength of the colored pixels over the grayscale frame.
+    """
+    # Imported here to avoid a module-level dependency on the new_approach utils.
+    import os
+    from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+    from src.approaches.new_approach.utils.utils_landmark_detection import (
+        _asc_to_kelvin_x100,
+        _parse_asc_file,
+        load_gray_frame,
+    )
+
+    if not len(roi_pixel_data):
+        print("[threshold snapshot] No ROI data; skipping snapshot.")
+        return
+
+    frame_offset = max(0, min(frame_offset, len(roi_pixel_data) - 1))
+
+    # The ROI data is timespan-limited, so frame_offset within it maps to the
+    # absolute source-frame index start_frame + frame_offset.
+    if configs.timespan_signal_to_look_at is not None:
+        start_time, _ = configs.timespan_signal_to_look_at
+        src_start_frame = int(start_time * configs.fps)
+    else:
+        src_start_frame = 0
+    abs_index = src_start_frame + frame_offset
+
+    # --- Load the single full source frame at abs_index (handles .npy/.asc/.gray) ---
+    gray_path = configs.path_gray_frames
+    source_frame = None
+    if os.path.isfile(gray_path) and gray_path.endswith(".npy"):
+        stack = np.load(gray_path, allow_pickle=False, mmap_mode="r")
+        idx = max(0, min(abs_index, stack.shape[0] - 1))
+        source_frame = np.array(stack[idx])
+    elif os.path.isdir(gray_path):
+        files = [f for f in os.listdir(gray_path) if os.path.isfile(os.path.join(gray_path, f))]
+        ext = os.path.splitext(files[0])[1].lower() if files else ""
+        if ext == ".asc":
+            asc_paths = sorted(os.path.join(gray_path, f) for f in files if f.lower().endswith(".asc"))
+            if asc_paths:
+                idx = max(0, min(abs_index, len(asc_paths) - 1))
+                source_frame = _parse_asc_file(asc_paths[idx])
+                if getattr(configs, "asc_unit", None) == "kelvin":
+                    source_frame = _asc_to_kelvin_x100(source_frame)
+        else:
+            _, gray_files = sort_grayfiles_with_interpolations(gray_path)
+            if gray_files:
+                idx = max(0, min(abs_index, len(gray_files) - 1))
+                source_frame = load_gray_frame(os.path.join(gray_path, gray_files[idx]))
+
+    if source_frame is None:
+        print(f"[threshold snapshot] Could not load source frame from {gray_path}; skipping snapshot.")
+        return
+
+    # --- Grayscale background (full image stays visible) ---
+    frame = np.asarray(source_frame)
+    vmin, vmax = np.percentile(frame, [1, 99])
+    frame_clipped = np.clip(frame, vmin, vmax)
+    frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+    height, width = frame_bgr.shape[:2]
+
+    # --- Color the pixels that survived the threshold ---
+    xs_list, ys_list = [], []
+    for roi_info in roi_pixel_data[frame_offset].values():
+        coords = roi_info.get("coords", [])
+        if len(coords):
+            arr = np.asarray(coords, dtype=int).reshape(-1, 2)
+            xs_list.append(arr[:, 0])
+            ys_list.append(arr[:, 1])
+
+    n_kept = 0
+    if xs_list:
+        xs = np.concatenate(xs_list)
+        ys = np.concatenate(ys_list)
+        in_bounds = (xs >= 0) & (xs < width) & (ys >= 0) & (ys < height)
+        xs, ys = xs[in_bounds], ys[in_bounds]
+        n_kept = int(xs.size)
+        overlay = frame_bgr.copy()
+        overlay[ys, xs] = kept_color
+        frame_bgr = cv2.addWeighted(overlay, alpha, frame_bgr, 1.0 - alpha, 0)
+
+    # Insert the (absolute) frame index into the filename, mirroring the
+    # roi_frame_{index:06d}.png naming used by the ROI pipeline
+    # (e.g. roi_frame_threshold_30.png -> roi_frame_threshold_30_000004.png).
+    stem, ext = os.path.splitext(output_path)
+    output_path = f"{stem}_{abs_index:06d}{ext}"
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    cv2.imwrite(output_path, frame_bgr)
+    print(
+        f"Saved threshold snapshot ({n_kept} kept pixels, threshold={threshold_value}, "
+        f"frame={abs_index}) to: {output_path}"
+    )

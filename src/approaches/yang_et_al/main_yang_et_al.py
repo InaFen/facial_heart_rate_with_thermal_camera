@@ -11,7 +11,7 @@ import numpy as np
 project_root = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, project_root)
 
-from src.approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold_in_roi_pixel_data
+from src.approaches.yang_et_al.utils_face_tracking import track_face, filter_out_pixels_below_threshold_in_roi_pixel_data, save_threshold_snapshot
 from src.approaches.yang_et_al.utils_spatial_temporal_graph import build_block_features_from_roi_pixel_data, build_spatiotemporal_graph, add_centroids_to_roi_data, denoise_via_laplacian
 from src.approaches.yang_et_al.utils_plotting import plot_signal_each_roi_seperately, plot_flattened_signal_each_roi, plot_denoised_signal_unflat, plot_original_vs_denoised, plot_principal_components_in_seperate_plots, plot_chosen_component
 from src.approaches.yang_et_al.utils_post_processing import pca, apply_butterworth_bandpass_filter, transform_flatten_signal_to_original_shape, find_most_periodic_pca_component
@@ -55,7 +55,24 @@ if APPLY_TRACKER_LANDMARK_DETECTION:
 		output_video_path=configs.path_video_thresholded_pixel,
 		fps=configs.fps,
 	)
-	
+
+	# Save a snapshot of what is left after the threshold: the full thermal frame
+	# stays visible (grayscale) and the kept (surviving) pixels are colored,
+	# mirroring the roi_frame_*.png saved by the ROI pipeline.
+	threshold_snapshot_dir = (
+		os.path.dirname(configs.path_video_thresholded_pixel)
+		or os.path.dirname(configs.path_video_tracked_face)
+	)
+	threshold_snapshot_path = os.path.join(
+		threshold_snapshot_dir, f"roi_frame_threshold_{THRESHOLD_VALUE}.png"
+	)
+	save_threshold_snapshot(
+		configs=configs,
+		roi_pixel_data=roi_pixel_data,
+		threshold_value=THRESHOLD_VALUE,
+		output_path=threshold_snapshot_path,
+	)
+
 else:
 	# Get face with mediapipe
 	roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
