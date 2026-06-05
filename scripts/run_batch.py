@@ -341,17 +341,17 @@ def get_fps_for_camera(camera: str) -> float:
 
 def main() -> int:
 	# ===== CONFIGURATION (edit these variables) =====
-	pipeline = "yang"  # "yang", "nair", or "new"
-	camera = "vario"  # "lepton", "vario", or "mwir" (None = use pipeline default)
-	roi_name = "manual_temp"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
+	pipeline = "new"  # "yang", "nair", or "new"
+	camera = "mwir"  # "lepton", "vario", or "mwir" (None = use pipeline default)
+	roi_name = "forehead"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute
 	save_plots = True  # True to save plots, False otherwise
-	used_rois = ["left_forehead"]
+	used_rois = ["forehead"]
 	# Manual ROI (used only when roi_name contains "manual"). On a headless server
 	# the interactive ROI drawing opens in the browser (forwarded localhost port).
 	manual_roi_mode = "rectangle"            # rectangle | polygon | point | point_surrounding
-	manual_roi_split_enabled = True        # split the single manual ROI into a grid of sub-ROIs
+	manual_roi_split_enabled = False        # split the single manual ROI into a grid of sub-ROIs
 	manual_roi_subroi_grid = [3, 3]        # [rows, cols] used when split is enabled
 	manual_roi_selection_colormap = True   # apply a colormap to the drawing frame
 	manual_roi_backend = "browser"         # browser | cv2 | auto
