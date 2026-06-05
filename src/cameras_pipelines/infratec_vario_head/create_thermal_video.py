@@ -74,10 +74,12 @@ def parse_asc_frame(asc_path: Path) -> np.ndarray:
     return frame
 
 
-def to_colored_uint8(frame_celsius: np.ndarray) -> np.ndarray:
+def to_grayscale_uint8(frame_celsius: np.ndarray) -> np.ndarray:
     normalized = cv2.normalize(frame_celsius, None, 0, 255, cv2.NORM_MINMAX)
     frame_gray = normalized.astype(np.uint8)
-    return cv2.applyColorMap(frame_gray, cv2.COLORMAP_INFERNO)
+    # Replicate the single grayscale channel to BGR (R == G == B) so the video
+    # stays grayscale, matching thermal_video_generator.py for the lepton camera.
+    return cv2.cvtColor(frame_gray, cv2.COLOR_GRAY2BGR)
 
 
 def create_thermal_video(input_dir: Path, fps: int = 25) -> Path:
@@ -101,7 +103,7 @@ def create_thermal_video(input_dir: Path, fps: int = 25) -> Path:
     if not writer.isOpened():
         raise RuntimeError(f"Could not open video writer for {output_video}")
 
-    writer.write(to_colored_uint8(first_frame))
+    writer.write(to_grayscale_uint8(first_frame))
 
     memmap_array = None
     if SAVE_NPY:
@@ -124,7 +126,7 @@ def create_thermal_video(input_dir: Path, fps: int = 25) -> Path:
             )
         if memmap_array is not None:
             memmap_array[index - 1] = frame
-        writer.write(to_colored_uint8(frame))
+        writer.write(to_grayscale_uint8(frame))
 
         if index - last_reported >= report_every or index == total_frames:
             elapsed = (index - 1) / fps
