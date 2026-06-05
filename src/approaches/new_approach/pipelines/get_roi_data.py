@@ -743,26 +743,31 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
         roi_pixel_data_for_return = roi_pixel_data
 
 
-        # save the fifth frame (index 4) relative to the selected timespan or global frames
-        desired_offset = 4  # 0-based index -> 4 is the fifth frame
-        base_idx = 0 if limit_to_timespan else (start_frame or 0)
-        frame_to_save = base_idx + desired_offset
-        # clamp into valid range
-        if frame_to_save < 0:
-            frame_to_save = 0
-        if frame_to_save >= len(roi_pixel_log):
-            frame_to_save = len(roi_pixel_log) - 1
+        # Save a snapshot of the fifth frame (offset 4) AFTER the timespan start.
+        # `roi_pixel_log` (and npy_frames_slice) are sliced to the timespan, so the
+        # mask is indexed by the local offset; the underlying full gray/asc/video
+        # frame must be read at the GLOBAL index start_frame + offset so the overlaid
+        # mask matches the displayed frame.
+        desired_offset = 4  # 0-based index -> 4 is the fifth frame after the start
+        # Local index into the (timespan-sliced) roi_pixel_log / npy_frames_slice.
+        roi_log_index = desired_offset
+        if roi_log_index < 0:
+            roi_log_index = 0
+        if roi_log_index >= len(roi_pixel_log):
+            roi_log_index = len(roi_pixel_log) - 1
+        # Global frame index into the full gray/asc files and the original video.
+        source_frame_index = (start_frame or 0) + roi_log_index
 
-        roi_masks = roi_pixel_log[frame_to_save]
+        roi_masks = roi_pixel_log[roi_log_index]
         output_dir = os.path.dirname(configs.path_video_tracked_face) or configs.path_gray_frames
         os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f"roi_frame_{frame_to_save:06d}.png")
+        output_path = os.path.join(output_dir, f"roi_frame_{source_frame_index:06d}.png")
 
         # If extracting from video, read the selected frame of the video for visualization, else read the corresponding gray frame
         if extract_from_video_instead_of_gray_files:
             cap = cv2.VideoCapture(configs.path_video)
             if cap.isOpened():
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_to_save)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, source_frame_index)
                 ret, frame = cap.read()
                 if ret and frame is not None:
                     if frame.dtype != np.uint8:
@@ -774,9 +779,9 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                 cap.release()
         else:
             if gray_frames_path_is_npy:
-                # npy_frames_slice is the selected slice if timespan limited, otherwise full
-                idx_in_slice = frame_to_save - (start_frame or 0) if limit_to_timespan else frame_to_save
-                idx_in_slice = max(0, min(idx_in_slice, len(npy_frames_slice) - 1))
+                # npy_frames_slice is sliced to the timespan, so use the local offset
+                # (roi_log_index), which matches roi_pixel_log indexing.
+                idx_in_slice = max(0, min(roi_log_index, len(npy_frames_slice) - 1))
                 frame = npy_frames_slice[idx_in_slice]
                 vmin, vmax = np.percentile(frame, [1, 99])
                 frame_clipped = np.clip(frame, vmin, vmax)
@@ -794,11 +799,11 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     asc_paths = sorted(
                         [os.path.join(configs.path_gray_frames, f) for f in files_in_dir if f.lower().endswith(".asc")]
                     )
-                    if frame_to_save >= len(asc_paths):
+                    if source_frame_index >= len(asc_paths):
                         # clamp
                         frame_idx = len(asc_paths) - 1
                     else:
-                        frame_idx = frame_to_save
+                        frame_idx = source_frame_index
 
                     frame = _parse_asc_file(asc_paths[frame_idx])
                     if configs.asc_unit == "kelvin":
@@ -810,10 +815,10 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                 else:
                     # Read the corresponding gray frame for visualization
                     _, gray_files = sort_grayfiles_with_interpolations(configs.path_gray_frames)
-                    if frame_to_save >= len(gray_files):
+                    if source_frame_index >= len(gray_files):
                         frame_idx = len(gray_files) - 1
                     else:
-                        frame_idx = frame_to_save
+                        frame_idx = source_frame_index
 
                     frame = load_gray_frame(os.path.join(configs.path_gray_frames, gray_files[frame_idx]))
                     vmin, vmax = np.percentile(frame, [1, 99])
@@ -844,7 +849,10 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                 cv2.drawContours(overlay, contours, -1, color, 1)
 
             cv2.imwrite(output_path, overlay)
-            print(f"Saved ROI fourth-frame snapshot to: {output_path}")
+            print(
+                f"Saved ROI snapshot (frame {source_frame_index}, offset {desired_offset} "
+                f"after timespan start) to: {output_path}"
+            )
 
     # Plot
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
