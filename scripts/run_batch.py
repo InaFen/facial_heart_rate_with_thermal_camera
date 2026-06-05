@@ -58,9 +58,19 @@ PIPELINE_CONFIG = {
 }
 
 TRACK_FACE_SETTINGS_BY_CAMERA = {
-	"lepton": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": -0.35, "use_rescaling": False},
-	"vario": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True},
-	"mwir": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True},
+	"lepton": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": -0.35, "use_rescaling": False, "width_scale": 2.5},
+	"vario": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True, "width_scale": 1.0},
+	"mwir": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True, "width_scale": 1.0},
+}
+
+# Yang pipeline: per-camera temperature threshold for the tracker ROI (only keep
+# pixels above this value). Used when tracker-based ROI detection is active (the
+# roi name starts with "tracker"). Passed to main_yang_et_al.py via
+# YANG_THRESHOLD_VALUE; cameras not listed fall back to the in-script default.
+YANG_TRACKER_THRESHOLD_BY_CAMERA = {
+	"lepton": 30500, # in Kelvin * 100 (since the Lepton recordings are in centi-Kelvin)
+	"vario": 30,
+	"mwir": 30,
 }
 
 # new_approach: per-camera spatial Gaussian + temporal bandpass settings. Passed
@@ -202,6 +212,7 @@ def run_one_row(
 	plots_save_dir: Path | None = None,
 	camera: str | None = None,
 	pipeline: str | None = None,
+	roi_name: str | None = None,
 	config_env_var: str = "CONFIG_PATH",
 	plots_env_var: str = "PLOTS_SAVE_DIR",
 ) -> tuple[int, str]:
@@ -220,12 +231,21 @@ def run_one_row(
 			env["NEW_APPROACH_HIGHCUT_BANDPASS"] = str(filter_settings["highcut_bandpass"])
 			env["NEW_APPROACH_ORDER_BANDPASS"] = str(filter_settings["order_bandpass"])
 		env["NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI"] = json.dumps(NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI)
+	# yang: use tracker ROI detection when the roi name starts with "tracker"
+	# (else MediaPipe facemesh), and pick the camera-dependent threshold value.
+	if pipeline == "yang":
+		use_tracker = bool(roi_name) and str(roi_name).strip().lower().startswith("tracker")
+		env["YANG_APPLY_TRACKER_LANDMARK_DETECTION"] = "1" if use_tracker else "0"
+		threshold = YANG_TRACKER_THRESHOLD_BY_CAMERA.get(camera or "")
+		if threshold is not None:
+			env["YANG_THRESHOLD_VALUE"] = str(threshold)
 	track_face_settings = TRACK_FACE_SETTINGS_BY_CAMERA.get(camera or "", {})
 	if track_face_settings:
 		env["TRACK_FACE_BLOCK_SIZE"] = str(track_face_settings["block_size"])
 		env["TRACK_FACE_ADAPT_CENTER"] = str(track_face_settings["adapt_center"])
 		env["TRACK_FACE_ADAPT_CENTER_HORIZONTAL"] = str(track_face_settings["adapt_center_horizontal"])
 		env["TRACK_FACE_USE_RESCALING"] = "1" if track_face_settings["use_rescaling"] else "0"
+		env["TRACK_FACE_WIDTH_SCALE"] = str(track_face_settings.get("width_scale", 1.0))
 	# FLIP_UPSIDE_DOWN: True for lepton camera
 	if camera == "lepton":
 		env["FLIP_UPSIDE_DOWN"] = "1"
@@ -262,7 +282,7 @@ def main() -> int:
 	# ===== CONFIGURATION (edit these variables) =====
 	pipeline = "yang"  # "yang", "nair", or "new"
 	camera = "lepton"  # "lepton", "vario", or "mwir" (None = use pipeline default)
-	roi_name = "tracker_landmark_threshold_29_c"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
+	roi_name = "tracker"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute
 	save_plots = True  # True to save plots, False otherwise
@@ -359,6 +379,7 @@ def main() -> int:
 				plots_save_dir=plots_save_dir,
 				camera=camera,
 				pipeline=pipeline,
+				roi_name=roi_name,
 				config_env_var=config_env_var,
 				plots_env_var=plots_env_var,
 			)

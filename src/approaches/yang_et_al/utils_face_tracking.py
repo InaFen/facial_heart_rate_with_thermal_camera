@@ -373,6 +373,7 @@ def track_face(
     block_size: int = 21,
     adapt_center: float = 0.1,
     adapt_center_horizontal: float = 0.0,
+    width_scale: float = 1.0,
     use_rescaling: bool = True,
     show_display: bool = True,
     flip_upside_down: bool = True,
@@ -387,6 +388,12 @@ def track_face(
     different resolutions still use the same tuned head-template and STC
     tracker parameters. The resulting ROI is then mapped back to the original
     frame size.
+
+    ``width_scale`` widens the ROI horizontally only (the height stays at
+    ``grid_size`` blocks): each block becomes ``width_scale`` times wider so the
+    whole face is captured even when the tracker locks onto only part of it. The
+    extra background pulled in by the wider ROI is removed later by the
+    temperature threshold. ``width_scale=1.0`` keeps the original square ROI.
 
     Returns:
         roi_pixel_log
@@ -526,12 +533,18 @@ def track_face(
             center = center_proc
 
         scaled_block_size = max(1, int(round(block_size * ((scale_x + scale_y) / 2.0))))
-        roi_size = grid_size * scaled_block_size
-        roi_half = roi_size // 2
-        rx0 = max(0, int(center[0] - roi_half))
-        ry0 = max(0, int(center[1] - roi_half))
-        rx1 = min(gray_raw.shape[1], int(center[0] + roi_half))
-        ry1 = min(gray_raw.shape[0], int(center[1] + roi_half))
+        # Height stays at grid_size blocks; the width is widened by width_scale so
+        # the whole face is captured even when the tracker only locks onto part of
+        # it (the extra background is removed later by the temperature threshold).
+        scaled_block_size_x = max(1, int(round(scaled_block_size * max(0.0, width_scale))))
+        roi_size_x = grid_size * scaled_block_size_x
+        roi_size_y = grid_size * scaled_block_size
+        roi_half_x = roi_size_x // 2
+        roi_half_y = roi_size_y // 2
+        rx0 = max(0, int(center[0] - roi_half_x))
+        ry0 = max(0, int(center[1] - roi_half_y))
+        rx1 = min(gray_raw.shape[1], int(center[0] + roi_half_x))
+        ry1 = min(gray_raw.shape[0], int(center[1] + roi_half_y))
 
         if rx1 > rx0 and ry1 > ry0:
             roi_patch = gray_raw[ry0:ry1, rx0:rx1].astype(np.float32)
@@ -544,9 +557,11 @@ def track_face(
                 center = (int(rx0 + cx), int(ry0 + cy))
 
         center = (
-            max(0, min(W - 1, center[0] + int(adapt_center_horizontal * roi_size))),
-            min(H - 1, center[1] + int(adapt_center * roi_size)),
-        ) #adapt center to better align with face area
+            max(0, min(W - 1, center[0] + int(adapt_center_horizontal * roi_size_y))),
+            min(H - 1, center[1] + int(adapt_center * roi_size_y)),
+        ) #adapt center to better align with face area; use the unwidened roi_size_y
+        # for the horizontal offset so width_scale widens the ROI symmetrically in
+        # both directions instead of shifting it (and the extra width) to one side.
 
         centers.append(center)
 
@@ -561,9 +576,9 @@ def track_face(
         for gy in range(-half_grid, half_grid + 1):
             for gx in range(-half_grid, half_grid + 1):
                 roi_name = f"roi_r{gy + half_grid + 1}c{gx + half_grid + 1}"
-                x0 = int(center[0] + gx * scaled_block_size - scaled_block_size // 2)
+                x0 = int(center[0] + gx * scaled_block_size_x - scaled_block_size_x // 2)
                 y0 = int(center[1] + gy * scaled_block_size - scaled_block_size // 2)
-                x1 = x0 + scaled_block_size
+                x1 = x0 + scaled_block_size_x
                 y1 = y0 + scaled_block_size
 
                 x0c = max(0, x0)
@@ -599,11 +614,11 @@ def track_face(
         # VISUALIZATION
         # ----------------------------------------
 
-        rx = int(center[0] - roi_size // 2)
+        rx = int(center[0] - roi_size_x // 2)
 
-        ry = int(center[1] - roi_size // 2)
+        ry = int(center[1] - roi_size_y // 2)
 
-        cv2.rectangle(frame_display, (rx, ry), (rx + roi_size, ry + roi_size), (0, 255, 0), 2)
+        cv2.rectangle(frame_display, (rx, ry), (rx + roi_size_x, ry + roi_size_y), (0, 255, 0), 2)
 
         cv2.circle(frame_display, center, 3, (0, 0, 255), -1)
 

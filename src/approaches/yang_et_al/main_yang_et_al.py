@@ -33,8 +33,29 @@ configs = Config.from_yaml(CONFIGS_PATH)
 
 RUN_RANDOM_PARALLEL = False
 RANDOM_SEED = 42
-APPLY_TRACKER_LANDMARK_DETECTION = True
-THRESHOLD_VALUE = 30 # only keep pixels above 30 degrees, if tracker landmark detection used
+
+
+def _env_flag(name: str, default: bool) -> bool:
+	"""Read a boolean flag from the environment (1/true/yes -> True)."""
+	value = os.environ.get(name)
+	if value is None:
+		return default
+	return value.strip().lower() in ("1", "true", "yes")
+
+
+def _parse_threshold(value: str):
+	"""Parse the threshold env var, returning an int for whole numbers."""
+	number = float(value)
+	return int(number) if number.is_integer() else number
+
+
+# Whether to use the tracker-based ROI detection (else MediaPipe facemesh). When
+# launched by run_batch this is set via YANG_APPLY_TRACKER_LANDMARK_DETECTION
+# (1 when the roi name starts with "tracker" and the pipeline is "yang").
+APPLY_TRACKER_LANDMARK_DETECTION = _env_flag("YANG_APPLY_TRACKER_LANDMARK_DETECTION", True)
+# Temperature threshold (only keep pixels above it) used with tracker landmark
+# detection. Camera-dependent; run_batch sets YANG_THRESHOLD_VALUE per camera.
+THRESHOLD_VALUE = _parse_threshold(os.environ.get("YANG_THRESHOLD_VALUE", "29"))
 print("Hardcoded parameters in main_yang_et_al.py:")
 print(f"RUN_RANDOM_PARALLEL: {RUN_RANDOM_PARALLEL}")
 print(f"RANDOM_SEED: {RANDOM_SEED}")

@@ -520,6 +520,9 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
             block_size = int(os.environ.get("TRACK_FACE_BLOCK_SIZE", "21"))
             adapt_center = float(os.environ.get("TRACK_FACE_ADAPT_CENTER", "0.1"))
             adapt_center_horizontal = float(os.environ.get("TRACK_FACE_ADAPT_CENTER_HORIZONTAL", "0.0"))
+            # Horizontal-only widening of the tracker ROI (e.g. wider for the lepton
+            # camera so the whole face is captured); 1.0 keeps the square ROI.
+            width_scale = float(os.environ.get("TRACK_FACE_WIDTH_SCALE", "1.0"))
             use_rescaling_env = os.environ.get("TRACK_FACE_USE_RESCALING", "1").strip().lower()
             use_rescaling = use_rescaling_env in ("1", "true", "yes")
 
@@ -531,6 +534,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     block_size=block_size,
                     adapt_center=adapt_center,
                     adapt_center_horizontal=adapt_center_horizontal,
+                    width_scale=width_scale,
                     use_rescaling=use_rescaling,
                     flip_upside_down=flip_flag,
                     start_frame=start_frame if limit_to_timespan else 0,
