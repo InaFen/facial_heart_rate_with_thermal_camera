@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-CAMERA_TYPE = "vario"
+CAMERA_TYPE = "mwir"
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
@@ -15,11 +15,11 @@ FPS = 25
 
 videos_and_npy_vario = Path("/data3/ina/may_27/LWIR/Daten")
 videos_and_npy_mwir_julian = Path("/data3/ina/31_03_2026_MWIR/Julian")
-videos_and_npy_mwir_ina = Path("/data3/ina/20_04_2026_MWIR/Ina") #TODO needs to be changed
-videos_and_npy_mwir_paulo = Path("/data3/ina/20_04_2026_MWIR/Paulo") #TODO needs to be changed
+videos_and_npy_mwir_ina = Path("/data3/ina/20_04_2026_MWIR/Ina") 
+videos_and_npy_mwir_paulo = Path("/data3/ina/20_04_2026_MWIR/Paulo") 
 
 DATA_SECTION_HEADER = "[Data]"
-INPUT_DIR = Path("/data3/ina/may_27/LWIR/Daten")
+INPUT_DIR = videos_and_npy_mwir_paulo
 SAVE_NPY = False
 NPY_SUFFIX = "_thermal_data_all_frames"
 
