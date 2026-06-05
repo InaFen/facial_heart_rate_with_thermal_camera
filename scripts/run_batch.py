@@ -73,6 +73,18 @@ YANG_TRACKER_THRESHOLD_BY_CAMERA = {
 	"mwir": 30,
 }
 
+# Yang pipeline (tracker + camera vario only): per-individual overrides keyed by a
+# substring of the recording filename (case-insensitive).
+#   - ina:    the tracker ROI sits too high -> a larger adapt_center pushes the
+#             ROI down on the y axis (vario default adapt_center is 0.1).
+#   - julian: temperature threshold 30.5
+#   - paulo:  temperature threshold 29.5
+YANG_VARIO_INDIVIDUAL_OVERRIDES = {
+	"ina": {"adapt_center": 0.3},
+	"julian": {"threshold": 30.5},
+	"paulo": {"threshold": 29.5},
+}
+
 # new_approach: per-camera spatial Gaussian + temporal bandpass settings. Passed
 # to main_new_approach.py via NEW_APPROACH_* env vars (override the in-script
 # defaults). Tune per camera (resolution / fps) as needed.
@@ -213,6 +225,7 @@ def run_one_row(
 	camera: str | None = None,
 	pipeline: str | None = None,
 	roi_name: str | None = None,
+	individual: str | None = None,
 	config_env_var: str = "CONFIG_PATH",
 	plots_env_var: str = "PLOTS_SAVE_DIR",
 ) -> tuple[int, str]:
@@ -233,16 +246,35 @@ def run_one_row(
 		env["NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI"] = json.dumps(NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI)
 	# yang: use tracker ROI detection when the roi name starts with "tracker"
 	# (else MediaPipe facemesh), and pick the camera-dependent threshold value.
+	use_tracker = (
+		pipeline == "yang"
+		and bool(roi_name)
+		and str(roi_name).strip().lower().startswith("tracker")
+	)
+	# Per-individual overrides (yang + vario + tracker only), keyed by a substring
+	# of the recording filename: ina -> push the ROI down (adapt_center),
+	# julian/paulo -> per-individual temperature threshold.
+	individual_override: dict[str, float] = {}
+	if pipeline == "yang" and camera == "vario" and use_tracker and individual:
+		individual_lower = str(individual).lower()
+		for key, override in YANG_VARIO_INDIVIDUAL_OVERRIDES.items():
+			if key in individual_lower:
+				individual_override = override
+				break
 	if pipeline == "yang":
-		use_tracker = bool(roi_name) and str(roi_name).strip().lower().startswith("tracker")
 		env["YANG_APPLY_TRACKER_LANDMARK_DETECTION"] = "1" if use_tracker else "0"
 		threshold = YANG_TRACKER_THRESHOLD_BY_CAMERA.get(camera or "")
+		# Per-individual temperature threshold override (e.g. julian 30.5, paulo 29.5).
+		if "threshold" in individual_override:
+			threshold = individual_override["threshold"]
 		if threshold is not None:
 			env["YANG_THRESHOLD_VALUE"] = str(threshold)
 	track_face_settings = TRACK_FACE_SETTINGS_BY_CAMERA.get(camera or "", {})
 	if track_face_settings:
+		# Per-individual vertical ROI shift override (e.g. ina: ROI too high -> down).
+		adapt_center = individual_override.get("adapt_center", track_face_settings["adapt_center"])
 		env["TRACK_FACE_BLOCK_SIZE"] = str(track_face_settings["block_size"])
-		env["TRACK_FACE_ADAPT_CENTER"] = str(track_face_settings["adapt_center"])
+		env["TRACK_FACE_ADAPT_CENTER"] = str(adapt_center)
 		env["TRACK_FACE_ADAPT_CENTER_HORIZONTAL"] = str(track_face_settings["adapt_center_horizontal"])
 		env["TRACK_FACE_USE_RESCALING"] = "1" if track_face_settings["use_rescaling"] else "0"
 		env["TRACK_FACE_WIDTH_SCALE"] = str(track_face_settings.get("width_scale", 1.0))
@@ -380,6 +412,7 @@ def main() -> int:
 				camera=camera,
 				pipeline=pipeline,
 				roi_name=roi_name,
+				individual=Path(row["recording_path"]).stem,
 				config_env_var=config_env_var,
 				plots_env_var=plots_env_var,
 			)
