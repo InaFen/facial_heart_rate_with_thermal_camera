@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -203,7 +204,7 @@ def run_one_row(
     pipeline: str | None = None,
     config_env_var: str = "CONFIG_PATH",
     plots_env_var: str = "PLOTS_SAVE_DIR",
-) -> int:
+) -> tuple[int, str]:
     env = os.environ.copy()
     env[config_env_var] = str(config_path)
     if plots_save_dir is not None:
@@ -230,8 +231,20 @@ def run_one_row(
         env["FLIP_UPSIDE_DOWN"] = "1"
     else:
         env["FLIP_UPSIDE_DOWN"] = "0"
-    completed = subprocess.run([sys.executable, str(main_script)], cwd=str(cwd), env=env)
-    return completed.returncode
+    # Capture stderr so the traceback can be re-printed in the final summary,
+    # while stdout still streams live. The captured stderr is echoed right after
+    # the run so warnings/tracebacks remain visible during the batch.
+    completed = subprocess.run(
+        [sys.executable, str(main_script)],
+        cwd=str(cwd),
+        env=env,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    error_output = completed.stderr or ""
+    if error_output:
+        print(error_output, file=sys.stderr, end="" if error_output.endswith("\n") else "\n")
+    return completed.returncode, error_output
 
 
 def get_fps_for_camera(camera: str) -> float:
@@ -327,7 +340,7 @@ def main() -> int:
         return 0
 
     # Process each row
-    failures: list[str] = []
+    failures: list[tuple[str, str, str]] = []
     for index, row in enumerate(face_rows, start=1):
         run_name = sanitize_name(
             f"{index:02d}_{camera}_{Path(row['recording_path']).stem}_{row['person'].strip()}_{row['before_after_sport'].strip()}_{row['area'].strip()}"
@@ -339,7 +352,7 @@ def main() -> int:
             config_path = build_row_config(template_config, row, run_dir, fps, roi_name, camera=camera, used_rois=used_rois)
             print(f"[{index}/{len(face_rows)}] Running {run_name}")
             plots_save_dir = (run_dir / "plots") if save_plots else None
-            return_code = run_one_row(
+            return_code, error_output = run_one_row(
                 main_script_path,
                 config_path,
                 cwd=PROJECT_ROOT,
@@ -350,14 +363,23 @@ def main() -> int:
                 plots_env_var=plots_env_var,
             )
             if return_code != 0:
-                failures.append(f"{run_name}: exited with code {return_code}")
+                failures.append(
+                    (run_name, f"exited with code {return_code}", error_output.strip())
+                )
         except Exception as exc:
-            failures.append(f"{run_name}: {exc}")
+            failures.append((run_name, str(exc), traceback.format_exc()))
 
     if failures:
         print(f"\nBatch finished with {len(failures)} failure(s):")
-        for failure in failures:
-            print(f"  - {failure}")
+        for run_name, summary, _detail in failures:
+            print(f"  - {run_name}: {summary}")
+        # Re-print the full error/traceback for each failed run.
+        print(f"\n{'='*60}")
+        print("Error details for failed runs")
+        print(f"{'='*60}")
+        for run_name, summary, detail in failures:
+            print(f"\n----- {run_name}: {summary} -----")
+            print(detail if detail.strip() else "(no error output captured)")
         return 1
 
     print(f"\nBatch finished successfully ({len(face_rows)} rows processed).")
