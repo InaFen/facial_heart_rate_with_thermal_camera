@@ -844,7 +844,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                 cv2.drawContours(overlay, contours, -1, color, 1)
 
             cv2.imwrite(output_path, overlay)
-            print(f"Saved ROI first-frame snapshot to: {output_path}")
+            print(f"Saved ROI fourth-frame snapshot to: {output_path}")
 
     # Plot
     if configs.plot_steps and extract_from_video_instead_of_gray_files:
