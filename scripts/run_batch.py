@@ -59,7 +59,7 @@ PIPELINE_CONFIG = {
 
 TRACK_FACE_SETTINGS_BY_CAMERA = {
 	"lepton": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": -0.35, "use_rescaling": False, "width_scale": 2.5},
-	"vario": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True, "width_scale": 1.0},
+	"vario": {"block_size": 30, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True, "width_scale": 1.0},
 	"mwir": {"block_size": 21, "adapt_center": 0.1, "adapt_center_horizontal": 0.0, "use_rescaling": True, "width_scale": 1.0},
 }
 
@@ -281,7 +281,7 @@ def get_fps_for_camera(camera: str) -> float:
 def main() -> int:
 	# ===== CONFIGURATION (edit these variables) =====
 	pipeline = "yang"  # "yang", "nair", or "new"
-	camera = "lepton"  # "lepton", "vario", or "mwir" (None = use pipeline default)
+	camera = "vario"  # "lepton", "vario", or "mwir" (None = use pipeline default)
 	roi_name = "tracker"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute
