@@ -230,10 +230,11 @@ def build_row_config(
 	return config_path
 
 
-def iter_face_rows(csv_path: Path) -> list[dict[str, str]]:
+def iter_face_rows(csv_path: Path, area: str = "face") -> list[dict[str, str]]:
 	with open(csv_path, newline="", encoding="utf-8") as handle:
 		rows = list(csv.DictReader(handle))
-	return [row for row in rows if row.get("area", "").strip().lower() == "face"]
+	target = area.strip().lower()
+	return [row for row in rows if row.get("area", "").strip().lower() == target]
 
 
 def run_one_row(
@@ -342,14 +343,14 @@ def main() -> int:
 	# ===== CONFIGURATION (edit these variables) =====
 	pipeline = "yang"  # "yang", "nair", or "new"
 	camera = "vario"  # "lepton", "vario", or "mwir" (None = use pipeline default)
-	roi_name = "tracker"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
+	roi_name = "manual_temp"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute
 	save_plots = True  # True to save plots, False otherwise
 	used_rois = ["left_forehead"]
 	# Manual ROI (used only when roi_name contains "manual"). On a headless server
 	# the interactive ROI drawing opens in the browser (forwarded localhost port).
-	manual_roi_mode = "polygon"            # rectangle | polygon | point | point_surrounding
+	manual_roi_mode = "rectangle"            # rectangle | polygon | point | point_surrounding
 	manual_roi_split_enabled = True        # split the single manual ROI into a grid of sub-ROIs
 	manual_roi_subroi_grid = [3, 3]        # [rows, cols] used when split is enabled
 	manual_roi_selection_colormap = True   # apply a colormap to the drawing frame
@@ -379,6 +380,9 @@ def main() -> int:
 	# Manual ROI detection is selected purely by the roi_name containing "manual"
 	# (else the tracker/mediapipe/dlib detection is used, as before).
 	manual_roi_enabled = "manual" in str(roi_name).lower()
+	# When manual ROI is used, process the temple recordings (the manual drawing
+	# targets the temple area); otherwise process the face recordings as before.
+	area_filter = "temple" if manual_roi_enabled else "face"
 	# Resolve CSV and config paths
 	csv_path = PROJECT_ROOT / "experiments" / "experiments_info" / f"{camera}_experiments.csv"
 	output_root = PROJECT_ROOT / "saved_results" / output_subdir / "batch_runs" / camera
@@ -398,8 +402,8 @@ def main() -> int:
 	with open(template_config_path, "r", encoding="utf-8") as handle:
 		template_config = yaml.safe_load(handle)
 
-	# Get face rows from CSV
-	face_rows = iter_face_rows(csv_path)
+	# Get the rows for the selected area from CSV (temple for manual ROI, else face)
+	face_rows = iter_face_rows(csv_path, area=area_filter)
 	if limit_rows is not None:
 		face_rows = face_rows[:limit_rows]
 
@@ -412,6 +416,7 @@ def main() -> int:
 	print(f"ROI Name:        {roi_name}")
 	print(f"Manual ROI:      {manual_roi_enabled}"
 	      + (f" (mode={manual_roi_mode}, split={manual_roi_split_enabled}, grid={manual_roi_subroi_grid}, backend={manual_roi_backend})" if manual_roi_enabled else ""))
+	print(f"Area Filter:     {area_filter}")
 	print(f"CSV:             {csv_path}")
 	print(f"Output Root:     {output_root}")
 	print(f"Face Rows:       {len(face_rows)}")
