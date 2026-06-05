@@ -7,6 +7,11 @@ import re
 from pathlib import Path
 from typing import List, Dict
 from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+from src.approaches.new_approach.utils.utils_manual_roi_selection import (
+    select_roi_geometry,
+    build_manual_roi_mask,
+    save_selection_overlay,
+)
 
 
 def apply_facemesh_to_thermal_video(
@@ -491,6 +496,7 @@ def create_manual_roi_mask_log_from_gray_frames(
     mask_load_path: str = None,
     mask_save_path: str = None,
     use_colormap: bool = True,
+    selection_overlay_save_path: str = None,
 ) -> List[Dict[str, np.ndarray]]:
     """Create a fixed ROI mask for all frames by manually drawing on the first gray frame.
 
@@ -542,151 +548,16 @@ def create_manual_roi_mask_log_from_gray_frames(
     height, width = first_frame.shape
     mask = np.zeros(first_frame.shape, dtype=np.uint8)
 
-    # User draws ROI on the first frame (options: rectangle, polygon, point, point_surrounding - point with 8 surrounding pixels)
-    if mode == "rectangle":
-        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
-        roi_rect = cv2.selectROI(display_title, frame_display, fromCenter=False, showCrosshair=True)
-        cv2.destroyWindow(display_title)
+    # User draws the ROI interactively. On a headless server the browser backend
+    # is used (an HTML canvas served on a forwarded localhost port); otherwise the
+    # classic OpenCV GUI window is used (see utils_manual_roi_selection).
+    geometry = select_roi_geometry(frame_display, mode, display_title=display_title)
+    mask = build_manual_roi_mask(geometry, height, width, roi_name)
 
-        x, y, w, h = roi_rect
-        if w <= 0 or h <= 0:
-            raise ValueError("No ROI selected. Please draw a rectangle ROI and press ENTER.")
-
-        # Draw filled rectangle directly - no coordinate transformation needed
-        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, thickness=-1)
-    elif mode == "polygon":
-        points = []
-        display = frame_display.copy()
-
-        #instructions = "Left click: add point | Right click: undo | ENTER: finish | c: clear"
-
-        def draw_overlay(img, pts):
-            canvas = img.copy()
-            if pts:
-                cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, (0, 255, 255), 1)
-                for p in pts:
-                    cv2.circle(canvas, p, 2, (0, 255, 255), -1)
-            #cv2.putText(canvas, instructions, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.1, (255, 255, 255), 1)
-            return canvas
-
-        def on_mouse(event, x, y, flags, param):
-            nonlocal points
-            if event == cv2.EVENT_LBUTTONDOWN:
-                points.append((x, y))
-            elif event == cv2.EVENT_RBUTTONDOWN and points:
-                points.pop()
-
-        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(display_title, on_mouse)
-
-        while True:
-            canvas = draw_overlay(display, points)
-            cv2.imshow(display_title, canvas)
-            key = cv2.waitKey(20) & 0xFF
-
-            if key == 13:  # Enter
-                break
-            if key == ord('c'):
-                points = []
-
-        cv2.destroyWindow(display_title)
-
-        if len(points) < 3:
-            raise ValueError("Polygon ROI needs at least 3 points. Please try again.")
-
-        # Draw polygon directly - no coordinate transformation needed
-        poly = np.array(points, dtype=np.int32)
-        cv2.fillPoly(mask, [poly], 255)
-    elif mode == "point":
-        point = []
-        display = frame_display.copy()
-
-        def on_mouse(event, x, y, flags, param):
-            nonlocal point
-            if event == cv2.EVENT_LBUTTONDOWN:
-                point = [(x, y)]
-
-        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(display_title, on_mouse)
-
-        while True:
-            canvas = display.copy()
-            if point:
-                cv2.circle(canvas, point[0], 2, (0, 255, 255), -1)
-            cv2.imshow(display_title, canvas)
-            key = cv2.waitKey(20) & 0xFF
-
-            if key == 13:  # Enter
-                break
-            if key == ord('c'):
-                point = []
-
-        cv2.destroyWindow(display_title)
-
-        if len(point) != 1:
-            raise ValueError("Point ROI needs a single click. Please try again.")
-
-        x, y = point[0]
-        if not (0 <= x < width and 0 <= y < height):
-            raise ValueError("Point ROI is out of bounds. Please try again.")
-
-        mask[y, x] = 255
-    elif mode == "point_surrounding":
-        point = []
-        display = frame_display.copy()
-
-        def on_mouse(event, x, y, flags, param):
-            nonlocal point
-            if event == cv2.EVENT_LBUTTONDOWN:
-                point = [(x, y)]
-
-        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(display_title, on_mouse)
-
-        while True:
-            canvas = display.copy()
-            if point:
-                cv2.circle(canvas, point[0], 2, (0, 255, 255), -1)
-            cv2.imshow(display_title, canvas)
-            key = cv2.waitKey(20) & 0xFF
-
-            if key == 13:  # Enter
-                break
-            if key == ord('c'):
-                point = []
-
-        cv2.destroyWindow(display_title)
-
-        if len(point) != 1:
-            raise ValueError("Point ROI needs a single click. Please try again.")
-
-        x, y = point[0]
-        if not (0 <= x < width and 0 <= y < height):
-            raise ValueError("Point ROI is out of bounds. Please try again.")
-
-        offsets = [
-            (0, 0, "center"),
-            (-1, 0, "left"),
-            (1, 0, "right"),
-            (0, -1, "up"),
-            (0, 1, "down"),
-            (-1, -1, "up_left"),
-            (1, -1, "up_right"),
-            (-1, 1, "down_left"),
-            (1, 1, "down_right"),
-        ]
-        masks = {}
-        for dx, dy, suffix in offsets:
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < width and 0 <= ny < height:
-                sub_mask = np.zeros(first_frame.shape, dtype=np.uint8)
-                sub_mask[ny, nx] = 255
-                masks[f"{roi_name}_{suffix}"] = sub_mask
-        if not masks:
-            raise ValueError("No valid surrounding pixels found for the selected point.")
-        mask = masks
-    else:
-        raise ValueError(f"Unknown manual ROI mode: {mode}")
+    # Persist the confirmed selection as an overlay image instead of only showing
+    # it in a window (mirrors how the other plots are saved).
+    if selection_overlay_save_path:
+        save_selection_overlay(frame_display, mask, selection_overlay_save_path)
 
     # Save mask if path provided
     if mask_save_path and isinstance(mask, np.ndarray):
@@ -721,6 +592,7 @@ def create_manual_roi_mask_log_from_asc_frames(
     mask_save_path: str = None,
     use_colormap: bool = True,
     unit: str = "celsius",
+    selection_overlay_save_path: str = None,
 ) -> List[Dict[str, np.ndarray]]:
     """Create a fixed ROI mask for all .asc frames by manually drawing on the first ASC frame.
 
@@ -770,145 +642,15 @@ def create_manual_roi_mask_log_from_asc_frames(
     height, width = first_frame.shape
     mask = np.zeros(first_frame.shape, dtype=np.uint8)
 
-    if mode == "rectangle":
-        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
-        roi_rect = cv2.selectROI(display_title, frame_display, fromCenter=False, showCrosshair=True)
-        cv2.destroyWindow(display_title)
+    # User draws the ROI interactively (browser backend on headless servers, else
+    # the OpenCV GUI window). See utils_manual_roi_selection.
+    geometry = select_roi_geometry(frame_display, mode, display_title=display_title)
+    mask = build_manual_roi_mask(geometry, height, width, roi_name)
 
-        x, y, w, h = roi_rect
-        if w <= 0 or h <= 0:
-            raise ValueError("No ROI selected. Please draw a rectangle ROI and press ENTER.")
-
-        cv2.rectangle(mask, (x, y), (x + w, y + h), 255, thickness=-1)
-    elif mode == "polygon":
-        points = []
-        display = frame_display.copy()
-
-        def draw_overlay(img, pts):
-            canvas = img.copy()
-            if pts:
-                cv2.polylines(canvas, [np.array(pts, dtype=np.int32)], False, (0, 255, 255), 1)
-                for p in pts:
-                    cv2.circle(canvas, p, 2, (0, 255, 255), -1)
-            return canvas
-
-        def on_mouse(event, x, y, flags, param):
-            nonlocal points
-            if event == cv2.EVENT_LBUTTONDOWN:
-                points.append((x, y))
-            elif event == cv2.EVENT_RBUTTONDOWN and points:
-                points.pop()
-
-        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(display_title, on_mouse)
-
-        while True:
-            canvas = draw_overlay(display, points)
-            cv2.imshow(display_title, canvas)
-            key = cv2.waitKey(20) & 0xFF
-
-            if key == 13:  # Enter
-                break
-            if key == ord('c'):
-                points = []
-
-        cv2.destroyWindow(display_title)
-
-        if len(points) < 3:
-            raise ValueError("Polygon ROI needs at least 3 points. Please try again.")
-
-        poly = np.array(points, dtype=np.int32)
-        cv2.fillPoly(mask, [poly], 255)
-    elif mode == "point":
-        point = []
-        display = frame_display.copy()
-
-        def on_mouse(event, x, y, flags, param):
-            nonlocal point
-            if event == cv2.EVENT_LBUTTONDOWN:
-                point = [(x, y)]
-
-        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(display_title, on_mouse)
-
-        while True:
-            canvas = display.copy()
-            if point:
-                cv2.circle(canvas, point[0], 2, (0, 255, 255), -1)
-            cv2.imshow(display_title, canvas)
-            key = cv2.waitKey(20) & 0xFF
-
-            if key == 13:  # Enter
-                break
-            if key == ord('c'):
-                point = []
-
-        cv2.destroyWindow(display_title)
-
-        if len(point) != 1:
-            raise ValueError("Point ROI needs a single click. Please try again.")
-
-        x, y = point[0]
-        if not (0 <= x < width and 0 <= y < height):
-            raise ValueError("Point ROI is out of bounds. Please try again.")
-
-        mask[y, x] = 255
-    elif mode == "point_surrounding":
-        point = []
-        display = frame_display.copy()
-
-        def on_mouse(event, x, y, flags, param):
-            nonlocal point
-            if event == cv2.EVENT_LBUTTONDOWN:
-                point = [(x, y)]
-
-        cv2.namedWindow(display_title, cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback(display_title, on_mouse)
-
-        while True:
-            canvas = display.copy()
-            if point:
-                cv2.circle(canvas, point[0], 2, (0, 255, 255), -1)
-            cv2.imshow(display_title, canvas)
-            key = cv2.waitKey(20) & 0xFF
-
-            if key == 13:  # Enter
-                break
-            if key == ord('c'):
-                point = []
-
-        cv2.destroyWindow(display_title)
-
-        if len(point) != 1:
-            raise ValueError("Point ROI needs a single click. Please try again.")
-
-        x, y = point[0]
-        if not (0 <= x < width and 0 <= y < height):
-            raise ValueError("Point ROI is out of bounds. Please try again.")
-
-        offsets = [
-            (0, 0, "center"),
-            (-1, 0, "left"),
-            (1, 0, "right"),
-            (0, -1, "up"),
-            (0, 1, "down"),
-            (-1, -1, "up_left"),
-            (1, -1, "up_right"),
-            (-1, 1, "down_left"),
-            (1, 1, "down_right"),
-        ]
-        masks = {}
-        for dx, dy, suffix in offsets:
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < width and 0 <= ny < height:
-                sub_mask = np.zeros(first_frame.shape, dtype=np.uint8)
-                sub_mask[ny, nx] = 255
-                masks[f"{roi_name}_{suffix}"] = sub_mask
-        if not masks:
-            raise ValueError("No valid surrounding pixels found for the selected point.")
-        mask = masks
-    else:
-        raise ValueError(f"Unknown manual ROI mode: {mode}")
+    # Persist the confirmed selection as an overlay image instead of only showing
+    # it in a window (mirrors how the other plots are saved).
+    if selection_overlay_save_path:
+        save_selection_overlay(frame_display, mask, selection_overlay_save_path)
 
     if mask_save_path and isinstance(mask, np.ndarray):
         save_dir = os.path.dirname(mask_save_path)
@@ -930,6 +672,95 @@ def create_manual_roi_mask_log_from_asc_frames(
     else:
         roi_mask_log = [{roi_name: mask} for _ in range(len(asc_files))]
     return roi_mask_log
+
+
+def create_manual_roi_mask_log_from_npy_frames(
+    frame_stack: np.ndarray,
+    roi_name: str = "manual_roi",
+    display_title: str = "Draw ROI (press ENTER to confirm)",
+    mode: str = "rectangle",
+    frame_index: int = 0,
+    mask_load_path: str = None,
+    mask_save_path: str = None,
+    use_colormap: bool = True,
+    selection_overlay_save_path: str = None,
+) -> List[Dict[str, np.ndarray]]:
+    """Create a fixed ROI mask for all frames of a precomputed numeric .npy stack.
+
+    Same behaviour as :func:`create_manual_roi_mask_log_from_gray_frames`, but the
+    ROI is drawn on a frame taken directly from an in-memory frame stack of shape
+    (n_frames, height, width). The drawn mask is reused for every frame.
+
+    Parameters:
+        frame_stack: 3D numpy array (n_frames, height, width).
+        roi_name: Name of the ROI (used as key in the output log).
+        display_title: Title shown in the window / browser page.
+        mode: "rectangle", "polygon", "point" or "point_surrounding".
+        frame_index: index (into frame_stack) of the frame to draw on.
+        mask_load_path: Optional path to load an existing ROI mask (skips drawing).
+        mask_save_path: Optional path to save the drawn ROI mask for reuse.
+        use_colormap: If True, apply a colormap for easier visualization.
+        selection_overlay_save_path: Optional PNG path to persist the selection.
+
+    Returns:
+        roi_mask_log: list of per-frame ROI masks (same mask reused for all frames).
+    """
+    if frame_stack.ndim != 3:
+        raise ValueError(f"Expected 3D frame stack, got shape {frame_stack.shape}")
+    n_frames = frame_stack.shape[0]
+    if n_frames == 0:
+        raise ValueError("Empty frame stack for manual ROI selection.")
+
+    # Load mask if path provided (skip drawing)
+    if mask_load_path:
+        loaded_mask = np.load(mask_load_path)
+        if loaded_mask.ndim != 2:
+            raise ValueError(f"Loaded mask must be 2D, got shape {loaded_mask.shape}")
+        if loaded_mask.shape != frame_stack[0].shape:
+            raise ValueError(
+                f"Loaded mask shape {loaded_mask.shape} does not match frame shape {frame_stack[0].shape}"
+            )
+        mask = loaded_mask.astype(np.uint8)
+        return [{roi_name: mask} for _ in range(n_frames)]
+
+    frame_index = max(0, min(frame_index, n_frames - 1))
+    first_frame = np.asarray(frame_stack[frame_index])
+
+    vmin, vmax = np.percentile(first_frame, [1, 99])
+    frame_clipped = np.clip(first_frame, vmin, vmax)
+    frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    if use_colormap:
+        frame_display = cv2.applyColorMap(frame_norm, cv2.COLORMAP_TURBO)
+    else:
+        frame_display = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+
+    height, width = first_frame.shape
+
+    # Draw interactively (browser backend on headless servers, else OpenCV GUI).
+    geometry = select_roi_geometry(frame_display, mode, display_title=display_title)
+    mask = build_manual_roi_mask(geometry, height, width, roi_name)
+
+    if selection_overlay_save_path:
+        save_selection_overlay(frame_display, mask, selection_overlay_save_path)
+
+    # Save mask if path provided
+    if mask_save_path and isinstance(mask, np.ndarray):
+        save_dir = os.path.dirname(mask_save_path)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        np.save(mask_save_path, mask)
+    if mask_save_path and isinstance(mask, dict):
+        save_dir = os.path.dirname(mask_save_path)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        base, ext = os.path.splitext(mask_save_path)
+        ext = ext if ext else ".npy"
+        for name, sub_mask in mask.items():
+            np.save(f"{base}_{name}{ext}", sub_mask)
+
+    if isinstance(mask, dict):
+        return [mask for _ in range(n_frames)]
+    return [{roi_name: mask} for _ in range(n_frames)]
 
 
 def apply_roi_masks_to_gray_frames(

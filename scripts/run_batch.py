@@ -81,7 +81,7 @@ YANG_TRACKER_THRESHOLD_BY_CAMERA = {
 #   - paulo:  temperature threshold 29.5
 YANG_VARIO_INDIVIDUAL_OVERRIDES = {
 	"ina": {"adapt_center": 0.3},
-	"julian": {"threshold": 30.5},
+	"julian": {"threshold": 30.0},
 	"paulo": {"threshold": 29.5},
 }
 
@@ -158,6 +158,11 @@ def build_row_config(
 	roi_name: str,
 	camera: str | None = None,
 	used_rois: list[str] | None = None,
+	manual_roi_enabled: bool = False,
+	manual_roi_mode: str = "polygon",
+	manual_roi_split_enabled: bool = False,
+	manual_roi_subroi_grid: list[int] | None = None,
+	manual_roi_selection_colormap: bool = True,
 ) -> Path:
 	recording_path = Path(row["recording_path"])
 	base_path = PROJECT_ROOT
@@ -193,6 +198,21 @@ def build_row_config(
 
 	config["processing"]["plot_steps"] = False
 
+	# Manual ROI selection (enabled when the roi_name contains "manual"). The single
+	# manual ROI is named after roi_name and is optionally split into a grid of
+	# sub-ROIs. The drawn mask is persisted in the run dir.
+	if manual_roi_enabled:
+		config["processing"]["manual_roi_enabled"] = True
+		config["processing"]["manual_roi_split_enabled"] = bool(manual_roi_split_enabled)
+		config["processing"]["manual_roi_names"] = [roi_name]
+		config["processing"]["manual_roi_modes"] = [manual_roi_mode]
+		config["processing"]["manual_roi_subroi_grid"] = list(manual_roi_subroi_grid or [3, 3])
+		config["processing"]["manual_roi_selection_colormap"] = bool(manual_roi_selection_colormap)
+		config["processing"]["manual_roi_mask_save_paths"] = [str(run_dir / f"manual_roi_mask_{sanitize_name(roi_name)}.npy")]
+		config["processing"]["manual_roi_mask_load_paths"] = [None]
+	else:
+		config["processing"]["manual_roi_enabled"] = False
+
 	config_path = run_dir / "configs_generated.yaml"
 	print(
 		"Row settings:\n"
@@ -226,6 +246,8 @@ def run_one_row(
 	pipeline: str | None = None,
 	roi_name: str | None = None,
 	individual: str | None = None,
+	manual_roi_enabled: bool = False,
+	manual_roi_backend: str = "browser",
 	config_env_var: str = "CONFIG_PATH",
 	plots_env_var: str = "PLOTS_SAVE_DIR",
 ) -> tuple[int, str]:
@@ -235,6 +257,12 @@ def run_one_row(
 		env[plots_env_var] = str(plots_save_dir)
 	if camera:
 		env["CAMERA_NAME"] = str(camera)
+	# Manual ROI: choose the interactive backend (browser on headless servers) and
+	# tell the pipeline to save the selection overlay into the plots directory.
+	if manual_roi_enabled:
+		env["MANUAL_ROI_BACKEND"] = str(manual_roi_backend)
+		if plots_save_dir is not None:
+			env["MANUAL_ROI_SELECTION_SAVE_DIR"] = str(plots_save_dir)
 	# new_approach: camera-dependent filter settings + ROI-dependent sub-ROI grid.
 	if pipeline == "new":
 		filter_settings = NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA.get(camera or "", {})
@@ -319,6 +347,13 @@ def main() -> int:
 	dry_run = False  # True to print what would be done, False to execute
 	save_plots = True  # True to save plots, False otherwise
 	used_rois = ["left_forehead"]
+	# Manual ROI (used only when roi_name contains "manual"). On a headless server
+	# the interactive ROI drawing opens in the browser (forwarded localhost port).
+	manual_roi_mode = "polygon"            # rectangle | polygon | point | point_surrounding
+	manual_roi_split_enabled = True        # split the single manual ROI into a grid of sub-ROIs
+	manual_roi_subroi_grid = [3, 3]        # [rows, cols] used when split is enabled
+	manual_roi_selection_colormap = True   # apply a colormap to the drawing frame
+	manual_roi_backend = "browser"         # browser | cv2 | auto
 	# ===== END CONFIGURATION =====
 
 	# Get pipeline configuration
@@ -341,6 +376,9 @@ def main() -> int:
 
 	fps = get_fps_for_camera(camera)
 
+	# Manual ROI detection is selected purely by the roi_name containing "manual"
+	# (else the tracker/mediapipe/dlib detection is used, as before).
+	manual_roi_enabled = "manual" in str(roi_name).lower()
 	# Resolve CSV and config paths
 	csv_path = PROJECT_ROOT / "experiments" / "experiments_info" / f"{camera}_experiments.csv"
 	output_root = PROJECT_ROOT / "saved_results" / output_subdir / "batch_runs" / camera
@@ -372,6 +410,8 @@ def main() -> int:
 	print(f"Camera:          {camera}")
 	print(f"FPS:             {fps}")
 	print(f"ROI Name:        {roi_name}")
+	print(f"Manual ROI:      {manual_roi_enabled}"
+	      + (f" (mode={manual_roi_mode}, split={manual_roi_split_enabled}, grid={manual_roi_subroi_grid}, backend={manual_roi_backend})" if manual_roi_enabled else ""))
 	print(f"CSV:             {csv_path}")
 	print(f"Output Root:     {output_root}")
 	print(f"Face Rows:       {len(face_rows)}")
@@ -401,7 +441,20 @@ def main() -> int:
 		run_dir.mkdir(parents=True, exist_ok=True)
 
 		try:
-			config_path = build_row_config(template_config, row, run_dir, fps, roi_name, camera=camera, used_rois=used_rois)
+			config_path = build_row_config(
+				template_config,
+				row,
+				run_dir,
+				fps,
+				roi_name,
+				camera=camera,
+				used_rois=(None if manual_roi_enabled else used_rois),
+				manual_roi_enabled=manual_roi_enabled,
+				manual_roi_mode=manual_roi_mode,
+				manual_roi_split_enabled=manual_roi_split_enabled,
+				manual_roi_subroi_grid=manual_roi_subroi_grid,
+				manual_roi_selection_colormap=manual_roi_selection_colormap,
+			)
 			print(f"[{index}/{len(face_rows)}] Running {run_name}")
 			plots_save_dir = (run_dir / "plots") if save_plots else None
 			return_code, error_output = run_one_row(
@@ -413,6 +466,8 @@ def main() -> int:
 				pipeline=pipeline,
 				roi_name=roi_name,
 				individual=Path(row["recording_path"]).stem,
+				manual_roi_enabled=manual_roi_enabled,
+				manual_roi_backend=manual_roi_backend,
 				config_env_var=config_env_var,
 				plots_env_var=plots_env_var,
 			)

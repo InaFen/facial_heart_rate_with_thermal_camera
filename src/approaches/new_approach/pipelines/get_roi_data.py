@@ -14,6 +14,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     plot_roi_temperature_means,
     create_manual_roi_mask_log_from_gray_frames,
     create_manual_roi_mask_log_from_asc_frames,
+    create_manual_roi_mask_log_from_npy_frames,
     _parse_asc_file,
     _asc_to_kelvin_x100,
     load_gray_frame,
@@ -442,48 +443,81 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
         and configs.manual_roi_split_enabled
         and len(configs.manual_roi_names) == 1
     )
-    if configs.manual_roi_enabled and not gray_frames_path_is_npy:
-        # Note: Manual ROI drawing requires frame access, skip if using .npy input
+    if configs.manual_roi_enabled:
         if not os.path.isfile(configs.path_pixels_log) or configs.overwrite_existing_files:
-            frame_index = 0
-            if configs.timespan_signal_to_look_at is not None:
-                start_time, _ = configs.timespan_signal_to_look_at
-                frame_index = int(start_time * configs.fps)
+            # Directory to persist the manual-selection overlay images (like the
+            # other saved plots). Provided by the batch runner via env; falls back
+            # to the run directory.
+            manual_overlay_dir = (
+                os.environ.get("MANUAL_ROI_SELECTION_SAVE_DIR")
+                or os.path.dirname(configs.path_video_tracked_face)
+                or configs.path_gray_frames
+            )
 
-            files_in_dir = [
-                f for f in os.listdir(configs.path_gray_frames)
-                if os.path.isfile(os.path.join(configs.path_gray_frames, f))
-            ]
-            if not files_in_dir:
-                raise ValueError(f"No files found in {configs.path_gray_frames}")
-
-            sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
+            def _overlay_path_for(name: str):
+                return (
+                    os.path.join(manual_overlay_dir, f"manual_roi_selection_{name}.png")
+                    if manual_overlay_dir else None
+                )
 
             roi_mask_logs = []
-            for i, roi_name in enumerate(configs.manual_roi_names):
-                if sample_ext == ".asc":
-                    roi_mask_logs.append(create_manual_roi_mask_log_from_asc_frames(
-                        asc_dir=configs.path_gray_frames,
+            if gray_frames_path_is_npy:
+                # Draw on the first frame of the (timespan-sliced) numeric stack.
+                # The same mask is reused for every frame of the slice, matching
+                # the length expected by apply_roi_masks_to_npy_frames.
+                for i, roi_name in enumerate(configs.manual_roi_names):
+                    roi_mask_logs.append(create_manual_roi_mask_log_from_npy_frames(
+                        frame_stack=npy_frames_slice,
                         roi_name=roi_name,
                         display_title=f"Draw ROI '{roi_name}' (press ENTER to confirm)",
                         mode=configs.manual_roi_modes[i] if i < len(configs.manual_roi_modes) else configs.manual_roi_modes[0],
-                        frame_index=frame_index,
+                        frame_index=0,
                         mask_load_path=configs.manual_roi_mask_load_paths[i] if i < len(configs.manual_roi_mask_load_paths) else None,
                         mask_save_path=configs.manual_roi_mask_save_paths[i] if i < len(configs.manual_roi_mask_save_paths) else None,
                         use_colormap=configs.manual_roi_selection_colormap,
-                        unit=configs.asc_unit,
+                        selection_overlay_save_path=_overlay_path_for(roi_name),
                     ))
-                else:
-                    roi_mask_logs.append(create_manual_roi_mask_log_from_gray_frames(
-                        gray_dir=configs.path_gray_frames,
-                        roi_name=roi_name,
-                        display_title=f"Draw ROI '{roi_name}' (press ENTER to confirm)",
-                        mode=configs.manual_roi_modes[i] if i < len(configs.manual_roi_modes) else configs.manual_roi_modes[0],
-                        frame_index=frame_index,
-                        mask_load_path=configs.manual_roi_mask_load_paths[i] if i < len(configs.manual_roi_mask_load_paths) else None,
-                        mask_save_path=configs.manual_roi_mask_save_paths[i] if i < len(configs.manual_roi_mask_save_paths) else None,
-                        use_colormap=configs.manual_roi_selection_colormap,
-                    ))
+            else:
+                frame_index = 0
+                if configs.timespan_signal_to_look_at is not None:
+                    start_time, _ = configs.timespan_signal_to_look_at
+                    frame_index = int(start_time * configs.fps)
+
+                files_in_dir = [
+                    f for f in os.listdir(configs.path_gray_frames)
+                    if os.path.isfile(os.path.join(configs.path_gray_frames, f))
+                ]
+                if not files_in_dir:
+                    raise ValueError(f"No files found in {configs.path_gray_frames}")
+
+                sample_ext = os.path.splitext(files_in_dir[0])[1].lower()
+
+                for i, roi_name in enumerate(configs.manual_roi_names):
+                    if sample_ext == ".asc":
+                        roi_mask_logs.append(create_manual_roi_mask_log_from_asc_frames(
+                            asc_dir=configs.path_gray_frames,
+                            roi_name=roi_name,
+                            display_title=f"Draw ROI '{roi_name}' (press ENTER to confirm)",
+                            mode=configs.manual_roi_modes[i] if i < len(configs.manual_roi_modes) else configs.manual_roi_modes[0],
+                            frame_index=frame_index,
+                            mask_load_path=configs.manual_roi_mask_load_paths[i] if i < len(configs.manual_roi_mask_load_paths) else None,
+                            mask_save_path=configs.manual_roi_mask_save_paths[i] if i < len(configs.manual_roi_mask_save_paths) else None,
+                            use_colormap=configs.manual_roi_selection_colormap,
+                            unit=configs.asc_unit,
+                            selection_overlay_save_path=_overlay_path_for(roi_name),
+                        ))
+                    else:
+                        roi_mask_logs.append(create_manual_roi_mask_log_from_gray_frames(
+                            gray_dir=configs.path_gray_frames,
+                            roi_name=roi_name,
+                            display_title=f"Draw ROI '{roi_name}' (press ENTER to confirm)",
+                            mode=configs.manual_roi_modes[i] if i < len(configs.manual_roi_modes) else configs.manual_roi_modes[0],
+                            frame_index=frame_index,
+                            mask_load_path=configs.manual_roi_mask_load_paths[i] if i < len(configs.manual_roi_mask_load_paths) else None,
+                            mask_save_path=configs.manual_roi_mask_save_paths[i] if i < len(configs.manual_roi_mask_save_paths) else None,
+                            use_colormap=configs.manual_roi_selection_colormap,
+                            selection_overlay_save_path=_overlay_path_for(roi_name),
+                        ))
             # Merge masks for each frame into a single dict per frame
             roi_pixel_log = []
             for frame_idx in range(len(roi_mask_logs[0])):
