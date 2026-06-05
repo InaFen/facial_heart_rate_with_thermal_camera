@@ -6,17 +6,27 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-CAMERA_TYPE = "mwir"
+CAMERA_TYPE = "vario"
 
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 DATA_SEPARATOR = "\t"
 FPS = 25
 
+videos_and_npy_vario = Path("/data3/ina/may_27/LWIR/Daten")
+videos_and_npy_mwir_julian = Path("/data3/ina/31_03_2026_MWIR/Julian")
+videos_and_npy_mwir_ina = Path("/data3/ina/20_04_2026_MWIR/Ina") #TODO needs to be changed
+videos_and_npy_mwir_paulo = Path("/data3/ina/20_04_2026_MWIR/Paulo") #TODO needs to be changed
+
 DATA_SECTION_HEADER = "[Data]"
-INPUT_DIR = Path("/data3/ina/31_03_2026_MWIR")
-SAVE_NPY = True
+INPUT_DIR = Path("/data3/ina/may_27/LWIR/Daten")
+SAVE_NPY = False
 NPY_SUFFIX = "_thermal_data_all_frames"
+
+# Video source: "asc" parses raw .asc folders, "npy" renders existing .npy stacks.
+SOURCE_MODE = "npy"
+# Folder searched recursively for *<NPY_SUFFIX>.npy files when SOURCE_MODE == "npy".
+NPY_INPUT_DIR = INPUT_DIR
 
 if CAMERA_TYPE == "mwir":
     FRAME_WIDTH = 640
@@ -147,7 +157,73 @@ def create_thermal_video(input_dir: Path, fps: int = 25) -> Path:
     return output_video
 
 
+def create_thermal_video_from_npy(npy_path: Path, fps: int = 25) -> Path:
+    """Render a grayscale visualization video from an existing .npy thermal stack.
+
+    The .npy file is expected to hold raw values with shape
+    (num_frames, height, width), as written by create_thermal_video when
+    SAVE_NPY is enabled.
+    """
+    frames = np.load(npy_path, mmap_mode="r")
+    if frames.ndim != 3:
+        raise ValueError(
+            f"Expected a 3D array (frames, height, width) in {npy_path}, got shape {frames.shape}"
+        )
+
+    total_frames, height, width = frames.shape
+    print(f"Loaded {total_frames} frames from {npy_path} (shape {frames.shape})")
+
+    stem = npy_path.stem
+    base_name = stem[: -len(NPY_SUFFIX)] if stem.endswith(NPY_SUFFIX) else stem
+    output_video = npy_path.parent / f"{base_name}_video_visualization.mp4"
+
+    output_video.parent.mkdir(parents=True, exist_ok=True)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_video), fourcc, float(fps), (width, height))
+
+    if not writer.isOpened():
+        raise RuntimeError(f"Could not open video writer for {output_video}")
+
+    last_reported = 0
+    report_every = max(1, total_frames // 20)
+    for index in range(1, total_frames + 1):
+        frame = np.array(frames[index - 1])
+        writer.write(to_grayscale_uint8(frame))
+
+        if index - last_reported >= report_every or index == total_frames:
+            elapsed = (index - 1) / fps
+            remaining = (total_frames - index) / fps
+            percent = (index / total_frames) * 100
+            print(
+                f"Processed {index}/{total_frames} frames ({percent:.1f}%). "
+                f"Elapsed ~{elapsed:.1f}s, remaining ~{remaining:.1f}s"
+            )
+            last_reported = index
+
+    writer.release()
+    print(f"Wrote {total_frames} frames to {output_video} at {fps} FPS")
+    return output_video
+
+
 def main() -> None:
+    if SOURCE_MODE == "npy":
+        npy_files = sorted(NPY_INPUT_DIR.rglob(f"*{NPY_SUFFIX}.npy"))
+        if not npy_files:
+            npy_files = sorted(NPY_INPUT_DIR.rglob("*.npy"))
+        if not npy_files:
+            raise ValueError(f"No .npy files found under {NPY_INPUT_DIR}")
+
+        total_files = len(npy_files)
+        print(f"Found {total_files} .npy files under {NPY_INPUT_DIR}")
+
+        for index, npy_file in enumerate(npy_files, start=1):
+            print(f"[{index}/{total_files}] Processing {npy_file}")
+            create_thermal_video_from_npy(npy_file, fps=FPS)
+        return
+
+    if SOURCE_MODE != "asc":
+        raise ValueError(f"Unsupported SOURCE_MODE: {SOURCE_MODE}")
+
     sub_sub_folders = [
         path
         for path in INPUT_DIR.glob("*/*")
