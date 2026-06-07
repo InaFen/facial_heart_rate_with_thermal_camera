@@ -89,9 +89,9 @@ YANG_VARIO_INDIVIDUAL_OVERRIDES = {
 # to main_new_approach.py via NEW_APPROACH_* env vars (override the in-script
 # defaults). Tune per camera (resolution / fps) as needed.
 NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA = {
-	"lepton": {"gaussian_kernel_size": 7, "lowcut_bandpass": 0.01, "highcut_bandpass": 0.7, "order_bandpass": 4},
-	"vario": {"gaussian_kernel_size": 7, "lowcut_bandpass": 0.01, "highcut_bandpass": 0.7, "order_bandpass": 4},
-	"mwir": {"gaussian_kernel_size": 9, "lowcut_bandpass": 0.01, "highcut_bandpass": 0.7, "order_bandpass": 4},
+	"lepton": {"gaussian_kernel_size": 7, "lowcut_bandpass": 0.92, "highcut_bandpass": 4.0, "order_bandpass": 4},
+	"vario": {"gaussian_kernel_size": 7, "lowcut_bandpass": 0.92, "highcut_bandpass": 12.0, "order_bandpass": 4},
+	"mwir": {"gaussian_kernel_size": 9, "lowcut_bandpass": 0.92, "highcut_bandpass": 25.0, "order_bandpass": 4},
 }
 
 # new_approach: per-ROI sub-ROI grid size (rows; columns are set equal to rows).
