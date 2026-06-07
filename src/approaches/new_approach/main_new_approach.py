@@ -44,14 +44,14 @@ GAUSSIAN_SIGMA = None
 # Sub-ROI grid: the ROI is divided into SUBROI_GRID_ROWS x SUBROI_GRID_COLS areas before temproal denoising
 # to make sure that the amount of elements per frame is constant over frames, without having to interpolate pixels which might be wrongful as ROI size changes over frames
 # (n = rows * cols sub-ROIs)
-SUBROI_GRID_ROWS = 8
+SUBROI_GRID_ROWS = 8 # in pixels
 SUBROI_GRID_COLS = SUBROI_GRID_ROWS
 
-LOWCUT_BANDPASS = 0.01
-HIGHCUT_BANDPASS = 0.7
+LOWCUT_BANDPASS = 0.92 # corresponds to 55 bpm, in Hz (0.92/60)
+HIGHCUT_BANDPASS = 0.7 # according to individual camera possibilities
 ORDER_BANDPASS = 4
 
-HR_BAND = (0.9, 2.8)
+HR_BAND = (0.92, 3.0) # 55 bpm to 180 bpm, in Hz (0.92/60 to 3.0/60)
 
 # --- run_batch overrides ---------------------------------------------------
 # When launched via scripts/run_batch.py, the spatial Gaussian + temporal
