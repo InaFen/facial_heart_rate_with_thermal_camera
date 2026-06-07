@@ -134,9 +134,15 @@ def extend_forehead_roi_upward(
     landmark_indices: List[int],
     tolerance_pct: float = FOREHEAD_TEMP_TOLERANCE_PCT,
     max_extend_px: int = FOREHEAD_MAX_EXTEND_PIXELS,
+    extend_downward: bool = False,
 ) -> np.ndarray:
     """
-    Extend the forehead ROI upward (decreasing Y) following the hairline shape.
+    Extend the forehead ROI toward the hairline following its shape.
+
+    By default the ROI is grown *upward* (decreasing Y), which is correct for an
+    upright face. When ``extend_downward`` is True the ROI is grown *downward*
+    (increasing Y) instead; this is required for cameras whose frames are stored
+    upside down (e.g. the Lepton), where the forehead points downward.
 
     Instead of growing the whole forehead width as a single rectangular block,
     each column of the forehead is grown independently upward. Because every
@@ -160,7 +166,9 @@ def extend_forehead_roi_upward(
         mask: 2D binary mask (height, width) with 255 indicating ROI pixels
         landmark_indices: list of mediapipe landmark indices that define the base forehead
         tolerance_pct: allowed deviation as fraction of the skin reference value
-        max_extend_px: maximum pixels to extend upward per column
+        max_extend_px: maximum pixels to extend (toward the hairline) per column
+        extend_downward: if True, grow the ROI downward (increasing Y) instead of
+            upward; use this for upside-down recordings such as the Lepton camera
 
     Returns:
         Extended mask as 2D binary array
@@ -215,21 +223,30 @@ def extend_forehead_roi_upward(
         sm[0, :] = (frame_f[0, :] + frame_f[1, :]) / 2.0
         sm[-1, :] = (frame_f[-1, :] + frame_f[-2, :]) / 2.0
 
-    # Topmost masked pixel per column (vectorized): the start of each climb.
+    # Starting masked pixel per column (vectorized): the start of each climb.
     # Columns absent from the base mask are skipped to keep the shape faithful.
-    order = np.lexsort((ys, xs))  # sort by column, then row
+    # Upward growth starts at the topmost pixel of each column; downward growth
+    # (upside-down frames, e.g. Lepton) starts at the bottommost pixel instead.
+    order = np.lexsort((ys, xs))  # sort by column, then row (ascending within column)
     xs_sorted = xs[order]
     ys_sorted = ys[order]
-    first_idx = np.concatenate(([0], np.nonzero(np.diff(xs_sorted))[0] + 1))
+    col_change = np.nonzero(np.diff(xs_sorted))[0]
+    first_idx = np.concatenate(([0], col_change + 1))             # topmost y per column
+    last_idx = np.concatenate((col_change, [xs_sorted.size - 1])) # bottommost y per column
     cols = xs_sorted[first_idx]                 # unique columns present
-    start_y = ys_sorted[first_idx]              # topmost y per column
+    start_y = ys_sorted[last_idx] if extend_downward else ys_sorted[first_idx]
     n_cols = cols.size
 
     if n_cols and max_extend_px > 0:
-        # Candidate pixel y for every (step, column): y = start_y - (step+1).
+        # Candidate pixel y for every (step, column). Upward: y = start_y - step;
+        # downward (upside-down frame): y = start_y + step.
         steps = np.arange(1, max_extend_px + 1)[:, None]          # (S, 1)
-        cand_y = start_y[None, :] - steps                         # (S, n_cols)
-        valid = cand_y >= 0
+        if extend_downward:
+            cand_y = start_y[None, :] + steps                     # (S, n_cols)
+            valid = cand_y <= (height - 1)
+        else:
+            cand_y = start_y[None, :] - steps                     # (S, n_cols)
+            valid = cand_y >= 0
         cand_y_clamped = np.clip(cand_y, 0, height - 1)
 
         # "Good" = looks like forehead skin (and still inside the image).
@@ -269,6 +286,7 @@ def apply_roi_masks_to_npy_frames(
     frame_stack: np.ndarray,
     roi_mask_log: List[Dict[str, np.ndarray]],
     roi_landmarks: Dict[str, List[int]] = None,
+    extend_forehead_downward: bool = False,
 ) -> List[Dict[str, Dict[str, object]]]:
     """
     Apply ROI masks to a precomputed numeric frame stack from a .npy file.
@@ -277,6 +295,7 @@ def apply_roi_masks_to_npy_frames(
         frame_stack: 3D numpy array of shape (n_frames, height, width) containing numeric frame data
         roi_mask_log: list of per-frame ROI masks where each entry is a dict {roi_name: mask_array}
         roi_landmarks: optional dict mapping ROI name to list of landmark indices (for forehead extension)
+        extend_forehead_downward: if True, grow the forehead downward (for upside-down recordings such as the Lepton)
     
     Returns:
         roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "adc_values", "mean_value"}}
@@ -301,11 +320,12 @@ def apply_roi_masks_to_npy_frames(
             # Apply forehead upward extension if applicable (forehead / left_forehead / right_forehead).
             # Each forehead-type ROI is expanded independently using only its own mask.
             if is_forehead_roi(roi_name) and roi_landmarks and roi_name in roi_landmarks:
-                #print(f"[NPY] Extending forehead ROI '{roi_name}' upward for frame {frame_idx} with {len(roi_landmarks[roi_name])} landmarks")
+                #print(f"[NPY] Extending forehead ROI '{roi_name}' for frame {frame_idx} with {len(roi_landmarks[roi_name])} landmarks")
                 mask = extend_forehead_roi_upward(
                     frame=frame,
                     mask=mask,
                     landmark_indices=roi_landmarks[roi_name],
+                    extend_downward=extend_forehead_downward,
                 )
             
             ys, xs = np.where(mask == 255)
@@ -651,6 +671,12 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
             or configs.overwrite_existing_files
             or split_single_manual_roi # Each ROI is treated as a sub-ROI so ROIs need to be defined accordingly in config
         ):
+            # The Lepton frames are recorded upside down (and flipped for detection),
+            # so the forehead points downward in the raw frames used for extraction.
+            # In that case grow the forehead ROI downward instead of upward.
+            camera_name_env = (os.environ.get("CAMERA_NAME", "") or "").strip().lower()
+            flip_for_extraction = os.environ.get("FLIP_UPSIDE_DOWN", "0").strip().lower() in ("1", "true", "yes")
+            extend_forehead_downward = ("lepton" in camera_name_env) or flip_for_extraction
             # Handle .npy precomputed frame stack
             if gray_frames_path_is_npy:
                 print(f"[ROI Pipeline] Extracting ROI data from NPY frame stack...")
@@ -669,6 +695,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                     frame_stack=npy_frames_slice,
                     roi_mask_log=roi_pixel_log,
                     roi_landmarks=roi_landmarks_for_extraction,
+                    extend_forehead_downward=extend_forehead_downward,
                 )
             else:
                 # Handle directory of ASC or gray files
@@ -707,6 +734,7 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
                         start_frame=start_frame if limit_to_timespan else 0,
                         end_frame=end_frame if limit_to_timespan else None,
                         roi_landmarks=roi_landmarks_for_gray,
+                        extend_forehead_downward=extend_forehead_downward,
                     )
             os.makedirs(os.path.dirname(configs.path_roi_pixel_data), exist_ok=True)
             np.save(configs.path_roi_pixel_data, roi_pixel_data, allow_pickle=True)

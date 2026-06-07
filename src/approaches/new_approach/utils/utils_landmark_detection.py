@@ -770,6 +770,7 @@ def apply_roi_masks_to_gray_frames(
     start_frame: int = 0,
     end_frame: int = None,
     roi_landmarks: Dict[str, List[int]] = None,
+    extend_forehead_downward: bool = False,
 ) -> List[Dict[str, Dict[str, object]]]:
     """Apply ROI masks (from video detection) to original .gray frames to extract temperatures.
 
@@ -780,6 +781,7 @@ def apply_roi_masks_to_gray_frames(
         start_frame: Start frame index to process (inclusive). Default: 0
         end_frame: End frame index to process (exclusive). Default: None (process to end)
         roi_landmarks: optional dict mapping ROI name to list of landmark indices (for forehead extension)
+        extend_forehead_downward: if True, grow the forehead downward (for upside-down recordings such as the Lepton)
 
     Returns:
         roi_pixel_data: list (per frame) of dicts {roi_name: {"coords", "values", "mean_value"}}
@@ -834,11 +836,13 @@ def apply_roi_masks_to_gray_frames(
             # Apply forehead upward extension if applicable (forehead / left_forehead / right_forehead).
             # Each forehead-type ROI is expanded independently using only its own mask.
             if is_forehead_roi(roi_name) and roi_landmarks and roi_name in roi_landmarks:
-                print(f"[Gray] Extending forehead ROI '{roi_name}' upward for frame {idx} with {len(roi_landmarks[roi_name])} landmarks")
+                direction_label = "downward" if extend_forehead_downward else "upward"
+                print(f"[Gray] Extending forehead ROI '{roi_name}' {direction_label} for frame {idx} with {len(roi_landmarks[roi_name])} landmarks")
                 mask = extend_forehead_roi_upward(
                     frame=frame,
                     mask=mask,
                     landmark_indices=roi_landmarks[roi_name],
+                    extend_downward=extend_forehead_downward,
                 )
 
             ys, xs = np.where(mask == 255)
