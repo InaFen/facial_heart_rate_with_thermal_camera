@@ -43,9 +43,10 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
     )
 
 # Global defaults (previously set inside __main__); make available to all functions
-PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # distance value see below in code 
-PEAK_DISTANCE_GT = 0.5
-PEAK_PROMINENCE_GT = 1.0
+PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # 
+PEAK_DISTANCE_SIGNAL = 0.01#int(max(1, gt_fs_val * 0.01))
+PEAK_DISTANCE_GT = 0.5 # 0.5 seems to work well
+PEAK_PROMINENCE_GT = 1.0 # 1.0 seems to work well
 
 # Default evaluation parameters
 DEFAULT_TOLERANCE_MS = 500.0
@@ -737,7 +738,6 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
 
     # Peak detection
-    PEAK_DISTANCE_SIGNAL = int(max(1, gt_fs_val * 0.1))
     pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs_val, min_distance_s=PEAK_DISTANCE_SIGNAL, prominence=PEAK_PROMINENCE_SIGNAL)
     pred_peak_times = t[pred_peaks]
 
@@ -1041,7 +1041,7 @@ def batch_evaluate_folder(
 
 if __name__ == "__main__":
     # Hard-coded parameters for batch evaluation (edit here if you want different inputs)
-    HARD_CODED_PATH = Path("saved_results/yang_et_al")
+    HARD_CODED_PATH = Path("saved_results/new_approach/results/lepton")
     HARD_CODED_PATTERN = DEFAULT_PATTERN
     HARD_CODED_FLIP = False
     HARD_CODED_TOLERANCE_MS = DEFAULT_TOLERANCE_MS
