@@ -35,7 +35,19 @@ SAVE_ALL_PLOTS = PLOTS_SAVE_DIR is not None
 configs = Config.from_yaml(CONFIGS_PATH)
 output_dir = os.path.dirname(configs.path_video_thermal_with_roi_masks)
 
-APPLY_DLIB_LANDMARK_DETECTION = True
+
+def _env_flag(name: str, default: bool) -> bool:
+    """Read a boolean flag from the environment (1/true/yes -> True)."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes")
+
+
+# Whether to use dlib-based landmark detection (else MediaPipe facemesh). When
+# launched by run_batch this is set via NAIR_APPLY_DLIB_LANDMARK_DETECTION
+# (1 when the roi name contains "dlib").
+APPLY_DLIB_LANDMARK_DETECTION = _env_flag("NAIR_APPLY_DLIB_LANDMARK_DETECTION", True)
 STFT_WINDOW_SIZE = 64
 STFT_OVERLAP = 56
 SMOOTHNESS_PENALTY = 0.1 # used in curve extraction, higher values lead to smoother curve but less accurate, lower values lead to more accurate but less smooth curve

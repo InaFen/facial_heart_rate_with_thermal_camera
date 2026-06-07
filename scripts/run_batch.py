@@ -91,7 +91,7 @@ YANG_VARIO_INDIVIDUAL_OVERRIDES = {
 NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA = {
 	"lepton": {"gaussian_kernel_size": 7, "lowcut_bandpass": 0.92, "highcut_bandpass": 4.0, "order_bandpass": 4},
 	"vario": {"gaussian_kernel_size": 7, "lowcut_bandpass": 0.92, "highcut_bandpass": 12.0, "order_bandpass": 4},
-	"mwir": {"gaussian_kernel_size": 9, "lowcut_bandpass": 0.92, "highcut_bandpass": 25.0, "order_bandpass": 4},
+	"mwir": {"gaussian_kernel_size": 11, "lowcut_bandpass": 0.92, "highcut_bandpass": 25.0, "order_bandpass": 4},
 }
 
 # new_approach: per-ROI sub-ROI grid size (rows; columns are set equal to rows).
@@ -298,6 +298,11 @@ def run_one_row(
 			threshold = individual_override["threshold"]
 		if threshold is not None:
 			env["YANG_THRESHOLD_VALUE"] = str(threshold)
+	# nair: use dlib ROI detection when the roi name contains "dlib" (else MediaPipe
+	# facemesh). Read by main_nair_et_al.py via NAIR_APPLY_DLIB_LANDMARK_DETECTION.
+	if pipeline == "nair":
+		use_dlib = bool(roi_name) and "dlib" in str(roi_name).strip().lower()
+		env["NAIR_APPLY_DLIB_LANDMARK_DETECTION"] = "1" if use_dlib else "0"
 	track_face_settings = TRACK_FACE_SETTINGS_BY_CAMERA.get(camera or "", {})
 	if track_face_settings:
 		# Per-individual vertical ROI shift override (e.g. ina: ROI too high -> down).
@@ -337,6 +342,32 @@ def get_fps_for_camera(camera: str) -> float:
 	if camera not in fps_map:
 		raise ValueError(f"Unknown camera type {camera!r}. Supported: {', '.join(fps_map.keys())}")
 	return fps_map[camera]
+
+
+def required_pipeline_for_roi_name(roi_name: str | None) -> str | None:
+	"""Return the pipeline a roi_name is restricted to, or None if unrestricted.
+
+	Some ROI detection methods are pipeline-specific:
+	  - "tracker" in roi_name -> only the yang pipeline
+	  - "dlib"    in roi_name -> only the nair pipeline
+	Any other roi_name may run with any pipeline.
+	"""
+	name = str(roi_name or "").lower()
+	if "tracker" in name:
+		return "yang"
+	if "dlib" in name:
+		return "nair"
+	return None
+
+
+def is_combination_allowed(pipeline: str, roi_name: str | None) -> bool:
+	"""Whether a (pipeline, roi_name) combination should run.
+
+	"tracker" roi_names run only with yang and "dlib" roi_names only with nair;
+	all other roi_names are allowed for every pipeline.
+	"""
+	required = required_pipeline_for_roi_name(roi_name)
+	return required is None or required == pipeline
 
 
 def run_combination(
@@ -506,7 +537,7 @@ def main() -> int:
 	# The batch runs for every combination of pipeline x camera x ROI config below.
 	# Put a single entry in a list to run just one (previous behaviour).
 	pipelines = ["new"]              # any of "yang", "nair", "new"
-	cameras = ["mwir"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
+	cameras = ["mwir", "lepton", "vario"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
 		{"roi_name": "forehead", "used_rois": ["forehead"]},
@@ -534,12 +565,24 @@ def main() -> int:
 		roi_configs = [roi_configs]
 
 	# Cartesian product: pipeline x camera x ROI config.
-	combinations = [
+	all_combinations = [
 		(pipeline, camera, roi_config)
 		for pipeline in pipelines
 		for camera in cameras
 		for roi_config in roi_configs
 	]
+
+	# Some ROI detection methods are pipeline-specific: a "tracker" roi_name runs
+	# only the yang pipeline and a "dlib" roi_name only the nair pipeline. Skip the
+	# combinations whose pipeline doesn't match the roi_name's required pipeline.
+	combinations = []
+	skipped_combinations = []
+	for combo in all_combinations:
+		combo_pipeline, _combo_camera, combo_roi_config = combo
+		if is_combination_allowed(combo_pipeline, combo_roi_config.get("roi_name")):
+			combinations.append(combo)
+		else:
+			skipped_combinations.append(combo)
 
 	print(f"\n{'#'*60}")
 	print(f"Batch Runner: {len(combinations)} combination(s) to run")
@@ -549,6 +592,14 @@ def main() -> int:
 			f"  {idx}. pipeline={pipeline} camera={camera} "
 			f"roi_name={roi_config.get('roi_name')} used_rois={roi_config.get('used_rois')}"
 		)
+	if skipped_combinations:
+		print(f"\nSkipped {len(skipped_combinations)} combination(s) (ROI detection is pipeline-specific):")
+		for (pipeline, camera, roi_config) in skipped_combinations:
+			required = required_pipeline_for_roi_name(roi_config.get("roi_name"))
+			print(
+				f"  - pipeline={pipeline} camera={camera} "
+				f"roi_name={roi_config.get('roi_name')}: only the {required!r} pipeline runs this roi_name"
+			)
 	print(f"{'#'*60}")
 
 	all_failures: list[tuple[str, str, str]] = []
