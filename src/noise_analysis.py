@@ -18,6 +18,9 @@ Multiply by 1000 to get mK.
 
 from __future__ import annotations
 
+import sys
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -41,6 +44,43 @@ except ImportError:  # pragma: no cover - allows running the file directly
 	sys.path.insert(0, str(project_root))
 	from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
 	from src.video_processing_methods.gray_file_methods import read_lepton35_gray
+
+
+# Directory where analysis plots and the run log are written.
+RESULTS_DIR = Path("saved_results/noise_analysis_plots")
+
+
+class _Tee:
+	"""Write text to several streams at once (e.g. console + log file)."""
+
+	def __init__(self, *streams):
+		self._streams = streams
+
+	def write(self, data: str) -> int:
+		for stream in self._streams:
+			stream.write(data)
+			stream.flush()
+		return len(data)
+
+	def flush(self) -> None:
+		for stream in self._streams:
+			stream.flush()
+
+
+@contextmanager
+def tee_stdout_to_file(log_path: Path):
+	"""Duplicate everything written to stdout/stderr into ``log_path`` as well."""
+	log_path.parent.mkdir(parents=True, exist_ok=True)
+	log_file = open(log_path, "w", encoding="utf-8")
+	original_stdout, original_stderr = sys.stdout, sys.stderr
+	sys.stdout = _Tee(original_stdout, log_file)
+	sys.stderr = _Tee(original_stderr, log_file)
+	try:
+		yield log_file
+	finally:
+		sys.stdout = original_stdout
+		sys.stderr = original_stderr
+		log_file.close()
 
 
 def load_thermal_frames(filepaths: Sequence[str | Path]) -> np.ndarray:
@@ -703,7 +743,7 @@ def find_optimal_kernel_size(
 		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
 
 	if kernel_sizes is None:
-		kernel_sizes = [3, 5, 7, 9, 11, 15, 21, 31, 51, 71, 101, 121, 151, 171, 201, 251]
+		kernel_sizes = [3, 5, 7, 9, 11, 15, 21, 31, 51, 71, 101, 121, 151, 171, 201, 251, 300, 500, 1000]
 
 	results_by_kernel = {}
 	spatial_noise_values = {}
@@ -837,7 +877,7 @@ def main() -> None:
 		print(format_neighbor_correlation_result(neighbor_correlation_result))
 
 		# Per-recording plots (saved with camera name)
-		results_dir = Path("saved_results/noise_analysis_plots")
+		results_dir = RESULTS_DIR
 		if plot_histogram:
 			hist_path = results_dir / f"{camera}_{path.name}_histogram.png"
 			plot_all_pixels_histogram(thermal_frames, save_path=hist_path)
@@ -863,10 +903,15 @@ def main() -> None:
 		valid_paths = [p for p in compare_paths if p.exists()]
 		valid_cameras = [c for p, c in zip(compare_paths, compare_cameras) if p.exists()]
 		valid_frame_rates = [fr for p, fr in zip(compare_paths, compare_frame_rates) if p.exists()]
-		combined_path = Path("saved_results/noise_analysis_plots/combined_psd.png")
+		combined_path = RESULTS_DIR / "combined_psd.png"
 		plot_compare_pixelwise_mean_psd(valid_paths, valid_cameras, valid_frame_rates, labels=labels, roi=roi, save_path=combined_path)
 
 
 if __name__ == "__main__":
-	main()
+	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+	log_path = RESULTS_DIR / f"noise_analysis_log_{timestamp}.txt"
+	with tee_stdout_to_file(log_path):
+		print(f"Saving all console output to {log_path}")
+		main()
+		print(f"\nAll console output saved to {log_path}")
 
