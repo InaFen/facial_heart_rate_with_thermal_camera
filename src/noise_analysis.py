@@ -743,7 +743,7 @@ def find_optimal_kernel_size(
 		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
 
 	if kernel_sizes is None:
-		kernel_sizes = [3, 5, 7, 9, 11, 15, 21, 31, 51, 71, 101, 121, 151, 171, 201, 251, 300, 500, 1000]
+		kernel_sizes = [3, 5, 7, 9, 11, 15, 21, 31, 51, 71, 101, 121, 151, 171, 201, 251, 301, 501, 1001, 10001, 100001]
 
 	results_by_kernel = {}
 	spatial_noise_values = {}
