@@ -467,6 +467,122 @@ def append_evaluation_row_to_csv(
         writer.writerow(row)
 
 
+# Canonical column order for the aggregate per-npz metrics CSV. The nested metric
+# dictionaries from 00_metrics.json are flattened with a prefix; any missing value
+# (e.g. Bland-Altman stats when nothing matched) is left blank via restval so every
+# row has exactly these columns, regardless of the individual run.
+METRICS_SUMMARY_CSV_FIELDNAMES = [
+    "timestamp_utc",
+    "input_file",
+    "plots_folder",
+    "metrics_json_path",
+    "tolerance_ms",
+    "ground_truth_fs",
+    "predicted_fs",
+    "gt_hr_mean",
+    "signal_hr_mean",
+    "num_gt_peaks",
+    "num_pred_peaks",
+    "num_matched_disregard",
+    "num_matched_closest",
+    # metrics_disregard.*
+    "metrics_disregard_rmse",
+    "metrics_disregard_mae",
+    "metrics_disregard_r2",
+    "metrics_disregard_ks_pvalue",
+    "metrics_disregard_mean_diff",
+    "metrics_disregard_loa_low",
+    "metrics_disregard_loa_high",
+    "metrics_disregard_sd_diff",
+    "metrics_disregard_num_pairs",
+    "metrics_disregard_num_matched",
+    # metrics_closest.*
+    "metrics_closest_rmse",
+    "metrics_closest_mae",
+    "metrics_closest_r2",
+    "metrics_closest_ks_pvalue",
+    "metrics_closest_mean_diff",
+    "metrics_closest_loa_low",
+    "metrics_closest_loa_high",
+    "metrics_closest_sd_diff",
+    "metrics_closest_num_pairs",
+    # ba_stats_disregard.*
+    "ba_stats_disregard_mean_diff",
+    "ba_stats_disregard_loa_low",
+    "ba_stats_disregard_loa_high",
+    "ba_stats_disregard_sd_diff",
+    # ba_stats_closest.*
+    "ba_stats_closest_mean_diff",
+    "ba_stats_closest_loa_low",
+    "ba_stats_closest_loa_high",
+    "ba_stats_closest_sd_diff",
+]
+
+
+def _flatten_metrics_for_csv(
+    output_data: Dict[str, object],
+    plots_folder: Optional[str | Path],
+    json_path: Optional[str | Path],
+) -> Dict[str, object]:
+    """Flatten the JSON ``output_data`` (plus plot/JSON locations) into one CSV row.
+
+    Nested metric dictionaries are expanded into ``<prefix>_<key>`` columns so the
+    aggregate CSV is directly analysable. Missing nested dicts simply produce no
+    keys (the CSV writer fills them with the blank restval).
+    """
+    data = output_data if isinstance(output_data, dict) else {}
+    row: Dict[str, object] = {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "input_file": data.get("input_file", ""),
+        "plots_folder": str(plots_folder) if plots_folder is not None else "",
+        "metrics_json_path": str(json_path) if json_path is not None else "",
+        "tolerance_ms": data.get("tolerance_ms"),
+        "ground_truth_fs": data.get("ground_truth_fs"),
+        "predicted_fs": data.get("predicted_fs"),
+        "gt_hr_mean": data.get("gt_hr_mean"),
+        "signal_hr_mean": data.get("signal_hr_mean"),
+        "num_gt_peaks": data.get("num_gt_peaks"),
+        "num_pred_peaks": data.get("num_pred_peaks"),
+        "num_matched_disregard": data.get("num_matched_disregard"),
+        "num_matched_closest": data.get("num_matched_closest"),
+    }
+    for prefix in ("metrics_disregard", "metrics_closest", "ba_stats_disregard", "ba_stats_closest"):
+        sub = data.get(prefix)
+        if isinstance(sub, dict):
+            for key, value in sub.items():
+                row[f"{prefix}_{key}"] = value
+    return row
+
+
+def append_metrics_summary_row(
+    csv_output_path: str | Path,
+    output_data: Dict[str, object],
+    plots_folder: Optional[str | Path],
+    json_path: Optional[str | Path],
+) -> str:
+    """Append one flattened metrics row (same data as the per-run JSON) to a CSV.
+
+    The CSV uses a fixed column schema (``METRICS_SUMMARY_CSV_FIELDNAMES``) and a
+    pointer to the run's plot folder, so a batch over many npz files builds a single
+    aggregate table. Unknown extra keys are ignored and missing ones left blank.
+    """
+    csv_output_path = str(csv_output_path)
+    os.makedirs(os.path.dirname(csv_output_path) or ".", exist_ok=True)
+    row = _flatten_metrics_for_csv(output_data, plots_folder, json_path)
+    write_header = not os.path.exists(csv_output_path) or os.path.getsize(csv_output_path) == 0
+    with open(csv_output_path, "a", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(
+            csv_file,
+            fieldnames=METRICS_SUMMARY_CSV_FIELDNAMES,
+            extrasaction="ignore",
+            restval="",
+        )
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+    return csv_output_path
+
+
 def resample_signal(sig: np.ndarray, fs_from: float, fs_to: float) -> np.ndarray:
     """Resample 1D signal from fs_from to fs_to using linear interpolation.
 
@@ -621,8 +737,14 @@ def evaluate_instantaneous_hr_against_ground_truth(
     tolerance_ms: float = 150.0,
     plot_steps: bool = True,
     plot_bland_altman: bool = True,
+    csv_output_path: str | Path | None = None,
 ) -> Dict[str, object]:
     """Evaluate instantaneous HR using a single `.npy`/`.npz` file as input.
+
+    If ``csv_output_path`` is given, a flattened one-line summary of the metrics
+    (the same data written to ``00_metrics.json``) plus the path to this run's plot
+    folder is appended to that CSV, so a batch can aggregate every npz file into a
+    single table.
     """
     if not isinstance(results, (str, Path)):
         raise ValueError("This function only accepts a path to a saved .npy/.npz file as input.")
@@ -969,6 +1091,18 @@ def evaluate_instantaneous_hr_against_ground_truth(
         json.dump(output_data, f, indent=2, ensure_ascii=False)
     print(f"[metric_pipeline] Saved metrics JSON to: {output_json_path}")
 
+    # Additionally append a flattened summary row (the same data as the JSON, plus a
+    # pointer to this run's plot folder) to an aggregate CSV. Running a batch over
+    # many npz files therefore yields one CSV with the metrics for all of them.
+    if csv_output_path is not None:
+        append_metrics_summary_row(
+            csv_output_path=csv_output_path,
+            output_data=output_data,
+            plots_folder=output_folder,
+            json_path=output_json_path,
+        )
+        print(f"[metric_pipeline] Appended metrics summary row to CSV: {csv_output_path}")
+
     out = {
         "peak_to_peak_disregard_metrics": peak_to_peak_disregard_metrics,
         "peak_to_peak_disregard_ba_stats": ba_stats_disregard,
@@ -993,6 +1127,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "tolerance_ms": tolerance_ms,
     }
     out["output_folder"] = str(output_folder)
+    out["metrics_json_path"] = str(output_json_path)
 
     return out
 
@@ -1004,17 +1139,28 @@ def batch_evaluate_folder(
     tolerance_ms: float = 150.0,
     plot_steps: bool = True,
     plot_bland_altman: bool = True,
+    csv_output_path: str | Path | None = None,
+    overwrite_csv: bool = True,
 ) -> Dict[str, object]:
     """Run evaluate_instantaneous_hr_against_ground_truth for all archive files in `folder`.
 
     For each found file, a subfolder named after the file stem is created (if not existing)
     and figures are saved inside that folder (the called function already saves into
-    `signal_path.parent / signal_path.stem`). Returns a dict mapping file paths to
-    the returned result dict or an error description.
+    `signal_path.parent / signal_path.stem`). A single aggregate CSV (one row per npz,
+    same fields as each run's JSON plus the plot-folder path) is written to
+    ``csv_output_path`` (default: ``folder / 'all_npz_metrics.csv'``). Returns a dict
+    mapping file paths to the returned result dict or an error description.
     """
     folder = Path(folder)
     if not folder.exists() or not folder.is_dir():
         raise ValueError(f"Folder not found: {folder}")
+
+    if csv_output_path is None:
+        csv_output_path = folder / "all_npz_metrics.csv"
+    csv_output_path = Path(csv_output_path)
+    if overwrite_csv and csv_output_path.exists():
+        print(f"[metric_pipeline] Overwriting existing summary CSV: {csv_output_path}")
+        csv_output_path.unlink()
 
     results: dict[str, object] = {}
     files = sorted(folder.glob(pattern))
@@ -1027,6 +1173,7 @@ def batch_evaluate_folder(
                 tolerance_ms=tolerance_ms,
                 plot_steps=plot_steps,
                 plot_bland_altman=plot_bland_altman,
+                csv_output_path=csv_output_path,
             )
             results[str(f)] = out
             of = out.get("output_folder", "N/A")
@@ -1036,35 +1183,142 @@ def batch_evaluate_folder(
             results[str(f)] = {"error": str(exc)}
             print(f"[metric_pipeline] Batch: error processing {f}: {exc}")
 
+    print(f"[metric_pipeline] Batch complete. Aggregate metrics CSV: {csv_output_path}")
+    return results
+
+
+def batch_evaluate_folder_structure(
+    root: str | Path,
+    approaches: tuple[str, ...] = ("nair_et_al", "yang_et_al", "new_approach"),
+    results_subdir: str = "results",
+    pattern: str = "*.npz",
+    flip_ground_truth: bool = False,
+    tolerance_ms: float = 150.0,
+    plot_steps: bool = True,
+    plot_bland_altman: bool = True,
+    csv_output_path: str | Path | None = None,
+    overwrite_csv: bool = True,
+) -> Dict[str, object]:
+    """Evaluate every npz under ``<root>/<approach>/<results_subdir>/**`` for each approach.
+
+    The expected layout is::
+
+        root/
+          nair_et_al/results/<...>/*.npz
+          yang_et_al/results/<...>/*.npz
+          new_approach/results/<...>/*.npz
+
+    Every matching npz is evaluated (saving its own JSON + plots, as before) and a
+    single aggregate CSV (one row per npz, same fields as each JSON plus the path to
+    that run's plot folder) is written to ``csv_output_path`` (default:
+    ``root / 'all_npz_metrics.csv'``). Returns a dict mapping file paths to the
+    returned result dict or an error description.
+    """
+    root = Path(root)
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"Root folder not found: {root}")
+
+    if csv_output_path is None:
+        csv_output_path = root / "all_npz_metrics.csv"
+    csv_output_path = Path(csv_output_path)
+    if overwrite_csv and csv_output_path.exists():
+        print(f"[metric_pipeline] Overwriting existing summary CSV: {csv_output_path}")
+        csv_output_path.unlink()
+
+    # Collect all npz files across the approach/results trees first (so the summary
+    # print is meaningful and missing folders are reported clearly).
+    npz_files: list[Path] = []
+    for approach in approaches:
+        results_dir = root / approach / results_subdir
+        if not results_dir.exists() or not results_dir.is_dir():
+            print(f"[metric_pipeline] Structure batch: skipping missing results dir: {results_dir}")
+            continue
+        found = sorted(results_dir.rglob(pattern))
+        print(f"[metric_pipeline] Structure batch: {approach}: found {len(found)} '{pattern}' file(s) under {results_dir}")
+        npz_files.extend(found)
+
+    results: dict[str, object] = {}
+    if not npz_files:
+        print(f"[metric_pipeline] Structure batch: no '{pattern}' files found under any approach results dir in {root}")
+        return results
+
+    print(f"[metric_pipeline] Structure batch: evaluating {len(npz_files)} file(s); aggregate CSV: {csv_output_path}")
+    for f in npz_files:
+        print(f"[metric_pipeline] Structure batch: processing file: {f}")
+        try:
+            out = evaluate_instantaneous_hr_against_ground_truth(
+                results=f,
+                flip_ground_truth=flip_ground_truth,
+                tolerance_ms=tolerance_ms,
+                plot_steps=plot_steps,
+                plot_bland_altman=plot_bland_altman,
+                csv_output_path=csv_output_path,
+            )
+            results[str(f)] = out
+            of = out.get("output_folder", "N/A")
+            matched = len(out.get("matched_ground_truth_ihr_disregard", []))
+            print(f"[metric_pipeline] Structure batch: finished {f}; output_folder={of}; matched_within_tolerance={matched}")
+        except Exception as exc:
+            results[str(f)] = {"error": str(exc)}
+            print(f"[metric_pipeline] Structure batch: error processing {f}: {exc}")
+
+    print(f"[metric_pipeline] Structure batch complete. Aggregate metrics CSV: {csv_output_path}")
     return results
 
 
 if __name__ == "__main__":
-    # Hard-coded parameters for batch evaluation (edit here if you want different inputs)
-    HARD_CODED_PATH = Path("saved_results/new_approach/results/lepton")
+    # Choose how to run:
+    #   "single"    -> evaluate one folder (all matching files in it) or one file, as before.
+    #   "structure" -> walk <root>/{nair_et_al,yang_et_al,new_approach}/results/**/*.npz
+    #                  and aggregate every npz's metrics into one CSV at the root.
+    RUN_MODE = "single"  # "single" or "structure"
+
+    # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
     HARD_CODED_FLIP = False
     HARD_CODED_TOLERANCE_MS = DEFAULT_TOLERANCE_MS
     HARD_CODED_PLOT_STEPS = DEFAULT_PLOT_STEPS
     HARD_CODED_PLOT_BA = DEFAULT_PLOT_BLAND_ALTMAN
 
-    if HARD_CODED_PATH.exists():
-        if HARD_CODED_PATH.is_dir():
-            batch_evaluate_folder(
-                folder=HARD_CODED_PATH,
+    if RUN_MODE == "structure":
+        # Root that contains the approach subfolders (each with a `results` dir).
+        HARD_CODED_ROOT = Path("saved_results")
+        if HARD_CODED_ROOT.exists() and HARD_CODED_ROOT.is_dir():
+            batch_evaluate_folder_structure(
+                root=HARD_CODED_ROOT,
                 pattern=HARD_CODED_PATTERN,
                 flip_ground_truth=HARD_CODED_FLIP,
                 tolerance_ms=HARD_CODED_TOLERANCE_MS,
                 plot_steps=HARD_CODED_PLOT_STEPS,
                 plot_bland_altman=HARD_CODED_PLOT_BA,
             )
-        elif HARD_CODED_PATH.is_file():
-            evaluate_instantaneous_hr_against_ground_truth(
-                results=str(HARD_CODED_PATH),
-                flip_ground_truth=HARD_CODED_FLIP,
-                tolerance_ms=HARD_CODED_TOLERANCE_MS,
-                plot_steps=HARD_CODED_PLOT_STEPS,
-                plot_bland_altman=HARD_CODED_PLOT_BA,
+        else:
+            print(
+                f"Hard-coded root not found: {HARD_CODED_ROOT}. Update HARD_CODED_ROOT "
+                "to point at the folder containing nair_et_al/yang_et_al/new_approach."
             )
     else:
-        print(f"Hard-coded path not found: {HARD_CODED_PATH}. Update the path in the script to point to your .npz folder or file.")
+        # Hard-coded parameters for single folder/file evaluation.
+        HARD_CODED_PATH = Path("saved_results/new_approach/results/lepton")
+
+        if HARD_CODED_PATH.exists():
+            if HARD_CODED_PATH.is_dir():
+                batch_evaluate_folder(
+                    folder=HARD_CODED_PATH,
+                    pattern=HARD_CODED_PATTERN,
+                    flip_ground_truth=HARD_CODED_FLIP,
+                    tolerance_ms=HARD_CODED_TOLERANCE_MS,
+                    plot_steps=HARD_CODED_PLOT_STEPS,
+                    plot_bland_altman=HARD_CODED_PLOT_BA,
+                )
+            elif HARD_CODED_PATH.is_file():
+                evaluate_instantaneous_hr_against_ground_truth(
+                    results=str(HARD_CODED_PATH),
+                    flip_ground_truth=HARD_CODED_FLIP,
+                    tolerance_ms=HARD_CODED_TOLERANCE_MS,
+                    plot_steps=HARD_CODED_PLOT_STEPS,
+                    plot_bland_altman=HARD_CODED_PLOT_BA,
+                    csv_output_path=HARD_CODED_PATH.parent / "all_npz_metrics.csv",
+                )
+        else:
+            print(f"Hard-coded path not found: {HARD_CODED_PATH}. Update the path in the script to point to your .npz folder or file.")
