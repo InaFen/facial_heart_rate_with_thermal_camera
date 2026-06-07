@@ -339,28 +339,33 @@ def get_fps_for_camera(camera: str) -> float:
 	return fps_map[camera]
 
 
-def main() -> int:
-	# ===== CONFIGURATION (edit these variables) =====
-	pipeline = "new"  # "yang", "nair", or "new"
-	camera = "mwir"  # "lepton", "vario", or "mwir" (None = use pipeline default)
-	roi_name = "forehead"  # e.g., "tracker_landmark_threshold_30_c" (None = use pipeline default)
-	limit_rows = None  # e.g., 5 (None = process all rows)
-	dry_run = False  # True to print what would be done, False to execute
-	save_plots = True  # True to save plots, False otherwise
-	used_rois = ["forehead"]
-	# Manual ROI (used only when roi_name contains "manual"). On a headless server
-	# the interactive ROI drawing opens in the browser (forwarded localhost port).
-	manual_roi_mode = "rectangle"            # rectangle | polygon | point | point_surrounding
-	manual_roi_split_enabled = False        # split the single manual ROI into a grid of sub-ROIs
-	manual_roi_subroi_grid = [3, 3]        # [rows, cols] used when split is enabled
-	manual_roi_selection_colormap = True   # apply a colormap to the drawing frame
-	manual_roi_backend = "browser"         # browser | cv2 | auto
-	# ===== END CONFIGURATION =====
+def run_combination(
+	pipeline: str,
+	camera: str | None,
+	roi_name: str | None,
+	used_rois: list[str] | None,
+	*,
+	limit_rows: int | None,
+	dry_run: bool,
+	save_plots: bool,
+	manual_roi_mode: str,
+	manual_roi_split_enabled: bool,
+	manual_roi_subroi_grid: list[int],
+	manual_roi_selection_colormap: bool,
+	manual_roi_backend: str,
+) -> tuple[list[tuple[str, str, str]], int]:
+	"""Run a single (pipeline, camera, roi_name/used_rois) combination.
+
+	Returns a tuple of (failures, rows_processed). ``failures`` is a list of
+	(run_name, summary, detail) tuples so the caller can build one global summary
+	across all combinations.
+	"""
+	combo_label = f"{pipeline}/{camera}/{roi_name}"
 
 	# Get pipeline configuration
 	if pipeline not in PIPELINE_CONFIG:
 		print(f"Error: Unknown pipeline {pipeline!r}. Supported: {', '.join(PIPELINE_CONFIG.keys())}")
-		return 1
+		return ([(combo_label, f"unknown pipeline {pipeline!r}", "")], 0)
 
 	cfg = PIPELINE_CONFIG[pipeline]
 	template_config_path = cfg["template_config"]
@@ -374,6 +379,7 @@ def main() -> int:
 		camera = "lepton" if pipeline in {"yang", "new"} else "vario"
 	if roi_name is None:
 		roi_name = "tracker_landmark_threshold_30_c" if pipeline in {"yang", "new"} else "dlib"
+	combo_label = f"{pipeline}/{camera}/{roi_name}"
 
 	fps = get_fps_for_camera(camera)
 
@@ -385,18 +391,22 @@ def main() -> int:
 	area_filter = "temple" if manual_roi_enabled else "face"
 	# Resolve CSV and config paths
 	csv_path = PROJECT_ROOT / "experiments" / "experiments_info" / f"{camera}_experiments.csv"
-	output_root = PROJECT_ROOT / "saved_results" / output_subdir / "batch_runs" / camera
+	# Group runs by roi_name under the camera dir so multiple ROI configs for the
+	# same camera/pipeline don't overwrite each other.
+	output_root = (
+		PROJECT_ROOT / "saved_results" / output_subdir / "batch_runs" / camera / sanitize_name(roi_name)
+	)
 
 	# Validate paths
 	if not csv_path.exists():
 		print(f"Error: CSV not found: {csv_path}")
-		return 1
+		return ([(combo_label, f"CSV not found: {csv_path}", "")], 0)
 	if not template_config_path.exists():
 		print(f"Error: Template config not found: {template_config_path}")
-		return 1
+		return ([(combo_label, f"template config not found: {template_config_path}", "")], 0)
 	if not main_script_path.exists():
 		print(f"Error: Main script not found: {main_script_path}")
-		return 1
+		return ([(combo_label, f"main script not found: {main_script_path}", "")], 0)
 
 	# Load template config
 	with open(template_config_path, "r", encoding="utf-8") as handle:
@@ -408,12 +418,13 @@ def main() -> int:
 		face_rows = face_rows[:limit_rows]
 
 	print(f"\n{'='*60}")
-	print(f"Batch Runner Configuration")
+	print(f"Combination Configuration")
 	print(f"{'='*60}")
 	print(f"Pipeline:        {pipeline}")
 	print(f"Camera:          {camera}")
 	print(f"FPS:             {fps}")
 	print(f"ROI Name:        {roi_name}")
+	print(f"Used ROIs:       {used_rois}")
 	print(f"Manual ROI:      {manual_roi_enabled}"
 	      + (f" (mode={manual_roi_mode}, split={manual_roi_split_enabled}, grid={manual_roi_subroi_grid}, backend={manual_roi_backend})" if manual_roi_enabled else ""))
 	print(f"Area Filter:     {area_filter}")
@@ -428,13 +439,13 @@ def main() -> int:
 	output_root.mkdir(parents=True, exist_ok=True)
 
 	if dry_run:
-		print(f"DRY RUN: Would process {len(face_rows)} face rows\n")
+		print(f"DRY RUN: Would process {len(face_rows)} rows for {combo_label}\n")
 		for idx, row in enumerate(face_rows, 1):
 			print(
 				f"  {idx}. {row['person'].strip()} | {row['before_after_sport'].strip()} | "
 				f"{Path(row['recording_path']).stem}"
 			)
-		return 0
+		return ([], 0)
 
 	# Process each row
 	failures: list[tuple[str, str, str]] = []
@@ -478,25 +489,116 @@ def main() -> int:
 			)
 			if return_code != 0:
 				failures.append(
-					(run_name, f"exited with code {return_code}", error_output.strip())
+					(f"{combo_label} :: {run_name}", f"exited with code {return_code}", error_output.strip())
 				)
 		except Exception as exc:
-			failures.append((run_name, str(exc), traceback.format_exc()))
+			failures.append((f"{combo_label} :: {run_name}", str(exc), traceback.format_exc()))
 
 	if failures:
-		print(f"\nBatch finished with {len(failures)} failure(s):")
-		for run_name, summary, _detail in failures:
+		print(f"\n{combo_label}: finished with {len(failures)} failure(s).")
+	else:
+		print(f"\n{combo_label}: finished successfully ({len(face_rows)} rows processed).")
+	return (failures, len(face_rows))
+
+
+def main() -> int:
+	# ===== CONFIGURATION (edit these variables) =====
+	# The batch runs for every combination of pipeline x camera x ROI config below.
+	# Put a single entry in a list to run just one (previous behaviour).
+	pipelines = ["new"]              # any of "yang", "nair", "new"
+	cameras = ["mwir"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
+	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
+	roi_configs = [
+		{"roi_name": "forehead", "used_rois": ["forehead"]},
+		# {"roi_name": "glabella", "used_rois": ["glabella"]},
+		# {"roi_name": "tracker_landmark_threshold_30_c", "used_rois": None},
+	]
+	limit_rows = None  # e.g., 5 (None = process all rows)
+	dry_run = False  # True to print what would be done, False to execute
+	save_plots = True  # True to save plots, False otherwise
+	# Manual ROI (used only when a roi_name contains "manual"). On a headless server
+	# the interactive ROI drawing opens in the browser (forwarded localhost port).
+	manual_roi_mode = "rectangle"            # rectangle | polygon | point | point_surrounding
+	manual_roi_split_enabled = False        # split the single manual ROI into a grid of sub-ROIs
+	manual_roi_subroi_grid = [3, 3]        # [rows, cols] used when split is enabled
+	manual_roi_selection_colormap = True   # apply a colormap to the drawing frame
+	manual_roi_backend = "browser"         # browser | cv2 | auto
+	# ===== END CONFIGURATION =====
+
+	# Allow single values instead of lists for convenience.
+	if isinstance(pipelines, str):
+		pipelines = [pipelines]
+	if isinstance(cameras, str) or cameras is None:
+		cameras = [cameras]
+	if isinstance(roi_configs, dict):
+		roi_configs = [roi_configs]
+
+	# Cartesian product: pipeline x camera x ROI config.
+	combinations = [
+		(pipeline, camera, roi_config)
+		for pipeline in pipelines
+		for camera in cameras
+		for roi_config in roi_configs
+	]
+
+	print(f"\n{'#'*60}")
+	print(f"Batch Runner: {len(combinations)} combination(s) to run")
+	print(f"{'#'*60}")
+	for idx, (pipeline, camera, roi_config) in enumerate(combinations, 1):
+		print(
+			f"  {idx}. pipeline={pipeline} camera={camera} "
+			f"roi_name={roi_config.get('roi_name')} used_rois={roi_config.get('used_rois')}"
+		)
+	print(f"{'#'*60}")
+
+	all_failures: list[tuple[str, str, str]] = []
+	total_rows = 0
+	for idx, (pipeline, camera, roi_config) in enumerate(combinations, 1):
+		print(f"\n{'#'*60}")
+		print(
+			f"# Combination {idx}/{len(combinations)}: pipeline={pipeline} "
+			f"camera={camera} roi_name={roi_config.get('roi_name')}"
+		)
+		print(f"{'#'*60}")
+		failures, rows = run_combination(
+			pipeline,
+			camera,
+			roi_config.get("roi_name"),
+			roi_config.get("used_rois"),
+			limit_rows=limit_rows,
+			dry_run=dry_run,
+			save_plots=save_plots,
+			manual_roi_mode=manual_roi_mode,
+			manual_roi_split_enabled=manual_roi_split_enabled,
+			manual_roi_subroi_grid=manual_roi_subroi_grid,
+			manual_roi_selection_colormap=manual_roi_selection_colormap,
+			manual_roi_backend=manual_roi_backend,
+		)
+		all_failures.extend(failures)
+		total_rows += rows
+
+	# Global summary across all combinations.
+	if all_failures:
+		print(f"\nBatch finished with {len(all_failures)} failure(s) across {len(combinations)} combination(s):")
+		for run_name, summary, _detail in all_failures:
 			print(f"  - {run_name}: {summary}")
 		# Re-print the full error/traceback for each failed run.
 		print(f"\n{'='*60}")
 		print("Error details for failed runs")
 		print(f"{'='*60}")
-		for run_name, summary, detail in failures:
+		for run_name, summary, detail in all_failures:
 			print(f"\n----- {run_name}: {summary} -----")
 			print(detail if detail.strip() else "(no error output captured)")
 		return 1
 
-	print(f"\nBatch finished successfully ({len(face_rows)} rows processed).")
+	if dry_run:
+		print(f"\nDry run complete for {len(combinations)} combination(s).")
+		return 0
+
+	print(
+		f"\nBatch finished successfully "
+		f"({len(combinations)} combination(s), {total_rows} rows processed)."
+	)
 	return 0
 
 
