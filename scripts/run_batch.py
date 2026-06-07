@@ -540,8 +540,8 @@ def main() -> int:
 	cameras = ["mwir", "vario", "lepton"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
-		{"roi_name": "tracker", "used_rois": None},
-		{"roi_name": "dlib", "used_rois": None},
+		{"roi_name": "tracker", "used_rois": ["forehead"]},
+		{"roi_name": "dlib", "used_rois": ["forehead"]},
 		{"roi_name": "forehead", "used_rois": ["forehead"]},
 		{"roi_name": "glabella", "used_rois": ["glabella"]},
 		{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
