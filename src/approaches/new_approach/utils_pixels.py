@@ -37,49 +37,82 @@ def compute_subroi_means(frame_values_list: list[np.ndarray], coords_per_frame: 
         return subroi_means
 
 
-def write_subrois_video(writer, n_video: int, source_frames: list[np.ndarray], coords_per_frame: list[np.ndarray], video_path: str, SUBROI_GRID_ROWS: int, SUBROI_GRID_COLS: int, n_cells: int, cell_colors_bgr: list[tuple[int, int, int]], frame_height: int, frame_width: int) -> None:
+def draw_subrois_on_frame(
+    frame: np.ndarray,
+    coords: np.ndarray,
+    SUBROI_GRID_ROWS: int,
+    SUBROI_GRID_COLS: int,
+    n_cells: int,
+    cell_colors_bgr: list[tuple[int, int, int]],
+    frame_height: int,
+    frame_width: int,
+) -> np.ndarray:
+    """Render a single grayscale source frame with the sub-ROI grid overlay.
+
+    Returns a BGR uint8 image: the contrast-normalised frame with each sub-ROI
+    filled in a translucent distinct color and outlined. Used both for the
+    overlay video (per frame) and for the saved first-frame PNG.
+    """
+    vmin, vmax = np.percentile(frame, [1, 99])
+    frame_clipped = np.clip(frame, vmin, vmax)
+    frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+
+    if coords.shape[0] > 0:
+        xs = coords[:, 0]
+        ys = coords[:, 1]
+        # Per-frame sub-ROI grid (same per-frame bounding box as the
+        # sub-ROI mean plots), so the overlay matches the analyzed sub-ROIs.
+        x_min, x_max = int(xs.min()), int(xs.max())
+        y_min, y_max = int(ys.min()), int(ys.max())
+        x_span = max(x_max - x_min + 1, 1)
+        y_span = max(y_max - y_min + 1, 1)
+        col_idx = np.clip(((xs - x_min) * SUBROI_GRID_COLS) // x_span, 0, SUBROI_GRID_COLS - 1)
+        row_idx = np.clip(((ys - y_min) * SUBROI_GRID_ROWS) // y_span, 0, SUBROI_GRID_ROWS - 1)
+        cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
+
+        # Keep only in-bounds pixels (coords are absolute image coordinates).
+        in_bounds = (ys >= 0) & (ys < frame_height) & (xs >= 0) & (xs < frame_width)
+
+        # Filled translucent color per sub-ROI.
+        overlay = frame_bgr.copy()
+        for cell in range(n_cells):
+            sel = (cell_idx == cell) & in_bounds
+            if not np.any(sel):
+                continue
+            overlay[ys[sel], xs[sel]] = cell_colors_bgr[cell]
+        frame_bgr = cv2.addWeighted(overlay, 0.5, frame_bgr, 0.5, 0)
+
+        # Outline each sub-ROI so the grid boundaries are visible.
+        for cell in range(n_cells):
+            sel = (cell_idx == cell) & in_bounds
+            if not np.any(sel):
+                continue
+            cell_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+            cell_mask[ys[sel], xs[sel]] = 255
+            contours, _ = cv2.findContours(cell_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(frame_bgr, contours, -1, cell_colors_bgr[cell], 1)
+
+    return frame_bgr
+
+
+def write_subrois_video(writer, n_video: int, source_frames: list[np.ndarray], coords_per_frame: list[np.ndarray], video_path: str, SUBROI_GRID_ROWS: int, SUBROI_GRID_COLS: int, n_cells: int, cell_colors_bgr: list[tuple[int, int, int]], frame_height: int, frame_width: int, first_frame_png_path: str | None = None) -> None:
     for frame_idx in range(n_video):
-        frame = source_frames[frame_idx]
-        vmin, vmax = np.percentile(frame, [1, 99])
-        frame_clipped = np.clip(frame, vmin, vmax)
-        frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+        frame_bgr = draw_subrois_on_frame(
+            source_frames[frame_idx],
+            coords_per_frame[frame_idx],
+            SUBROI_GRID_ROWS,
+            SUBROI_GRID_COLS,
+            n_cells,
+            cell_colors_bgr,
+            frame_height,
+            frame_width,
+        )
 
-        coords = coords_per_frame[frame_idx]
-        if coords.shape[0] > 0:
-            xs = coords[:, 0]
-            ys = coords[:, 1]
-            # Per-frame sub-ROI grid (same per-frame bounding box as the
-            # sub-ROI mean plots), so the overlay matches the analyzed sub-ROIs.
-            x_min, x_max = int(xs.min()), int(xs.max())
-            y_min, y_max = int(ys.min()), int(ys.max())
-            x_span = max(x_max - x_min + 1, 1)
-            y_span = max(y_max - y_min + 1, 1)
-            col_idx = np.clip(((xs - x_min) * SUBROI_GRID_COLS) // x_span, 0, SUBROI_GRID_COLS - 1)
-            row_idx = np.clip(((ys - y_min) * SUBROI_GRID_ROWS) // y_span, 0, SUBROI_GRID_ROWS - 1)
-            cell_idx = row_idx * SUBROI_GRID_COLS + col_idx
-
-            # Keep only in-bounds pixels (coords are absolute image coordinates).
-            in_bounds = (ys >= 0) & (ys < frame_height) & (xs >= 0) & (xs < frame_width)
-
-            # Filled translucent color per sub-ROI.
-            overlay = frame_bgr.copy()
-            for cell in range(n_cells):
-                sel = (cell_idx == cell) & in_bounds
-                if not np.any(sel):
-                    continue
-                overlay[ys[sel], xs[sel]] = cell_colors_bgr[cell]
-            frame_bgr = cv2.addWeighted(overlay, 0.5, frame_bgr, 0.5, 0)
-
-            # Outline each sub-ROI so the grid boundaries are visible.
-            for cell in range(n_cells):
-                sel = (cell_idx == cell) & in_bounds
-                if not np.any(sel):
-                    continue
-                cell_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
-                cell_mask[ys[sel], xs[sel]] = 255
-                contours, _ = cv2.findContours(cell_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                cv2.drawContours(frame_bgr, contours, -1, cell_colors_bgr[cell], 1)
+        # Save the first overlaid frame as a still PNG (alongside the video).
+        if frame_idx == 0 and first_frame_png_path is not None:
+            cv2.imwrite(str(first_frame_png_path), frame_bgr)
+            print(f"Saved sub-ROI overlay first-frame PNG to: {first_frame_png_path}")
 
         writer.write(frame_bgr)
 

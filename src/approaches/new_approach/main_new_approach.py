@@ -307,6 +307,7 @@ for roi_name in roi_names:
         n_video = min(len(source_frames), n_frames)
         frame_height, frame_width = source_frames[0].shape[:2]
         video_path = str(roi_dir / "subrois_overlay.mp4")
+        first_frame_png_path = str(roi_dir / "subrois_overlay_first_frame.png")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
 
@@ -321,7 +322,8 @@ for roi_name in roi_names:
             n_cells=n_cells,
             cell_colors_bgr=cell_colors_bgr,
             frame_height=frame_height,
-            frame_width=frame_width)
+            frame_width=frame_width,
+            first_frame_png_path=first_frame_png_path)
 
     # PSDs of sub-ROIs before and after temporal denoising -----------    
     plot_subroi_psds(
