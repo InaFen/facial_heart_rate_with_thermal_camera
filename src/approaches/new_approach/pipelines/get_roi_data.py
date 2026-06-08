@@ -128,6 +128,44 @@ def select_roi_landmarks(
     return selected
 
 
+# Skin temperatures may be stored in different units depending on the camera:
+# Celsius (~32, e.g. vario/mwir .npy), Kelvin (~305), or centi-Kelvin (~30500,
+# the Lepton's TLinear .gray output). Face skin sits around 20-40 C, so the
+# magnitude alone identifies the scale.
+_CENTI_KELVIN_MIN_MAGNITUDE = 5000.0  # values this large are centi-Kelvin (Kelvin*100)
+_KELVIN_MIN_MAGNITUDE = 150.0         # values this large (but < 5000) are Kelvin
+_KELVIN_TO_CELSIUS_OFFSET = 273.15
+
+
+def _skin_temperature_tolerance_floor(skin_ref: float, tolerance_pct: float) -> float:
+    """Scale-aware floor for the forehead-extension stop tolerance.
+
+    The tolerance must be a small *physical* temperature step (a couple of
+    degrees) so each column stops at the hairline. Expressing it as a percentage
+    of the *absolute* pixel value only works on a Celsius-like scale: on an
+    absolute scale (Kelvin / centi-Kelvin) it explodes -- e.g. 5% of 30500
+    centi-Kelvin is ~15 K -- so every pixel passes the skin test and the ROI
+    grows to the frame edge. That is exactly why the Lepton (centi-Kelvin) ran to
+    the top of the frame while Celsius-scale cameras (vario/mwir) worked.
+
+    This applies ``tolerance_pct`` to the Celsius-equivalent skin temperature and
+    converts the result back into the data's own units. For Celsius-scale data it
+    is identical to ``abs(skin_ref) * tolerance_pct`` (so vario/mwir are
+    unchanged); for Kelvin / centi-Kelvin it yields the same small physical step.
+    """
+    magnitude = abs(skin_ref)
+    if magnitude >= _CENTI_KELVIN_MIN_MAGNITUDE:
+        # centi-Kelvin: convert to Celsius for the percentage, then back to cK.
+        skin_ref_celsius = skin_ref / 100.0 - _KELVIN_TO_CELSIUS_OFFSET
+        return abs(skin_ref_celsius) * tolerance_pct * 100.0
+    if magnitude >= _KELVIN_MIN_MAGNITUDE:
+        # Kelvin: convert to Celsius (a 1 K step equals 1 unit, no scale-back).
+        skin_ref_celsius = skin_ref - _KELVIN_TO_CELSIUS_OFFSET
+        return abs(skin_ref_celsius) * tolerance_pct
+    # Celsius-scale already: original behaviour (vario/mwir unaffected).
+    return magnitude * tolerance_pct
+
+
 def extend_forehead_roi_upward(
     frame: np.ndarray,
     mask: np.ndarray,
@@ -203,10 +241,14 @@ def extend_forehead_roi_upward(
     # Convert MAD to a std-equivalent (factor 1.4826) for a sensible spread.
     skin_spread = 1.4826 * mad if mad > 0 else float(np.std(base_temps))
 
-    # Tolerance combines a percentage of the skin value and the natural spread
-    # of the forehead skin, so columns are allowed to vary as much as the skin
-    # itself does, but stop when they hit the much colder/warmer hairline.
-    tolerance = max(abs(skin_ref) * tolerance_pct, 2.0 * skin_spread)
+    # Tolerance combines a (scale-aware) percentage of the skin temperature and
+    # the natural spread of the forehead skin, so columns may vary as much as the
+    # skin itself but stop at the much colder/warmer hairline. The percentage is
+    # taken from the Celsius-equivalent temperature so it stays a small physical
+    # step on any unit scale (Celsius / Kelvin / centi-Kelvin); using the raw
+    # absolute value made the tolerance ~15 K on the Lepton (centi-Kelvin), so the
+    # column never detected the hairline and grew to the frame edge.
+    tolerance = max(_skin_temperature_tolerance_floor(skin_ref, tolerance_pct), 2.0 * skin_spread)
 
     # Number of consecutive deviating pixels tolerated before stopping a column.
     # This bridges thin warm artifacts (e.g. stray hair strands) without leaking
