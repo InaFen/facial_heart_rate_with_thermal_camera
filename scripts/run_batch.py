@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import csv
+from datetime import datetime
 import json
 import os
 import re
@@ -108,6 +109,72 @@ NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI = {
 
 def sanitize_name(value: str) -> str:
 	return re.sub(r"[^A-Za-z0-9_.-]", "_", value.strip())
+
+
+def write_batch_report(
+	*,
+	combinations: list[tuple[str, str | None, dict[str, Any]]],
+	skipped_combinations: list[tuple[str, str | None, dict[str, Any]]],
+	successful_runs: list[str],
+	failures: list[tuple[str, str, str]],
+	total_rows: int,
+	dry_run: bool,
+) -> Path:
+	"""Persist a human-readable end-of-run batch report.
+
+	The report mirrors the final terminal summary and includes:
+	- all successful run identifiers,
+	- all failed runs with captured error text/tracebacks,
+	- skipped combinations due to pipeline-specific roi_name routing.
+	"""
+	reports_dir = PROJECT_ROOT / "saved_results" / "batch_reports"
+	reports_dir.mkdir(parents=True, exist_ok=True)
+	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+	report_path = reports_dir / f"run_batch_report_{timestamp}.txt"
+
+	with open(report_path, "w", encoding="utf-8") as handle:
+		handle.write("Run Batch Report\n")
+		handle.write("=" * 80 + "\n")
+		handle.write(f"Timestamp: {timestamp}\n")
+		handle.write(f"Dry run: {dry_run}\n")
+		handle.write(f"Combinations considered: {len(combinations) + len(skipped_combinations)}\n")
+		handle.write(f"Combinations run: {len(combinations)}\n")
+		handle.write(f"Combinations skipped: {len(skipped_combinations)}\n")
+		handle.write(f"Total rows processed: {total_rows}\n")
+		handle.write(f"Successful runs: {len(successful_runs)}\n")
+		handle.write(f"Failed runs: {len(failures)}\n")
+
+		handle.write("\nSuccessful runs\n")
+		handle.write("-" * 80 + "\n")
+		if successful_runs:
+			for run_name in successful_runs:
+				handle.write(f"- {run_name}\n")
+		else:
+			handle.write("(none)\n")
+
+		handle.write("\nSkipped combinations\n")
+		handle.write("-" * 80 + "\n")
+		if skipped_combinations:
+			for pipeline, camera, roi_config in skipped_combinations:
+				required = required_pipeline_for_roi_name(roi_config.get("roi_name"))
+				handle.write(
+					f"- pipeline={pipeline} camera={camera} roi_name={roi_config.get('roi_name')} "
+					f"used_rois={roi_config.get('used_rois')} (requires pipeline={required})\n"
+				)
+		else:
+			handle.write("(none)\n")
+
+		handle.write("\nFailures with error details\n")
+		handle.write("-" * 80 + "\n")
+		if failures:
+			for run_name, summary, detail in failures:
+				handle.write(f"\n[{run_name}] {summary}\n")
+				handle.write(detail.strip() if detail.strip() else "(no error output captured)")
+				handle.write("\n")
+		else:
+			handle.write("(none)\n")
+
+	return report_path
 
 
 def parse_timespan(value: str) -> list[float]:
@@ -384,19 +451,19 @@ def run_combination(
 	manual_roi_subroi_grid: list[int],
 	manual_roi_selection_colormap: bool,
 	manual_roi_backend: str,
-) -> tuple[list[tuple[str, str, str]], int]:
+) -> tuple[list[tuple[str, str, str]], list[str], int]:
 	"""Run a single (pipeline, camera, roi_name/used_rois) combination.
 
-	Returns a tuple of (failures, rows_processed). ``failures`` is a list of
-	(run_name, summary, detail) tuples so the caller can build one global summary
-	across all combinations.
+	Returns a tuple of (failures, successful_runs, rows_processed).
+	``failures`` is a list of (run_name, summary, detail) tuples so the caller
+	can build one global summary across all combinations.
 	"""
 	combo_label = f"{pipeline}/{camera}/{roi_name}"
 
 	# Get pipeline configuration
 	if pipeline not in PIPELINE_CONFIG:
 		print(f"Error: Unknown pipeline {pipeline!r}. Supported: {', '.join(PIPELINE_CONFIG.keys())}")
-		return ([(combo_label, f"unknown pipeline {pipeline!r}", "")], 0)
+		return ([(combo_label, f"unknown pipeline {pipeline!r}", "")], [], 0)
 
 	cfg = PIPELINE_CONFIG[pipeline]
 	template_config_path = cfg["template_config"]
@@ -431,13 +498,13 @@ def run_combination(
 	# Validate paths
 	if not csv_path.exists():
 		print(f"Error: CSV not found: {csv_path}")
-		return ([(combo_label, f"CSV not found: {csv_path}", "")], 0)
+		return ([(combo_label, f"CSV not found: {csv_path}", "")], [], 0)
 	if not template_config_path.exists():
 		print(f"Error: Template config not found: {template_config_path}")
-		return ([(combo_label, f"template config not found: {template_config_path}", "")], 0)
+		return ([(combo_label, f"template config not found: {template_config_path}", "")], [], 0)
 	if not main_script_path.exists():
 		print(f"Error: Main script not found: {main_script_path}")
-		return ([(combo_label, f"main script not found: {main_script_path}", "")], 0)
+		return ([(combo_label, f"main script not found: {main_script_path}", "")], [], 0)
 
 	# Load template config
 	with open(template_config_path, "r", encoding="utf-8") as handle:
@@ -476,10 +543,11 @@ def run_combination(
 				f"  {idx}. {row['person'].strip()} | {row['before_after_sport'].strip()} | "
 				f"{Path(row['recording_path']).stem}"
 			)
-		return ([], 0)
+		return ([], [], 0)
 
 	# Process each row
 	failures: list[tuple[str, str, str]] = []
+	successful_runs: list[str] = []
 	for index, row in enumerate(face_rows, start=1):
 		run_name = sanitize_name(
 			f"{index:02d}_{camera}_{Path(row['recording_path']).stem}_{row['person'].strip()}_{row['before_after_sport'].strip()}_{row['area'].strip()}"
@@ -522,6 +590,8 @@ def run_combination(
 				failures.append(
 					(f"{combo_label} :: {run_name}", f"exited with code {return_code}", error_output.strip())
 				)
+			else:
+				successful_runs.append(f"{combo_label} :: {run_name}")
 		except Exception as exc:
 			failures.append((f"{combo_label} :: {run_name}", str(exc), traceback.format_exc()))
 
@@ -529,7 +599,7 @@ def run_combination(
 		print(f"\n{combo_label}: finished with {len(failures)} failure(s).")
 	else:
 		print(f"\n{combo_label}: finished successfully ({len(face_rows)} rows processed).")
-	return (failures, len(face_rows))
+	return (failures, successful_runs, len(face_rows))
 
 
 def main() -> int:
@@ -607,6 +677,7 @@ def main() -> int:
 	print(f"{'#'*60}")
 
 	all_failures: list[tuple[str, str, str]] = []
+	all_successful_runs: list[str] = []
 	total_rows = 0
 	for idx, (pipeline, camera, roi_config) in enumerate(combinations, 1):
 		print(f"\n{'#'*60}")
@@ -615,7 +686,7 @@ def main() -> int:
 			f"camera={camera} roi_name={roi_config.get('roi_name')}"
 		)
 		print(f"{'#'*60}")
-		failures, rows = run_combination(
+		failures, successful_runs, rows = run_combination(
 			pipeline,
 			camera,
 			roi_config.get("roi_name"),
@@ -630,9 +701,20 @@ def main() -> int:
 			manual_roi_backend=manual_roi_backend,
 		)
 		all_failures.extend(failures)
+		all_successful_runs.extend(successful_runs)
 		total_rows += rows
 
 	# Global summary across all combinations.
+	report_path = write_batch_report(
+		combinations=combinations,
+		skipped_combinations=skipped_combinations,
+		successful_runs=all_successful_runs,
+		failures=all_failures,
+		total_rows=total_rows,
+		dry_run=dry_run,
+	)
+	print(f"Saved batch report to: {report_path}")
+
 	if all_failures:
 		print(f"\nBatch finished with {len(all_failures)} failure(s) across {len(combinations)} combination(s):")
 		for run_name, summary, _detail in all_failures:
