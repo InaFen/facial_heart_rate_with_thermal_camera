@@ -69,10 +69,10 @@ print(f"PLOTS_SAVE_DIR: {PLOTS_SAVE_DIR}")
 # block) and a sub-ROI overlay video + first-frame image are saved
 # (mirroring main_new_approach).
 SUBROI_GRID_ROWS_BY_ROI = {
-	"forehead": 8,
-	"left_forehead": 5,
-	"right_forehead": 5,
-	"glabella": 3,
+	"forehead": 3,
+	"left_forehead": 2,
+	"right_forehead": 2,
+	"glabella": 2,
 }
 
 # IMPORTANT: Each ROI represents one building block in the graph
