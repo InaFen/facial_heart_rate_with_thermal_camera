@@ -1411,7 +1411,7 @@ if __name__ == "__main__":
     # the aggregate CSV.
     #   "skip"      -> only compute metrics for npz files that are NOT yet in the CSV.
     #   "overwrite" -> recompute every npz file and replace its existing CSV row.
-    EXISTING_ENTRY_MODE = "skip"  # "skip" or "overwrite"
+    EXISTING_ENTRY_MODE = "overwrite"  # "skip" or "overwrite"
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
