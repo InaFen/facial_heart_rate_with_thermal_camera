@@ -583,6 +583,101 @@ def append_metrics_summary_row(
     return csv_output_path
 
 
+def _read_existing_csv_input_files(csv_path: str | Path) -> set[str]:
+    """Return the set of ``input_file`` values already present in a summary CSV.
+
+    Used to decide which npz files already have a metrics row so a batch can skip
+    or overwrite them. Returns an empty set if the CSV does not exist or is empty.
+    """
+    csv_path = Path(csv_path)
+    if not csv_path.exists() or csv_path.stat().st_size == 0:
+        return set()
+    existing: set[str] = set()
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as csv_file:
+            reader = csv.DictReader(csv_file)
+            for row in reader:
+                value = row.get("input_file")
+                if value:
+                    existing.add(value)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"[metric_pipeline] Warning: could not read existing CSV {csv_path}: {exc}")
+    return existing
+
+
+def _remove_csv_rows_for_input_files(csv_path: str | Path, input_files: set[str]) -> int:
+    """Remove rows whose ``input_file`` is in ``input_files`` from a summary CSV.
+
+    Rewrites the CSV in place keeping every other row. Returns the number of rows
+    removed. Used by the "overwrite" existing-entry mode so a recomputed file ends
+    up with exactly one (fresh) row instead of a duplicate.
+    """
+    csv_path = Path(csv_path)
+    if not csv_path.exists() or csv_path.stat().st_size == 0 or not input_files:
+        return 0
+    with open(csv_path, newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        fieldnames = reader.fieldnames or METRICS_SUMMARY_CSV_FIELDNAMES
+        rows = list(reader)
+    kept = [row for row in rows if row.get("input_file") not in input_files]
+    removed = len(rows) - len(kept)
+    if removed == 0:
+        return 0
+    with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction="ignore", restval="")
+        writer.writeheader()
+        for row in kept:
+            writer.writerow(row)
+    return removed
+
+
+def _select_files_by_existing_entries(
+    npz_files: list[Path],
+    csv_output_path: str | Path,
+    existing_entry_mode: str,
+    *,
+    log_prefix: str,
+) -> list[Path]:
+    """Filter npz files based on whether they already have a row in the summary CSV.
+
+    - "skip":      drop files that already have a CSV row (process only new ones).
+    - "overwrite": keep all files, but first remove the existing rows of those that
+                   already have one so each ends up with a single fresh row.
+
+    Returns the list of files that should be (re)processed.
+    """
+    mode = str(existing_entry_mode).strip().lower()
+    if mode not in ("skip", "overwrite"):
+        raise ValueError(
+            f"existing_entry_mode must be 'skip' or 'overwrite', got {existing_entry_mode!r}"
+        )
+
+    existing_input_files = _read_existing_csv_input_files(csv_output_path)
+    if not existing_input_files:
+        return list(npz_files)
+
+    already_present = [f for f in npz_files if str(f) in existing_input_files]
+    if mode == "skip":
+        files_to_process = [f for f in npz_files if str(f) not in existing_input_files]
+        if already_present:
+            print(
+                f"{log_prefix} existing_entry_mode='skip': skipping "
+                f"{len(already_present)} file(s) already present in the CSV."
+            )
+        return files_to_process
+
+    # overwrite: process all files, but drop the stale rows of those already present
+    # so each recomputed file ends up with exactly one fresh row.
+    to_remove = {str(f) for f in already_present}
+    if to_remove:
+        removed = _remove_csv_rows_for_input_files(csv_output_path, to_remove)
+        print(
+            f"{log_prefix} existing_entry_mode='overwrite': removed {removed} existing "
+            f"row(s) for {len(to_remove)} file(s) to recompute."
+        )
+    return list(npz_files)
+
+
 def resample_signal(sig: np.ndarray, fs_from: float, fs_to: float) -> np.ndarray:
     """Resample 1D signal from fs_from to fs_to using linear interpolation.
 
@@ -1140,9 +1235,15 @@ def batch_evaluate_folder(
     plot_steps: bool = True,
     plot_bland_altman: bool = True,
     csv_output_path: str | Path | None = None,
-    overwrite_csv: bool = True,
+    overwrite_csv: bool = False,
+    existing_entry_mode: str = "overwrite",
 ) -> Dict[str, object]:
     """Run evaluate_instantaneous_hr_against_ground_truth for all archive files in `folder`.
+
+    ``existing_entry_mode`` controls files that already have a row in the aggregate
+    CSV: "skip" only processes files not yet in the CSV, while "overwrite" recomputes
+    them and replaces their existing row. Set ``overwrite_csv=True`` to wipe the whole
+    CSV before starting (then every file is processed fresh).
 
     For each found file, a subfolder named after the file stem is created (if not existing)
     and figures are saved inside that folder (the called function already saves into
@@ -1164,6 +1265,19 @@ def batch_evaluate_folder(
 
     results: dict[str, object] = {}
     files = sorted(folder.glob(pattern))
+    # Skip or overwrite files that already have a row in the aggregate CSV.
+    files = _select_files_by_existing_entries(
+        files,
+        csv_output_path,
+        existing_entry_mode,
+        log_prefix="[metric_pipeline] Batch:",
+    )
+    if not files:
+        print(
+            f"[metric_pipeline] Batch: nothing to process; all files already present "
+            f"in CSV (existing_entry_mode='{existing_entry_mode}')."
+        )
+        return results
     for f in files:
         print(f"[metric_pipeline] Batch: processing file: {f}")
         try:
@@ -1197,9 +1311,15 @@ def batch_evaluate_folder_structure(
     plot_steps: bool = True,
     plot_bland_altman: bool = True,
     csv_output_path: str | Path | None = None,
-    overwrite_csv: bool = True,
+    overwrite_csv: bool = False,
+    existing_entry_mode: str = "overwrite",
 ) -> Dict[str, object]:
     """Evaluate every npz under ``<root>/<approach>/<results_subdir>/**`` for each approach.
+
+    ``existing_entry_mode`` controls npz files that already have a row in the
+    aggregate CSV: "skip" only computes metrics for files not yet in the CSV, while
+    "overwrite" recomputes them and replaces their existing row. Set
+    ``overwrite_csv=True`` to wipe the whole CSV first (then every file is fresh).
 
     The expected layout is::
 
@@ -1242,8 +1362,22 @@ def batch_evaluate_folder_structure(
         print(f"[metric_pipeline] Structure batch: no '{pattern}' files found under any approach results dir in {root}")
         return results
 
-    print(f"[metric_pipeline] Structure batch: evaluating {len(npz_files)} file(s); aggregate CSV: {csv_output_path}")
-    for f in npz_files:
+    # Skip or overwrite npz files that already have a row in the aggregate CSV.
+    files_to_process = _select_files_by_existing_entries(
+        npz_files,
+        csv_output_path,
+        existing_entry_mode,
+        log_prefix="[metric_pipeline] Structure batch:",
+    )
+    if not files_to_process:
+        print(
+            f"[metric_pipeline] Structure batch: all {len(npz_files)} file(s) already "
+            f"present in CSV; nothing to do (existing_entry_mode='{existing_entry_mode}')."
+        )
+        return results
+
+    print(f"[metric_pipeline] Structure batch: evaluating {len(files_to_process)} of {len(npz_files)} file(s); aggregate CSV: {csv_output_path}")
+    for f in files_to_process:
         print(f"[metric_pipeline] Structure batch: processing file: {f}")
         try:
             out = evaluate_instantaneous_hr_against_ground_truth(
@@ -1271,7 +1405,13 @@ if __name__ == "__main__":
     #   "single"    -> evaluate one folder (all matching files in it) or one file, as before.
     #   "structure" -> walk <root>/{nair_et_al,yang_et_al,new_approach}/results/**/*.npz
     #                  and aggregate every npz's metrics into one CSV at the root.
-    RUN_MODE = "single"  # "single" or "structure"
+    RUN_MODE = "structure"  # "single" or "structure"
+
+    # For RUN_MODE == "structure": how to treat npz files that already have a row in
+    # the aggregate CSV.
+    #   "skip"      -> only compute metrics for npz files that are NOT yet in the CSV.
+    #   "overwrite" -> recompute every npz file and replace its existing CSV row.
+    EXISTING_ENTRY_MODE = "skip"  # "skip" or "overwrite"
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
@@ -1291,6 +1431,7 @@ if __name__ == "__main__":
                 tolerance_ms=HARD_CODED_TOLERANCE_MS,
                 plot_steps=HARD_CODED_PLOT_STEPS,
                 plot_bland_altman=HARD_CODED_PLOT_BA,
+                existing_entry_mode=EXISTING_ENTRY_MODE,
             )
         else:
             print(
