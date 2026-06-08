@@ -24,6 +24,7 @@ from src.approaches.yang_et_al.utils_ground_truth import (
 from src.approaches.yang_et_al.utils_random_baseline import run_random_baseline
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
+from src.approaches.new_approach.utils_pixels import maybe_split_single_roi_and_save_overlay
 
 CONFIGS_PATH = os.environ.get("YANG_CONFIG_PATH", "src/approaches/yang_et_al/configs_yang_et_al.yaml")
 PLOTS_SAVE_DIR = os.environ.get("YANG_PLOTS_SAVE_DIR", None)
@@ -63,6 +64,17 @@ print(f"APPLY_TRACKER_LANDMARK_DETECTION: {APPLY_TRACKER_LANDMARK_DETECTION}")
 print(f"THRESHOLD_VALUE: {THRESHOLD_VALUE}")
 print(f"PLOTS_SAVE_DIR: {PLOTS_SAVE_DIR}")
 
+# If exactly one landmark ROI from this map is used, it is split into a
+# rows x rows grid of sub-ROIs (each sub-ROI becomes its own graph building
+# block) and a sub-ROI overlay video + first-frame image are saved
+# (mirroring main_new_approach).
+SUBROI_GRID_ROWS_BY_ROI = {
+	"forehead": 8,
+	"left_forehead": 5,
+	"right_forehead": 5,
+	"glabella": 3,
+}
+
 # IMPORTANT: Each ROI represents one building block in the graph
 # If ROIs are detected with mediapipe, they have to be set accordingly (e.g. 16 ROIs for 16 building blocks)
 # If ROI is manually defined, manual_roi_split_enabled = True so the ROI is split in sub-ROIs
@@ -97,6 +109,18 @@ if APPLY_TRACKER_LANDMARK_DETECTION:
 else:
 	# Get face with mediapipe
 	roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
+
+
+# If a single ROI from SUBROI_GRID_ROWS_BY_ROI is used, split it into sub-ROIs so
+# each sub-ROI becomes its own graph building block; also save the sub-ROI overlay
+# video + first-frame image (as in main_new_approach).
+overlay_output_dir = PLOTS_SAVE_DIR or str(Path(project_root) / "saved_results" / "yang_et_al" / "plots")
+roi_pixel_data, _was_split_into_subrois = maybe_split_single_roi_and_save_overlay(
+	roi_pixel_data,
+	configs,
+	overlay_output_dir,
+	SUBROI_GRID_ROWS_BY_ROI,
+)
 
 
 # Calculate centroids of each ROI in each frame (change in place)

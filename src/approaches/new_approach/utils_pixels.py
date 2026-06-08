@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
@@ -118,6 +121,259 @@ def write_subrois_video(writer, n_video: int, source_frames: list[np.ndarray], c
 
     writer.release()
     print(f"Saved sub-ROI overlay video to: {video_path}")
+
+
+def split_roi_pixel_data_into_subrois(
+    roi_pixel_data: list[dict],
+    roi_name: str,
+    grid_rows: int,
+    grid_cols: int,
+) -> tuple[list[dict], list[str], list[np.ndarray]]:
+    """Split a single ROI in ``roi_pixel_data`` into a grid of sub-ROIs.
+
+    For every frame the ROI's pixels are assigned to ``grid_rows`` x ``grid_cols``
+    cells using that frame's own bounding box (the identical scheme used by
+    ``compute_subroi_means`` and the overlay video), so each sub-ROI carries its
+    own ``coords`` / ``adc_values`` / ``mean_value``. This lets approaches that
+    treat each ROI as a building block (Yang's spatio-temporal graph) or a
+    subregion (Nair's SVD) operate on the sub-ROIs of a single ROI.
+
+    Every frame dict contains all sub-ROI names (empty cells get empty coords and
+    a NaN mean), so the block/subregion count stays constant across frames. The
+    sub-ROIs are returned in row-major (cell) order so their index/name lines up
+    with the colors drawn by ``write_subrois_video``.
+
+    Returns:
+        new_roi_pixel_data: list (per frame) of {subroi_name: {"coords", "adc_values", "mean_value"}}
+        subroi_names: ordered list of sub-ROI names (length grid_rows*grid_cols)
+        coords_per_frame: list of the original ROI coords (np.ndarray (N, 2)) per frame, for the overlay video
+    """
+    if grid_rows <= 0 or grid_cols <= 0:
+        raise ValueError("grid_rows and grid_cols must be positive integers")
+
+    n_cells = grid_rows * grid_cols
+    # Row-major order: index == row * grid_cols + col == the cell index used by the overlay.
+    subroi_names = [
+        f"{roi_name}_r{row}c{col}"
+        for row in range(grid_rows)
+        for col in range(grid_cols)
+    ]
+
+    new_roi_pixel_data: list[dict] = []
+    coords_per_frame: list[np.ndarray] = []
+
+    for frame_data in roi_pixel_data:
+        # Default: every sub-ROI present but empty (keeps the count constant per frame).
+        frame_subrois = {
+            name: {"coords": [], "adc_values": [], "mean_value": np.nan}
+            for name in subroi_names
+        }
+
+        roi_info = frame_data.get(roi_name) if isinstance(frame_data, dict) else None
+        if roi_info is None:
+            new_roi_pixel_data.append(frame_subrois)
+            coords_per_frame.append(np.zeros((0, 2), dtype=int))
+            continue
+
+        coords = np.asarray(roi_info.get("coords", []), dtype=int)
+        if coords.size == 0:
+            coords = coords.reshape(0, 2)
+        elif coords.ndim != 2 or coords.shape[1] != 2:
+            coords = coords.reshape(-1, 2)
+        values = np.asarray(roi_info.get("adc_values", []), dtype=float)
+        coords_per_frame.append(coords)
+
+        if coords.shape[0] == 0 or values.size == 0:
+            new_roi_pixel_data.append(frame_subrois)
+            continue
+
+        xs = coords[:, 0]
+        ys = coords[:, 1]
+        x_min, x_max = int(xs.min()), int(xs.max())
+        y_min, y_max = int(ys.min()), int(ys.max())
+        x_span = max(x_max - x_min + 1, 1)
+        y_span = max(y_max - y_min + 1, 1)
+        col_idx = np.clip(((xs - x_min) * grid_cols) // x_span, 0, grid_cols - 1)
+        row_idx = np.clip(((ys - y_min) * grid_rows) // y_span, 0, grid_rows - 1)
+        cell_idx = row_idx * grid_cols + col_idx
+
+        for cell in range(n_cells):
+            sel = cell_idx == cell
+            if not np.any(sel):
+                continue
+            cell_coords = coords[sel]
+            cell_values = values[sel]
+            finite = np.isfinite(cell_values)
+            mean_value = float(np.mean(cell_values[finite])) if np.any(finite) else float("nan")
+            frame_subrois[subroi_names[cell]] = {
+                "coords": [(int(x), int(y)) for x, y in cell_coords],
+                "adc_values": cell_values.tolist(),
+                "mean_value": mean_value,
+            }
+
+        new_roi_pixel_data.append(frame_subrois)
+
+    return new_roi_pixel_data, subroi_names, coords_per_frame
+
+
+def load_overlay_source_frames(configs, src_start_frame: int, src_end_frame: int | None) -> list[np.ndarray]:
+    """Load the thermal source frames used to draw the sub-ROI overlay video.
+
+    Mirrors the loading logic in ``main_new_approach``: supports a single ``.npy``
+    stack, a directory of ``.asc`` files, or a directory of ``.gray`` frames,
+    restricted to ``[src_start_frame, src_end_frame)``. Imports the gray/asc
+    helpers lazily to avoid import cycles.
+    """
+    from src.approaches.new_approach.utils.utils_gray_files import sort_grayfiles_with_interpolations
+    from src.approaches.new_approach.utils.utils_landmark_detection import (
+        _asc_to_kelvin_x100,
+        _parse_asc_file,
+        load_gray_frame,
+    )
+
+    source_frames: list[np.ndarray] = []
+    gray_path = configs.path_gray_frames
+    if os.path.isfile(gray_path) and gray_path.endswith(".npy"):
+        stack = np.load(gray_path, allow_pickle=False)
+        end = src_end_frame if src_end_frame is not None else stack.shape[0]
+        source_frames = [stack[i] for i in range(src_start_frame, min(end, stack.shape[0]))]
+    elif os.path.isdir(gray_path):
+        files = [f for f in os.listdir(gray_path) if os.path.isfile(os.path.join(gray_path, f))]
+        ext = os.path.splitext(files[0])[1].lower() if files else ""
+        if ext == ".asc":
+            asc_paths = sorted(os.path.join(gray_path, f) for f in files if f.lower().endswith(".asc"))
+            end = src_end_frame if src_end_frame is not None else len(asc_paths)
+            for p in asc_paths[src_start_frame:end]:
+                fr = _parse_asc_file(p)
+                if getattr(configs, "asc_unit", None) == "kelvin":
+                    fr = _asc_to_kelvin_x100(fr)
+                source_frames.append(fr)
+        else:
+            _, gray_files = sort_grayfiles_with_interpolations(gray_path)
+            end = src_end_frame if src_end_frame is not None else len(gray_files)
+            for fname in gray_files[src_start_frame:end]:
+                source_frames.append(load_gray_frame(os.path.join(gray_path, fname)))
+    return source_frames
+
+
+def save_subroi_overlay_outputs(
+    source_frames: list[np.ndarray],
+    coords_per_frame: list[np.ndarray],
+    grid_rows: int,
+    grid_cols: int,
+    fps: float,
+    output_dir: str | Path,
+    n_frames: int | None = None,
+    video_name: str = "subrois_overlay.mp4",
+    image_name: str = "subrois_overlay_first_frame.png",
+) -> None:
+    """Write the sub-ROI overlay video and a first-frame PNG into ``output_dir``.
+
+    Reuses ``write_subrois_video`` (which also saves the first overlaid frame as a
+    PNG). Colors per sub-ROI follow the same tab10 colormap used in the plots.
+    """
+    if not source_frames:
+        print("[sub-ROI overlay] No source frames available; overlay video/image skipped.")
+        return
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    n_cells = grid_rows * grid_cols
+    subroi_cmap = plt.get_cmap("tab10")
+    cell_colors_bgr = [
+        tuple(int(round(c * 255)) for c in subroi_cmap(cell % 10)[:3][::-1]) for cell in range(n_cells)
+    ]
+
+    total = len(source_frames) if n_frames is None else min(len(source_frames), n_frames)
+    n_video = min(total, len(coords_per_frame))
+    frame_height, frame_width = source_frames[0].shape[:2]
+    video_path = str(output_dir / video_name)
+    first_frame_png_path = str(output_dir / image_name)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+
+    write_subrois_video(
+        writer=writer,
+        n_video=n_video,
+        source_frames=source_frames,
+        coords_per_frame=coords_per_frame,
+        video_path=video_path,
+        SUBROI_GRID_ROWS=grid_rows,
+        SUBROI_GRID_COLS=grid_cols,
+        n_cells=n_cells,
+        cell_colors_bgr=cell_colors_bgr,
+        frame_height=frame_height,
+        frame_width=frame_width,
+        first_frame_png_path=first_frame_png_path,
+    )
+
+
+def maybe_split_single_roi_and_save_overlay(
+    roi_pixel_data: list[dict],
+    configs,
+    output_dir: str | Path,
+    subroi_grid_by_roi: dict,
+) -> tuple[list[dict], bool]:
+    """Split a single ROI into sub-ROIs and save an overlay video + first-frame image.
+
+    If ``roi_pixel_data`` contains exactly one ROI and that ROI name is a key in
+    ``subroi_grid_by_roi``, the ROI is split into a ``rows x rows`` grid of
+    sub-ROIs (``rows`` taken from the mapping) so downstream approaches treat each
+    sub-ROI as its own block/subregion. The sub-ROI overlay video and a PNG of the
+    first overlaid frame are written to ``output_dir`` (mirroring main_new_approach).
+
+    Returns ``(roi_pixel_data, was_split)`` -- the (possibly replaced) data and a
+    flag indicating whether the split happened. When not applicable the input is
+    returned unchanged with ``was_split=False``.
+    """
+    if not roi_pixel_data:
+        return roi_pixel_data, False
+    roi_names = list(roi_pixel_data[0].keys())
+    if len(roi_names) != 1:
+        return roi_pixel_data, False
+
+    roi_name = roi_names[0]
+    grid_lookup = {str(k).strip().lower(): int(v) for k, v in dict(subroi_grid_by_roi).items()}
+    key = str(roi_name).strip().lower()
+    if key not in grid_lookup:
+        return roi_pixel_data, False
+
+    grid_rows = grid_lookup[key]
+    grid_cols = grid_rows
+    print(
+        f"[sub-ROI split] Single ROI '{roi_name}' is in the sub-ROI grid map; "
+        f"splitting into {grid_rows}x{grid_cols} ({grid_rows * grid_cols}) sub-ROIs."
+    )
+    new_data, _subroi_names, coords_per_frame = split_roi_pixel_data_into_subrois(
+        roi_pixel_data, roi_name, grid_rows, grid_cols
+    )
+
+    # Frame range used by the analysis (same as get_roi_data_pipeline).
+    fps = float(configs.fps)
+    timespan = getattr(configs, "timespan_signal_to_look_at", None)
+    if timespan is not None:
+        start_t, end_t = timespan
+        src_start_frame = int(float(start_t) * fps)
+        src_end_frame = int(float(end_t) * fps)
+    else:
+        src_start_frame = 0
+        src_end_frame = None
+
+    try:
+        source_frames = load_overlay_source_frames(configs, src_start_frame, src_end_frame)
+        save_subroi_overlay_outputs(
+            source_frames=source_frames,
+            coords_per_frame=coords_per_frame,
+            grid_rows=grid_rows,
+            grid_cols=grid_cols,
+            fps=fps,
+            output_dir=output_dir,
+            n_frames=len(new_data),
+        )
+    except Exception as exc:
+        print(f"[sub-ROI overlay] Failed to create overlay video/image: {exc}")
+
+    return new_data, True
 
 
 def plot_subroi_means(n_cells: int, subroi_means: np.ndarray, time_axis: np.ndarray, label: str, roi_dir: str, prefix: str, SUBROI_GRID_ROWS: int, SUBROI_GRID_COLS: int) -> None:

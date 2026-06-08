@@ -18,6 +18,7 @@ project_root = "/home/arbeit/Dokumente/master_thesis/"
 sys.path.insert(0, project_root)
 
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
+from src.approaches.new_approach.utils_pixels import maybe_split_single_roi_and_save_overlay
 from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 from src.approaches.yang_et_al.utils_ground_truth import (
 	load_ground_truth_signal,
@@ -62,6 +63,16 @@ print(f"NORMAL_HR_FREQ: {NORMAL_HR_FREQ}")
 print(f"ROI selection name: {getattr(configs, 'roi_name', None)}")
 print(f"ROI selection used_rois: {getattr(configs, 'used_rois', None)}")
 
+# If exactly one landmark ROI from this map is used, it is split into a
+# rows x rows grid of sub-ROIs (each sub-ROI becomes its own SVD subregion) and a
+# sub-ROI overlay video + first-frame image are saved (mirroring main_new_approach).
+SUBROI_GRID_ROWS_BY_ROI = {
+    "forehead": 8,
+    "left_forehead": 5,
+    "right_forehead": 5,
+    "glabella": 3,
+}
+
 def save_figure(fig: plt.Figure, filename: str) -> None:
     PLOTS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(PLOTS_OUTPUT_DIR / filename, dpi=200, bbox_inches="tight")
@@ -95,6 +106,17 @@ if APPLY_DLIB_LANDMARK_DETECTION:
 else:
     # Apply Facemesh landmark detection
     roi_pixel_data, _ = get_roi_data_pipeline(configs=configs)
+
+
+# If a single ROI from SUBROI_GRID_ROWS_BY_ROI is used, split it into sub-ROIs so
+# each sub-ROI becomes its own SVD subregion; also save the sub-ROI overlay video
+# + first-frame image (as in main_new_approach).
+roi_pixel_data, _was_split_into_subrois = maybe_split_single_roi_and_save_overlay(
+    roi_pixel_data,
+    configs,
+    str(PLOTS_OUTPUT_DIR),
+    SUBROI_GRID_ROWS_BY_ROI,
+)
 
 
 # Apply bandpass filter
