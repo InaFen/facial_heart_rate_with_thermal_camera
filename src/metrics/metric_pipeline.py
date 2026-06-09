@@ -22,6 +22,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import numpy as np
+import matplotlib
+
+# Use the non-interactive "Agg" backend: this module only saves figures to disk
+# (never displays them), so it must not try to open an X window. Running under
+# tmux/SSH the interactive backend connects to the forwarded X display
+# (e.g. localhost:10); when that SSH session detaches the X connection breaks with
+# "X connection to localhost:10 broken (explicit kill or shutdown)" and kills the
+# run. Forcing Agg removes the X dependency entirely. Set before importing pyplot.
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy import stats
 
