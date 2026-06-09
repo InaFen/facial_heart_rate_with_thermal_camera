@@ -63,6 +63,47 @@ DEFAULT_PATTERN = "*.npz"
 DEFAULT_PLOT_STEPS = True
 DEFAULT_PLOT_BLAND_ALTMAN = True
 
+# Algorithm used to detect R-peaks in the ECG ground-truth signal:
+#   "find_peaks" -> scipy.signal.find_peaks (the original behaviour, uses
+#                   PEAK_DISTANCE_GT / PEAK_PROMINENCE_GT).
+#   "staple"     -> STAPLE consensus of several QRS detectors
+#                   (src/metrics/staple_r_peaks.py); more robust on noisy or
+#                   pathological ECG. Requires the 'py-ecg-detectors' package.
+DEFAULT_GT_PEAK_METHOD = "find_peaks"
+
+
+def detect_ground_truth_peaks(
+    gt_segment: np.ndarray,
+    fs: float,
+    method: str = DEFAULT_GT_PEAK_METHOD,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Detect R-peaks in the ECG ground-truth segment using the chosen method.
+
+    ``method`` selects the algorithm:
+      * "find_peaks" -> ``scipy.signal.find_peaks`` via ``detect_peaks_in_signal``
+        (uses the module-level ``PEAK_DISTANCE_GT`` / ``PEAK_PROMINENCE_GT``).
+      * "staple"     -> the STAPLE consensus of several QRS detectors
+        (``src/metrics/staple_r_peaks.py``); more robust on noisy/pathological ECG.
+
+    Both branches return ``(peaks, peak_times)`` with peak sample indices into
+    ``gt_segment`` and times in seconds relative to the segment start (identical
+    convention), so the result is interchangeable at the call site.
+    """
+    normalized = str(method).strip().lower()
+    if normalized == "staple":
+        try:
+            from src.metrics.staple_r_peaks import detect_r_peaks_staple
+        except ModuleNotFoundError:  # pragma: no cover - allows running file directly
+            from staple_r_peaks import detect_r_peaks_staple  # type: ignore
+        return detect_r_peaks_staple(gt_segment, fs, min_distance_s=PEAK_DISTANCE_GT)
+    if normalized in ("find_peaks", "findpeaks", "scipy", ""):
+        return detect_peaks_in_signal(
+            gt_segment, fs, min_distance_s=PEAK_DISTANCE_GT, prominence=PEAK_PROMINENCE_GT
+        )
+    raise ValueError(
+        f"gt_peak_method must be 'find_peaks' or 'staple', got {method!r}."
+    )
+
 
 def instantaneous_hr_from_peak_times(peak_times: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Compute instantaneous HR (bpm) and timestamps from peak times.
@@ -842,6 +883,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
     plot_steps: bool = True,
     plot_bland_altman: bool = True,
     csv_output_path: str | Path | None = None,
+    gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
 ) -> Dict[str, object]:
     """Evaluate instantaneous HR using a single `.npy`/`.npz` file as input.
 
@@ -849,6 +891,10 @@ def evaluate_instantaneous_hr_against_ground_truth(
     (the same data written to ``00_metrics.json``) plus the path to this run's plot
     folder is appended to that CSV, so a batch can aggregate every npz file into a
     single table.
+
+    ``gt_peak_method`` selects how R-peaks are found in the ECG ground-truth
+    signal: "find_peaks" (scipy) or "staple" (STAPLE consensus of several QRS
+    detectors). The predicted-signal peaks are always found with find_peaks.
     """
     if not isinstance(results, (str, Path)):
         raise ValueError("This function only accepts a path to a saved .npy/.npz file as input.")
@@ -967,10 +1013,15 @@ def evaluate_instantaneous_hr_against_ground_truth(
     pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs_val, min_distance_s=PEAK_DISTANCE_SIGNAL, prominence=PEAK_PROMINENCE_SIGNAL)
     pred_peak_times = t[pred_peaks]
 
-    gt_peaks, gt_peak_times_rel = detect_peaks_in_signal(gt_segment, gt_fs_val, min_distance_s=PEAK_DISTANCE_GT, prominence=PEAK_PROMINENCE_GT)
+    gt_peaks, gt_peak_times_rel = detect_ground_truth_peaks(
+        gt_segment, gt_fs_val, method=gt_peak_method
+    )
     gt_peak_times = gt_peak_times_rel
 
-    print(f"[metric_pipeline] Detected peaks - predicted: {pred_peaks.size}, ground-truth: {gt_peaks.size}")
+    print(
+        f"[metric_pipeline] Detected peaks (gt method='{gt_peak_method}') - "
+        f"predicted: {pred_peaks.size}, ground-truth: {gt_peaks.size}"
+    )
 
     # Instantaneous HR
     pred_ihr, pred_ihr_times = instantaneous_hr_from_peak_times(pred_peak_times)
@@ -1175,6 +1226,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
     output_data = {
         "input_file": str(signal_path),
+        "gt_peak_method": str(gt_peak_method),
         "tolerance_ms": tolerance_ms,
         "ground_truth_fs": float(gt_fs_val),
         "predicted_fs": float(predicted_fs_val),
@@ -1246,6 +1298,7 @@ def batch_evaluate_folder(
     csv_output_path: str | Path | None = None,
     overwrite_csv: bool = False,
     existing_entry_mode: str = "overwrite",
+    gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
 ) -> Dict[str, object]:
     """Run evaluate_instantaneous_hr_against_ground_truth for all archive files in `folder`.
 
@@ -1297,6 +1350,7 @@ def batch_evaluate_folder(
                 plot_steps=plot_steps,
                 plot_bland_altman=plot_bland_altman,
                 csv_output_path=csv_output_path,
+                gt_peak_method=gt_peak_method,
             )
             results[str(f)] = out
             of = out.get("output_folder", "N/A")
@@ -1322,6 +1376,7 @@ def batch_evaluate_folder_structure(
     csv_output_path: str | Path | None = None,
     overwrite_csv: bool = False,
     existing_entry_mode: str = "overwrite",
+    gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
 ) -> Dict[str, object]:
     """Evaluate every npz under ``<root>/<approach>/<results_subdir>/**`` for each approach.
 
@@ -1396,6 +1451,7 @@ def batch_evaluate_folder_structure(
                 plot_steps=plot_steps,
                 plot_bland_altman=plot_bland_altman,
                 csv_output_path=csv_output_path,
+                gt_peak_method=gt_peak_method,
             )
             results[str(f)] = out
             of = out.get("output_folder", "N/A")
@@ -1422,6 +1478,12 @@ if __name__ == "__main__":
     #   "overwrite" -> recompute every npz file and replace its existing CSV row.
     EXISTING_ENTRY_MODE = "overwrite"  # "skip" or "overwrite"
 
+    # Algorithm used to detect R-peaks in the ECG ground-truth signal:
+    #   "find_peaks" -> scipy.signal.find_peaks (original behaviour).
+    #   "staple"     -> STAPLE consensus of several QRS detectors (more robust on
+    #                   noisy/pathological ECG); needs the 'py-ecg-detectors' package.
+    GT_PEAK_METHOD = "staple"  # "find_peaks" or "staple"
+
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
     HARD_CODED_FLIP = False
@@ -1441,6 +1503,7 @@ if __name__ == "__main__":
                 plot_steps=HARD_CODED_PLOT_STEPS,
                 plot_bland_altman=HARD_CODED_PLOT_BA,
                 existing_entry_mode=EXISTING_ENTRY_MODE,
+                gt_peak_method=GT_PEAK_METHOD,
             )
         else:
             print(
@@ -1460,6 +1523,7 @@ if __name__ == "__main__":
                     tolerance_ms=HARD_CODED_TOLERANCE_MS,
                     plot_steps=HARD_CODED_PLOT_STEPS,
                     plot_bland_altman=HARD_CODED_PLOT_BA,
+                    gt_peak_method=GT_PEAK_METHOD,
                 )
             elif HARD_CODED_PATH.is_file():
                 evaluate_instantaneous_hr_against_ground_truth(
@@ -1469,6 +1533,7 @@ if __name__ == "__main__":
                     plot_steps=HARD_CODED_PLOT_STEPS,
                     plot_bland_altman=HARD_CODED_PLOT_BA,
                     csv_output_path=HARD_CODED_PATH.parent / "all_npz_metrics.csv",
+                    gt_peak_method=GT_PEAK_METHOD,
                 )
         else:
             print(f"Hard-coded path not found: {HARD_CODED_PATH}. Update the path in the script to point to your .npz folder or file.")
