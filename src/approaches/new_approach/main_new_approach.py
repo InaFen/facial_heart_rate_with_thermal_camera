@@ -26,7 +26,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     _parse_asc_file,
     load_gray_frame,
 )
-from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi_by_hr_band_power
+from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi_by_hr_band_power, save_subroi_overlay_with_highlight, compute_subroi_location_info
 from src.approaches.yang_et_al.utils_ground_truth import (
 	load_ground_truth_signal,
 	get_ground_truth_segment
@@ -124,6 +124,9 @@ else:
 
 
 # --- Process every selected ROI --------------------------------------------
+# Location id of the selected (best) sub-ROI of the last processed ROI; saved
+# into the result metadata so it can be compared across persons/recordings.
+best_subroi_info = None
 for roi_name in roi_names:
     print(f"Processing ROI: {roi_name}")
 
@@ -379,6 +382,33 @@ for roi_name in roi_names:
     fig.savefig(roi_dir / f"selected_subroi_signal.png", dpi=200, bbox_inches="tight")
     plt.close()
 
+    # Mark which sub-ROI was selected ----------------------------------------
+    # 1) Save a face overlay (sub-ROI grid) with the chosen sub-ROI highlighted,
+    #    so it is visually clear which sub-ROI produced the final signal.
+    # 2) Save the sub-ROI's location id (index/row/col + normalized center) so it
+    #    can be compared across persons/recordings (same ROI -> same index means
+    #    the same sub-ROI was used; the normalized center is comparable even
+    #    across different grid sizes).
+    best_subroi_info = compute_subroi_location_info(
+        best_idx, SUBROI_GRID_ROWS, SUBROI_GRID_COLS, roi_name=roi_name
+    )
+    best_subroi_info["sqi_hr_band_power_ratio"] = float(ratios[best_idx])
+    with open(roi_dir / "selected_subroi_location.json", "w", encoding="utf-8") as jf:
+        json.dump(best_subroi_info, jf, ensure_ascii=False, indent=2)
+    print(f"Selected sub-ROI location: {best_subroi_info}")
+
+    if source_frames:
+        save_subroi_overlay_with_highlight(
+            source_frame=source_frames[0],
+            coords=coords_per_frame[0],
+            grid_rows=SUBROI_GRID_ROWS,
+            grid_cols=SUBROI_GRID_COLS,
+            n_cells=n_cells,
+            cell_colors_bgr=cell_colors_bgr,
+            output_path=roi_dir / "selected_subroi_overlay.png",
+            highlight_cell=best_idx,
+        )
+
 
 print("Own pipeline done.")
 
@@ -437,6 +467,7 @@ try:
         "heart_rate_estimate_bpm": None,
         "fps": float(configs.fps),
         "fps_ground_truth": float(ground_truth_fs) if "ground_truth_fs" in globals() else None,
+        "best_subroi_location": best_subroi_info,
     }
 
     if "ground_truth_segment" in globals():

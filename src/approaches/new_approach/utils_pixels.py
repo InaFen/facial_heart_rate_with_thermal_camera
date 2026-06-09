@@ -49,12 +49,19 @@ def draw_subrois_on_frame(
     cell_colors_bgr: list[tuple[int, int, int]],
     frame_height: int,
     frame_width: int,
+    highlight_cell: int | None = None,
+    highlight_color_bgr: tuple[int, int, int] = (255, 255, 255),
 ) -> np.ndarray:
     """Render a single grayscale source frame with the sub-ROI grid overlay.
 
     Returns a BGR uint8 image: the contrast-normalised frame with each sub-ROI
     filled in a translucent distinct color and outlined. Used both for the
     overlay video (per frame) and for the saved first-frame PNG.
+
+    If ``highlight_cell`` is given, that sub-ROI (row-major index
+    ``row * SUBROI_GRID_COLS + col``) is emphasised with a thicker outline in
+    ``highlight_color_bgr`` plus its index label, so it is clearly visible which
+    sub-ROI was selected (e.g. the one chosen for heart-rate estimation).
     """
     vmin, vmax = np.percentile(frame, [1, 99])
     frame_clipped = np.clip(frame, vmin, vmax)
@@ -96,6 +103,29 @@ def draw_subrois_on_frame(
             contours, _ = cv2.findContours(cell_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             cv2.drawContours(frame_bgr, contours, -1, cell_colors_bgr[cell], 1)
 
+        # Emphasize the selected sub-ROI (e.g. the one chosen for HR) so it is
+        # clearly visible which sub-ROI was used: a thicker, distinct outline
+        # plus its index label near the cell centroid.
+        if highlight_cell is not None and 0 <= int(highlight_cell) < n_cells:
+            sel = (cell_idx == int(highlight_cell)) & in_bounds
+            if np.any(sel):
+                cell_mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+                cell_mask[ys[sel], xs[sel]] = 255
+                contours, _ = cv2.findContours(cell_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(frame_bgr, contours, -1, highlight_color_bgr, 2)
+                label_x = int(round(float(np.mean(xs[sel]))))
+                label_y = int(round(float(np.mean(ys[sel]))))
+                cv2.putText(
+                    frame_bgr,
+                    str(int(highlight_cell)),
+                    (label_x, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4,
+                    highlight_color_bgr,
+                    1,
+                    cv2.LINE_AA,
+                )
+
     return frame_bgr
 
 
@@ -121,6 +151,84 @@ def write_subrois_video(writer, n_video: int, source_frames: list[np.ndarray], c
 
     writer.release()
     print(f"Saved sub-ROI overlay video to: {video_path}")
+
+
+def compute_subroi_location_info(
+    best_idx: int,
+    grid_rows: int,
+    grid_cols: int,
+    roi_name: str | None = None,
+) -> dict:
+    """Describe a selected sub-ROI's location in a person-comparable way.
+
+    The sub-ROI grid is built per frame from the ROI's own bounding box with
+    row 0 = top (min y) and col 0 = left (min x), so the same (row, col) refers
+    to the same relative location for everyone. Returns:
+
+    - ``best_subroi_index``: row-major index (``row * grid_cols + col``);
+      directly comparable across persons for a fixed ROI/grid size.
+    - ``row`` / ``col`` and the grid dimensions.
+    - ``row_normalized`` / ``col_normalized``: the sub-ROI's fractional center
+      within the ROI bounding box in [0, 1]; comparable across persons AND across
+      different grid sizes (e.g. forehead 8x8 vs glabella 3x3).
+    - ``subroi_name`` (when ``roi_name`` is given), matching the naming used by
+      ``split_roi_pixel_data_into_subrois`` (``{roi_name}_r{row}c{col}``).
+    """
+    best_idx = int(best_idx)
+    grid_rows = int(grid_rows)
+    grid_cols = int(grid_cols)
+    row = best_idx // grid_cols
+    col = best_idx % grid_cols
+    info = {
+        "best_subroi_index": best_idx,
+        "grid_rows": grid_rows,
+        "grid_cols": grid_cols,
+        "n_subrois": grid_rows * grid_cols,
+        "row": int(row),
+        "col": int(col),
+        "row_normalized": float((row + 0.5) / grid_rows) if grid_rows > 0 else None,
+        "col_normalized": float((col + 0.5) / grid_cols) if grid_cols > 0 else None,
+    }
+    if roi_name is not None:
+        info["roi_name"] = str(roi_name)
+        info["subroi_name"] = f"{roi_name}_r{int(row)}c{int(col)}"
+    return info
+
+
+def save_subroi_overlay_with_highlight(
+    source_frame: np.ndarray,
+    coords: np.ndarray,
+    grid_rows: int,
+    grid_cols: int,
+    n_cells: int,
+    cell_colors_bgr: list[tuple[int, int, int]],
+    output_path: str | Path,
+    highlight_cell: int,
+    highlight_color_bgr: tuple[int, int, int] = (255, 255, 255),
+) -> str:
+    """Save a single first-frame sub-ROI overlay PNG with one sub-ROI highlighted.
+
+    Mirrors the per-frame overlay drawn for the video, but marks ``highlight_cell``
+    (the selected sub-ROI) with a thick outline + label so it is obvious which
+    sub-ROI was used. Returns the written path.
+    """
+    frame_height, frame_width = source_frame.shape[:2]
+    image = draw_subrois_on_frame(
+        source_frame,
+        np.asarray(coords),
+        grid_rows,
+        grid_cols,
+        n_cells,
+        cell_colors_bgr,
+        frame_height,
+        frame_width,
+        highlight_cell=highlight_cell,
+        highlight_color_bgr=highlight_color_bgr,
+    )
+    output_path = str(output_path)
+    cv2.imwrite(output_path, image)
+    print(f"Saved selected sub-ROI overlay (highlight={highlight_cell}) to: {output_path}")
+    return output_path
 
 
 def split_roi_pixel_data_into_subrois(
