@@ -107,8 +107,42 @@ NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI = {
 }
 
 
+# Manual ROI masks are cached here and shared across pipelines, so the SAME video's
+# ROI is drawn only once instead of being re-drawn for every pipeline. The cache key
+# is (camera, recording, roi_name, mode) and deliberately excludes the pipeline: the
+# drawn mask depends only on the recording's frames, and frame flip/geometry are set
+# per-camera (identical across pipelines). The first run for a recording draws and
+# saves the mask; later runs (other pipelines / re-runs) load it and skip drawing.
+MANUAL_ROI_MASK_CACHE_DIR = PROJECT_ROOT / "saved_results" / "manual_roi_masks"
+
+# Shared cache paths whose manual ROI has already been (re)drawn during THIS batch
+# process. Used so an "overwrite" run still asks the user to redraw each video's ROI
+# only ONCE and then reuses that fresh mask across the remaining pipelines.
+_MANUAL_ROI_MASKS_REDRAWN_THIS_RUN: set[str] = set()
+
+
 def sanitize_name(value: str) -> str:
 	return re.sub(r"[^A-Za-z0-9_.-]", "_", value.strip())
+
+
+def shared_manual_roi_mask_path(
+	camera: str | None,
+	recording_path: Path,
+	roi_name: str,
+	mode: str,
+) -> Path:
+	"""Return the pipeline-independent cache path for a recording's manual ROI mask.
+
+	Keyed by camera / recording / roi_name / drawing mode (never the pipeline), so
+	yang, nair and new all share -- and therefore reuse -- a single drawn mask for
+	the same video.
+	"""
+	camera_dir = sanitize_name(camera or "unknown_camera")
+	file_name = (
+		f"{sanitize_name(recording_path.stem)}__{sanitize_name(roi_name)}"
+		f"__{sanitize_name(mode)}.npy"
+	)
+	return MANUAL_ROI_MASK_CACHE_DIR / camera_dir / file_name
 
 
 def write_batch_report(
@@ -230,6 +264,8 @@ def build_row_config(
 	manual_roi_split_enabled: bool = False,
 	manual_roi_subroi_grid: list[int] | None = None,
 	manual_roi_selection_colormap: bool = True,
+	reuse_manual_roi_masks: bool = True,
+	overwrite_manual_roi_masks: bool = False,
 ) -> Path:
 	recording_path = Path(row["recording_path"])
 	base_path = PROJECT_ROOT
@@ -267,7 +303,7 @@ def build_row_config(
 
 	# Manual ROI selection (enabled when the roi_name contains "manual"). The single
 	# manual ROI is named after roi_name and is optionally split into a grid of
-	# sub-ROIs. The drawn mask is persisted in the run dir.
+	# sub-ROIs.
 	if manual_roi_enabled:
 		config["processing"]["manual_roi_enabled"] = True
 		config["processing"]["manual_roi_split_enabled"] = bool(manual_roi_split_enabled)
@@ -275,8 +311,36 @@ def build_row_config(
 		config["processing"]["manual_roi_modes"] = [manual_roi_mode]
 		config["processing"]["manual_roi_subroi_grid"] = list(manual_roi_subroi_grid or [3, 3])
 		config["processing"]["manual_roi_selection_colormap"] = bool(manual_roi_selection_colormap)
-		config["processing"]["manual_roi_mask_save_paths"] = [str(run_dir / f"manual_roi_mask_{sanitize_name(roi_name)}.npy")]
-		config["processing"]["manual_roi_mask_load_paths"] = [None]
+		if reuse_manual_roi_masks:
+			# Share one drawn mask across all pipelines for this recording: save it to
+			# a pipeline-independent cache and, whenever it already exists (drawn by an
+			# earlier pipeline/run), load it so the interactive drawing is skipped.
+			shared_mask_path = shared_manual_roi_mask_path(camera, recording_path, roi_name, manual_roi_mode)
+			shared_mask_path.parent.mkdir(parents=True, exist_ok=True)
+			config["processing"]["manual_roi_mask_save_paths"] = [str(shared_mask_path)]
+			shared_mask_key = str(shared_mask_path)
+			# "overwrite" forces a fresh user-drawn ROI even when a cached mask already
+			# exists on disk -- but only ONCE per video this run: after the first
+			# pipeline redraws (overwriting the cache), the remaining pipelines reuse it
+			# via _MANUAL_ROI_MASKS_REDRAWN_THIS_RUN.
+			force_redraw = (
+				overwrite_manual_roi_masks
+				and shared_mask_key not in _MANUAL_ROI_MASKS_REDRAWN_THIS_RUN
+			)
+			if force_redraw:
+				config["processing"]["manual_roi_mask_load_paths"] = [None]
+				_MANUAL_ROI_MASKS_REDRAWN_THIS_RUN.add(shared_mask_key)
+				print(f"Overwrite: will redraw manual ROI and overwrite cache at: {shared_mask_path}")
+			elif shared_mask_path.exists():
+				config["processing"]["manual_roi_mask_load_paths"] = [shared_mask_key]
+				print(f"Reusing cached manual ROI mask (no re-draw): {shared_mask_path}")
+			else:
+				config["processing"]["manual_roi_mask_load_paths"] = [None]
+				print(f"Will draw manual ROI once and cache it at: {shared_mask_path}")
+		else:
+			# Per-run mask (previous behaviour): draw the ROI fresh for every run.
+			config["processing"]["manual_roi_mask_save_paths"] = [str(run_dir / f"manual_roi_mask_{sanitize_name(roi_name)}.npy")]
+			config["processing"]["manual_roi_mask_load_paths"] = [None]
 	else:
 		config["processing"]["manual_roi_enabled"] = False
 
@@ -451,6 +515,8 @@ def run_combination(
 	manual_roi_subroi_grid: list[int],
 	manual_roi_selection_colormap: bool,
 	manual_roi_backend: str,
+	reuse_manual_roi_masks: bool = True,
+	overwrite_manual_roi_masks: bool = False,
 ) -> tuple[list[tuple[str, str, str]], list[str], int]:
 	"""Run a single (pipeline, camera, roi_name/used_rois) combination.
 
@@ -569,6 +635,8 @@ def run_combination(
 				manual_roi_split_enabled=manual_roi_split_enabled,
 				manual_roi_subroi_grid=manual_roi_subroi_grid,
 				manual_roi_selection_colormap=manual_roi_selection_colormap,
+				reuse_manual_roi_masks=reuse_manual_roi_masks,
+				overwrite_manual_roi_masks=overwrite_manual_roi_masks,
 			)
 			print(f"[{index}/{len(face_rows)}] Running {run_name}")
 			plots_save_dir = (run_dir / "plots") if save_plots else None
@@ -628,7 +696,19 @@ def main() -> int:
 	manual_roi_subroi_grid = [3, 3]        # [rows, cols] used when split is enabled
 	manual_roi_selection_colormap = True   # apply a colormap to the drawing frame
 	manual_roi_backend = "browser"         # browser | cv2 | auto
+	# Draw each video's manual ROI only ONCE and reuse it across all pipelines (and
+	# across re-runs): the mask is cached per (camera, recording, roi_name, mode) in
+	# saved_results/manual_roi_masks. Set False to draw a fresh ROI for every run.
+	reuse_manual_roi_masks = True
+	# Force the user to redraw the manual ROI even when a cached mask already exists
+	# (the fresh drawing overwrites the cache). Still redrawn only ONCE per video per
+	# run, then reused across the remaining pipelines. False = reuse existing caches.
+	overwrite_manual_roi_masks = False
 	# ===== END CONFIGURATION =====
+
+	# A redraw triggered by overwrite_manual_roi_masks should happen only once per
+	# video for this run; reset the per-run tracker before processing combinations.
+	_MANUAL_ROI_MASKS_REDRAWN_THIS_RUN.clear()
 
 	# Allow single values instead of lists for convenience.
 	if isinstance(pipelines, str):
@@ -699,6 +779,8 @@ def main() -> int:
 			manual_roi_subroi_grid=manual_roi_subroi_grid,
 			manual_roi_selection_colormap=manual_roi_selection_colormap,
 			manual_roi_backend=manual_roi_backend,
+			reuse_manual_roi_masks=reuse_manual_roi_masks,
+			overwrite_manual_roi_masks=overwrite_manual_roi_masks,
 		)
 		all_failures.extend(failures)
 		all_successful_runs.extend(successful_runs)
