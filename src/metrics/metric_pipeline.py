@@ -57,6 +57,23 @@ PEAK_DISTANCE_SIGNAL = 0.01#int(max(1, gt_fs_val * 0.01))
 PEAK_DISTANCE_GT = 0.5 # 0.5 seems to work well
 PEAK_PROMINENCE_GT = 1.0 # 1.0 seems to work well
 
+# A few mwir ECG ground-truth recordings need the default find_peaks settings
+# above relaxed: ``Ina_20_4_3`` under-detects with prominence=1.0, and
+# ``Julian_31_03_2`` stores its ECG on a tiny (~0.002) amplitude scale where
+# prominence=1.0 finds NOTHING. For the recordings listed in
+# ``RELAXED_GT_PATH_FRAGMENTS`` the very relaxed settings below are used instead
+# (only when method="find_peaks"). ``RELAXED_PEAK_PROMINENCE_GT = None`` drops the
+# prominence requirement entirely, which is the only value that works across both
+# amplitude scales; set it to a small number instead if you prefer.
+RELAXED_PEAK_DISTANCE_GT = 0.25  # allow closer beats (up to ~240 bpm)
+RELAXED_PEAK_PROMINENCE_GT = None  # no prominence requirement (most relaxed)
+# Path fragments (matched case-insensitively, slash-agnostically, against the npz
+# path) that switch find_peaks to the relaxed settings above.
+RELAXED_GT_PATH_FRAGMENTS = (
+    "mwir/Ina_20_4_3_thermal_data_all_frames",
+    "mwir/Julian_31_03_2_Ascii_thermal_data_all_frames",
+)
+
 # Default evaluation parameters
 DEFAULT_TOLERANCE_MS = 500.0
 DEFAULT_PATTERN = "*.npz"
@@ -72,10 +89,25 @@ DEFAULT_PLOT_BLAND_ALTMAN = True
 DEFAULT_GT_PEAK_METHOD = "find_peaks"
 
 
+def _gt_path_needs_relaxed_find_peaks(source_path: str | Path | None) -> bool:
+    """Return True if ``source_path`` is a recording needing relaxed find_peaks.
+
+    A few mwir ECG ground-truth recordings (see ``RELAXED_GT_PATH_FRAGMENTS``)
+    have an atypical amplitude scale / weak R-peaks, so the default
+    ``PEAK_DISTANCE_GT`` / ``PEAK_PROMINENCE_GT`` under-detect their beats. The
+    match is case-insensitive and slash-agnostic.
+    """
+    if source_path is None:
+        return False
+    normalized_path = str(source_path).replace("\\", "/").lower()
+    return any(fragment.lower() in normalized_path for fragment in RELAXED_GT_PATH_FRAGMENTS)
+
+
 def detect_ground_truth_peaks(
     gt_segment: np.ndarray,
     fs: float,
     method: str = DEFAULT_GT_PEAK_METHOD,
+    source_path: str | Path | None = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Detect R-peaks in the ECG ground-truth segment using the chosen method.
 
@@ -84,6 +116,11 @@ def detect_ground_truth_peaks(
         (uses the module-level ``PEAK_DISTANCE_GT`` / ``PEAK_PROMINENCE_GT``).
       * "staple"     -> the STAPLE consensus of several QRS detectors
         (``src/metrics/staple_r_peaks.py``); more robust on noisy/pathological ECG.
+
+    ``source_path`` is the path of the npz/recording being evaluated. When
+    ``method="find_peaks"`` and it matches one of ``RELAXED_GT_PATH_FRAGMENTS``,
+    the very relaxed ``RELAXED_PEAK_DISTANCE_GT`` / ``RELAXED_PEAK_PROMINENCE_GT``
+    are used instead (a few mwir recordings whose ECG the defaults under-detect).
 
     Both branches return ``(peaks, peak_times)`` with peak sample indices into
     ``gt_segment`` and times in seconds relative to the segment start (identical
@@ -97,8 +134,17 @@ def detect_ground_truth_peaks(
             from staple_r_peaks import detect_r_peaks_staple  # type: ignore
         return detect_r_peaks_staple(gt_segment, fs, min_distance_s=PEAK_DISTANCE_GT)
     if normalized in ("find_peaks", "findpeaks", "scipy", ""):
+        min_distance_s = PEAK_DISTANCE_GT
+        prominence = PEAK_PROMINENCE_GT
+        if _gt_path_needs_relaxed_find_peaks(source_path):
+            min_distance_s = RELAXED_PEAK_DISTANCE_GT
+            prominence = RELAXED_PEAK_PROMINENCE_GT
+            print(
+                f"[metric_pipeline] Relaxed find_peaks GT settings "
+                f"(min_distance_s={min_distance_s}, prominence={prominence}) for: {source_path}"
+            )
         return detect_peaks_in_signal(
-            gt_segment, fs, min_distance_s=PEAK_DISTANCE_GT, prominence=PEAK_PROMINENCE_GT
+            gt_segment, fs, min_distance_s=min_distance_s, prominence=prominence
         )
     raise ValueError(
         f"gt_peak_method must be 'find_peaks' or 'staple', got {method!r}."
@@ -1014,7 +1060,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
     pred_peak_times = t[pred_peaks]
 
     gt_peaks, gt_peak_times_rel = detect_ground_truth_peaks(
-        gt_segment, gt_fs_val, method=gt_peak_method
+        gt_segment, gt_fs_val, method=gt_peak_method, source_path=signal_path
     )
     gt_peak_times = gt_peak_times_rel
 
@@ -1482,7 +1528,7 @@ if __name__ == "__main__":
     #   "find_peaks" -> scipy.signal.find_peaks (original behaviour).
     #   "staple"     -> STAPLE consensus of several QRS detectors (more robust on
     #                   noisy/pathological ECG); needs the 'py-ecg-detectors' package.
-    GT_PEAK_METHOD = "staple"  # "find_peaks" or "staple"
+    GT_PEAK_METHOD = "find_peaks"  # "find_peaks" or "staple"
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
