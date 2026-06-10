@@ -100,9 +100,9 @@ NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA = {
 # (single-side forehead, glabella). ROI names not listed fall back to the
 # in-script default. Passed via NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI (JSON).
 NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI = {
-	"forehead": 8,
-	"left_forehead": 5,
-	"right_forehead": 5,
+	"forehead": 5,
+	"left_forehead": 4,
+	"right_forehead": 4,
 	"glabella": 3,
 	"manual_rectangle": 2,
 }
@@ -675,18 +675,18 @@ def main() -> int:
 	# ===== CONFIGURATION (edit these variables) =====
 	# The batch runs for every combination of pipeline x camera x ROI config below.
 	# Put a single entry in a list to run just one (previous behaviour).
-	pipelines = ["nair"]              # any of "yang", "nair", "new"
+	pipelines = ["new"]              # any of "yang", "nair", "new"
 	cameras = ["lepton", "vario", "mwir"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
 		#{"roi_name": "tracker", "used_rois": ["forehead"]},
 		#{"roi_name": "dlib", "used_rois": ["forehead"]},
-		#{"roi_name": "forehead", "used_rois": ["forehead"]},
-		#{"roi_name": "glabella", "used_rois": ["glabella"]},
-		#{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
-		#{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
-		#{"roi_name": "whole_face", "used_rois": ["whole_face"]},
-		{"roi_name": "manual_rectangle", "used_rois": ["forehead"]},
+		{"roi_name": "forehead", "used_rois": ["forehead"]},
+		{"roi_name": "glabella", "used_rois": ["glabella"]},
+		{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
+		{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
+		{"roi_name": "whole_face", "used_rois": ["whole_face"]},
+		#{"roi_name": "manual_rectangle", "used_rois": ["forehead"]},
 	]
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute
