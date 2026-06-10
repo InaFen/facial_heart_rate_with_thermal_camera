@@ -71,6 +71,7 @@ SUBROI_GRID_ROWS_BY_ROI = {
     "left_forehead": 2,
     "right_forehead": 2,
     "glabella": 2,
+    "manual_rectangle": 2
 }
 
 def save_figure(fig: plt.Figure, filename: str) -> None:
@@ -78,23 +79,31 @@ def save_figure(fig: plt.Figure, filename: str) -> None:
     fig.savefig(PLOTS_OUTPUT_DIR / filename, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
-if not getattr(configs, "used_rois", None):
-    raise ValueError("configs.used_rois must be defined in configs_nair_et_al.yaml, similar to the Yang-style YAML.")
-# ROI landmark definitions live in the shared file
-# `src/approaches/new_approach/roi_landmarks_options.yaml` (merged with any inline
-# configs.roi_landmarks_options). Verify the requested ROIs resolve.
-from src.approaches.new_approach.pipelines.get_roi_data import (
-    get_roi_landmarks_options,
-    select_roi_landmarks,
-)
-_roi_options = get_roi_landmarks_options(configs)
-if not _roi_options:
-    raise ValueError(
-        "No ROI landmark definitions found. Define them in the shared file "
-        "'src/approaches/new_approach/roi_landmarks_options.yaml' (or inline in configs_nair_et_al.yaml)."
+# A manual ROI is drawn by the user on the frame, so the landmark-based
+# `used_rois` selection does not apply (run_batch leaves used_rois=None for manual
+# runs). Only require/validate used_rois + landmark options when NOT using a manual
+# ROI; otherwise the ROI comes from the drawn mask and these checks are skipped.
+manual_roi_enabled = bool(getattr(configs, "manual_roi_enabled", False))
+if not manual_roi_enabled:
+    if not getattr(configs, "used_rois", None):
+        raise ValueError("configs.used_rois must be defined in configs_nair_et_al.yaml, similar to the Yang-style YAML.")
+    # ROI landmark definitions live in the shared file
+    # `src/approaches/new_approach/roi_landmarks_options.yaml` (merged with any inline
+    # configs.roi_landmarks_options). Verify the requested ROIs resolve.
+    from src.approaches.new_approach.pipelines.get_roi_data import (
+        get_roi_landmarks_options,
+        select_roi_landmarks,
     )
-# Raises if any name in used_rois is unknown.
-select_roi_landmarks(configs.used_rois, _roi_options)
+    _roi_options = get_roi_landmarks_options(configs)
+    if not _roi_options:
+        raise ValueError(
+            "No ROI landmark definitions found. Define them in the shared file "
+            "'src/approaches/new_approach/roi_landmarks_options.yaml' (or inline in configs_nair_et_al.yaml)."
+        )
+    # Raises if any name in used_rois is unknown.
+    select_roi_landmarks(configs.used_rois, _roi_options)
+else:
+    print("[nair] Manual ROI enabled: skipping landmark-based used_rois validation.")
 
 ############
 # Preprocessing: Landmark detection & denoising 

@@ -73,6 +73,7 @@ SUBROI_GRID_ROWS_BY_ROI = {
 	"left_forehead": 2,
 	"right_forehead": 2,
 	"glabella": 2,
+	"manual_rectangle": 2
 }
 
 # IMPORTANT: Each ROI represents one building block in the graph
