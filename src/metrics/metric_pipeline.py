@@ -52,7 +52,13 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
     )
 
 # Global defaults (previously set inside __main__); make available to all functions
-PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # 
+PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # absolute floor for the predicted-signal peak prominence
+# The predicted-signal peak prominence is taken as AT LEAST this fraction of the
+# signal's standard deviation, so the threshold scales with each signal's amplitude
+# (PEAK_PROMINENCE_SIGNAL above is just an absolute floor):
+#   effective prominence = max(PEAK_PROMINENCE_SIGNAL,
+#                              PEAK_PROMINENCE_SIGNAL_STD_FRACTION * std(signal)).
+PEAK_PROMINENCE_SIGNAL_STD_FRACTION = 0.1  # >= 10% of the signal's standard deviation
 PEAK_DISTANCE_SIGNAL = 0.01#int(max(1, gt_fs_val * 0.01))
 PEAK_DISTANCE_GT = 0.5 # 0.5 seems to work well
 PEAK_PROMINENCE_GT = 1.0 # 1.0 seems to work well
@@ -1073,7 +1079,19 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
 
     # Peak detection
-    pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs_val, min_distance_s=PEAK_DISTANCE_SIGNAL, prominence=PEAK_PROMINENCE_SIGNAL)
+    # Use a prominence that is at least PEAK_PROMINENCE_SIGNAL_STD_FRACTION (10%) of the
+    # predicted signal's standard deviation, so the threshold scales with the signal's
+    # amplitude; PEAK_PROMINENCE_SIGNAL acts as an absolute floor.
+    pred_signal_std = float(np.nanstd(pred_rs))
+    pred_prominence = max(
+        PEAK_PROMINENCE_SIGNAL, PEAK_PROMINENCE_SIGNAL_STD_FRACTION * pred_signal_std
+    )
+    print(
+        f"[metric_pipeline] Predicted-signal peak prominence: {pred_prominence:.6g} "
+        f"(>= {PEAK_PROMINENCE_SIGNAL_STD_FRACTION:.0%} of signal std {pred_signal_std:.6g}, "
+        f"floor {PEAK_PROMINENCE_SIGNAL})"
+    )
+    pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs_val, min_distance_s=PEAK_DISTANCE_SIGNAL, prominence=pred_prominence)
     pred_peak_times = t[pred_peaks]
 
     gt_peaks, gt_peak_times_rel = detect_ground_truth_peaks(
