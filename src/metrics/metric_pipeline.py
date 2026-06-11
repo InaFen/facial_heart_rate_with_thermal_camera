@@ -63,7 +63,7 @@ PEAK_PROMINENCE_GT = 1.0 # 1.0 seems to work well
 # special cases (high frame rate creates more small peaks, so use a higher prominence floor to drop them):
 PROMINENCE_SIGNAL_OVERRIDES: dict[str, dict[str, float]] = {
     "new_approach/results/mwir": {
-        "std_fraction": 0.6,   # higher frame rate -> noisier; drop small noise peaks
+        "std_fraction": 0.7,   # higher frame rate -> noisier; drop small noise peaks
         "floor": PEAK_PROMINENCE_SIGNAL,
     },
     "new_approach/results/vario": {
