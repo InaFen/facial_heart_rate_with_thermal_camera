@@ -90,9 +90,9 @@ YANG_VARIO_INDIVIDUAL_OVERRIDES = {
 # to main_new_approach.py via NEW_APPROACH_* env vars (override the in-script
 # defaults). Tune per camera (resolution / fps) as needed.
 NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA = {
-	"lepton": {"gaussian_kernel_size": 3, "lowcut_bandpass": 0.92, "highcut_bandpass": 4.0, "order_bandpass": 4},
-	"vario": {"gaussian_kernel_size": 5, "lowcut_bandpass": 0.92, "highcut_bandpass": 12.0, "order_bandpass": 4},
-	"mwir": {"gaussian_kernel_size": 9, "lowcut_bandpass": 0.92, "highcut_bandpass": 4.0, "order_bandpass": 4},
+	"lepton": {"gaussian_kernel_size": 3, "lowcut_bandpass": 0.85, "highcut_bandpass": 4.3, "order_bandpass": 2},
+	"vario": {"gaussian_kernel_size": 5, "lowcut_bandpass": 0.92, "highcut_bandpass": 10.0, "order_bandpass": 2},
+	"mwir": {"gaussian_kernel_size": 9, "lowcut_bandpass": 0.86, "highcut_bandpass": 10.0, "order_bandpass": 2},
 }
 
 # new_approach: per-ROI sub-ROI grid size (rows; columns are set equal to rows).
@@ -676,17 +676,17 @@ def main() -> int:
 	# The batch runs for every combination of pipeline x camera x ROI config below.
 	# Put a single entry in a list to run just one (previous behaviour).
 	pipelines = ["new"]              # any of "yang", "nair", "new"
-	cameras = ["mwir"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
+	cameras = ["mwir", "vario", "lepton"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
 		#{"roi_name": "tracker", "used_rois": ["forehead"]},
 		#{"roi_name": "dlib", "used_rois": ["forehead"]},
 		{"roi_name": "forehead", "used_rois": ["forehead"]},
-		#{"roi_name": "glabella", "used_rois": ["glabella"]},
-		#{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
-		#{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
-		#{"roi_name": "whole_face", "used_rois": ["whole_face"]},
-		#{"roi_name": "manual_rectangle", "used_rois": ["forehead"]},
+		{"roi_name": "glabella", "used_rois": ["glabella"]},
+		{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
+		{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
+		{"roi_name": "whole_face", "used_rois": ["whole_face"]},
+		{"roi_name": "manual_rectangle", "used_rois": ["forehead"]},
 	]
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute
