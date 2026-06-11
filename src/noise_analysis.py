@@ -18,11 +18,23 @@ Multiply by 1000 to get mK.
 
 from __future__ import annotations
 
+import os
 import sys
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
+
+import matplotlib
+
+
+SHOW_PLOTS_IN_BROWSER = True#os.environ.get("NOISE_ANALYSIS_SHOW_PLOTS", "").strip().lower() in {"1", "true", "yes", "on"}
+if SHOW_PLOTS_IN_BROWSER:
+	try:
+		matplotlib.use("webagg")
+	except Exception as exc:  # pragma: no cover - backend availability is environment-specific
+		print(f"[noise_analysis] Could not enable the browser (WebAgg) backend: {exc}. Plots will only be saved.")
+		SHOW_PLOTS_IN_BROWSER = False
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -386,6 +398,18 @@ def _format_histogram_summary(values: np.ndarray, frame_count: int, bins: int) -
 	)
 
 
+def _finalize_figure(fig, save_path: str | Path | None = None, dpi: int = 200) -> None:
+	"""Save ``fig`` to ``save_path`` (if given) and then either keep it open for an
+	interactive browser display (when SHOW_PLOTS_IN_BROWSER is set, so a later
+	``plt.show()`` can render it via the WebAgg backend) or close it to free memory."""
+	if save_path is not None:
+		save_path = Path(save_path)
+		save_path.parent.mkdir(parents=True, exist_ok=True)
+		fig.savefig(str(save_path), dpi=dpi)
+	if not SHOW_PLOTS_IN_BROWSER:
+		plt.close(fig)
+
+
 def plot_all_pixels_histogram(
 	thermal_frames: np.ndarray,
 	bins: int = 250,
@@ -405,10 +429,7 @@ def plot_all_pixels_histogram(
 	ax.grid(alpha=0.3)
 	fig.subplots_adjust(bottom=0.22)
 	fig.text(0.5, 0.03, summary_text, ha="center", va="bottom", fontsize=10)
-	if save_path is not None:
-		save_path = Path(save_path)
-		save_path.parent.mkdir(parents=True, exist_ok=True)
-		fig.savefig(str(save_path), dpi=200)
+	_finalize_figure(fig, save_path)
 
 
 def plot_all_pixels_qq(
@@ -422,11 +443,7 @@ def plot_all_pixels_qq(
 	stats.probplot(all_values, dist="norm", plot=ax)
 	ax.set_title(title)
 	plt.tight_layout()
-	if save_path is not None:
-		save_path = Path(save_path)
-		save_path.parent.mkdir(parents=True, exist_ok=True)
-		fig.savefig(str(save_path), dpi=200)
-		plt.close(fig)
+	_finalize_figure(fig, save_path)
 	
 
 
@@ -454,10 +471,7 @@ def plot_single_frame_heatmap(
 	ax.set_ylabel("Y Pixel")
 	fig.colorbar(im, ax=ax, label="Temperature (°C)")
 	plt.tight_layout()
-	if save_path is not None:
-		save_path = Path(save_path)
-		save_path.parent.mkdir(parents=True, exist_ok=True)
-		fig.savefig(str(save_path), dpi=200)
+	_finalize_figure(fig, save_path)
 
 
 def plot_neighbor_correlation_heatmap(
@@ -485,10 +499,7 @@ def plot_neighbor_correlation_heatmap(
 	ax.set_ylabel("Pixel row (i)")
 	fig.colorbar(im, ax=ax, label=f"Average correlation with neighbors ({vmin:.3f} to {vmax:.3f})")
 	plt.tight_layout()
-	if save_path is not None:
-		save_path = Path(save_path)
-		save_path.parent.mkdir(parents=True, exist_ok=True)
-		fig.savefig(str(save_path), dpi=200)
+	_finalize_figure(fig, save_path)
 
 
 def plot_roi_mean_signal_fft(
@@ -522,10 +533,7 @@ def plot_roi_mean_signal_fft(
 	ax.set_ylabel("Magnitude")
 	ax.grid(alpha=0.3)
 	plt.tight_layout()
-	if save_path is not None:
-		save_path = Path(save_path)
-		save_path.parent.mkdir(parents=True, exist_ok=True)
-		fig.savefig(str(save_path), dpi=200)
+	_finalize_figure(fig, save_path)
 
 
 def plot_pixelwise_mean_psd(
@@ -558,11 +566,7 @@ def plot_pixelwise_mean_psd(
 	ax.set_ylabel("Power")
 	ax.grid(alpha=0.3)
 	plt.tight_layout()
-	if save_path is not None:
-		save_path = Path(save_path)
-		save_path.parent.mkdir(parents=True, exist_ok=True)
-		fig.savefig(str(save_path), dpi=200)
-		plt.close(fig)
+	_finalize_figure(fig, save_path)
 
 
 def get_pixelwise_mean_psd(
@@ -675,11 +679,7 @@ def plot_compare_pixelwise_mean_psd(
 	ax.grid(alpha=0.3)
 	ax.legend()
 	plt.tight_layout()
-	if save_path is not None:
-		save_path = Path(save_path)
-		save_path.parent.mkdir(parents=True, exist_ok=True)
-		fig.savefig(str(save_path), dpi=200)
-		plt.close(fig)
+	_finalize_figure(fig, save_path)
 
 
 def reduce_spatial_noise_gaussian(
@@ -743,7 +743,7 @@ def find_optimal_kernel_size(
 		raise ValueError(f"Expected a 3D array (n_frames, height, width), got shape {thermal_frames.shape}")
 
 	if kernel_sizes is None:
-		kernel_sizes = [3, 5, 7, 9, 11, 15, 21, 31, 51, 71, 101, 121, 151, 171, 201, 251, 301, 501, 1001]
+		kernel_sizes = [3, 5]#, 7, 9, 11, 15, 21, 31, 51, 71, 101, 121, 151, 171, 201, 251, 301, 501, 1001]
 
 	results_by_kernel = {}
 	spatial_noise_values = {}
@@ -890,13 +890,24 @@ def main() -> None:
 		if plot_roi_fft:
 			fft_path = results_dir / f"{camera}_{path.name}_roi_fft.png"
 			plot_roi_mean_signal_fft(thermal_frames, frame_rate_hz=frame_rate, roi=roi, save_path=fft_path)
+		if plot_psd:
+			# Per-recording mean PSD in its own separate plot (in addition to the
+			# combined comparison plot generated after the loop).
+			psd_path = results_dir / f"{camera}_{path.name}_psd.png"
+			plot_pixelwise_mean_psd(
+				thermal_frames,
+				frame_rate_hz=frame_rate,
+				title=f"Mean PSD Across Pixels (Welch) - {camera} ({path.name})",
+				save_path=psd_path,
+			)
 
  
 
 		# Collect label for combined PSD plot
 		labels.append(f"{camera} ({path.name})")
 
-	# After processing all recordings, plot combined PSDs if requested and at least one recording processed
+	# After processing all recordings, also plot all mean PSDs together in one
+	# combined comparison plot (the per-recording PSDs are saved inside the loop).
 	if plot_psd and len(labels) >= 1:
 		print("\nGenerating combined PSD comparison plot...")
 		# Use the same lists for the comparison plot function
@@ -905,6 +916,16 @@ def main() -> None:
 		valid_frame_rates = [fr for p, fr in zip(compare_paths, compare_frame_rates) if p.exists()]
 		combined_path = RESULTS_DIR / "combined_psd.png"
 		plot_compare_pixelwise_mean_psd(valid_paths, valid_cameras, valid_frame_rates, labels=labels, roi=roi, save_path=combined_path)
+
+	# Show every generated figure in the browser (WebAgg) when enabled. This blocks
+	# while the browser session stays open; the server URL is printed to the console
+	# (and the log). Press Ctrl+C in the terminal to stop the server and end the run.
+	if SHOW_PLOTS_IN_BROWSER:
+		print("\nOpening plots in your browser (WebAgg). Open the URL printed below; press Ctrl+C to stop.")
+		try:
+			plt.show()
+		except Exception as exc:
+			print(f"[noise_analysis] Could not display plots in the browser: {exc}. The PNG files were still saved.")
 
 
 if __name__ == "__main__":
