@@ -379,6 +379,19 @@ for roi_name in roi_names:
         max_missing_fraction=0.15, # TODO double check
     )
 
+    # Sub-ROI mean signals after the temporal bandpass, one sub-ROI per subplot
+    # (same layout as 01_raw_subrois / 02_gaussian_smoothed_subrois).
+    plot_subroi_means(
+        n_cells=n_cells,
+        subroi_means=filtered_subroi_means,
+        time_axis=time_axis,
+        label=f"{roi_name} - Bandpassed ({LOWCUT_BANDPASS}-{HIGHCUT_BANDPASS} Hz, order={ORDER_BANDPASS})",
+        roi_dir=roi_dir,
+        prefix="03_bandpassed",
+        SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+        SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+    )
+
 
     plot_subroi_psds(
         subroi_means = filtered_subroi_means,
