@@ -55,12 +55,41 @@ HR_BAND = (0.92, 3.0) # 55 bpm to 180 bpm, in Hz (0.92/60 to 3.0/60)
 
 # --- run_batch overrides ---------------------------------------------------
 # When launched via scripts/run_batch.py, the spatial Gaussian + temporal
-# bandpass settings are provided per camera, and the sub-ROI grid size per ROI.
-# These env vars override the defaults above (standalone runs keep the defaults).
-GAUSSIAN_KERNEL_SIZE = int(os.environ.get("NEW_APPROACH_GAUSSIAN_KERNEL_SIZE", GAUSSIAN_KERNEL_SIZE))
-LOWCUT_BANDPASS = float(os.environ.get("NEW_APPROACH_LOWCUT_BANDPASS", LOWCUT_BANDPASS))
-HIGHCUT_BANDPASS = float(os.environ.get("NEW_APPROACH_HIGHCUT_BANDPASS", HIGHCUT_BANDPASS))
-ORDER_BANDPASS = int(os.environ.get("NEW_APPROACH_ORDER_BANDPASS", ORDER_BANDPASS))
+# bandpass settings are provided per camera (NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA),
+# and the sub-ROI grid size per ROI. These env vars override the defaults above
+# (standalone runs keep the defaults). The resolved values + their source are logged
+# below so it is always visible which settings a run actually used.
+def _resolve_filter_override(env_var, default, cast):
+    """Return ``(value, source)`` from ``env_var`` if set (cast), else the default."""
+    raw = os.environ.get(env_var)
+    if raw is None or str(raw).strip() == "":
+        return default, "in-script default"
+    try:
+        return cast(raw), f"run_batch env ({env_var})"
+    except (ValueError, TypeError):
+        print(f"[new_approach] Could not parse {env_var}={raw!r}; using default {default}.")
+        return default, "in-script default (env parse failed)"
+
+
+GAUSSIAN_KERNEL_SIZE, _src_gaussian = _resolve_filter_override(
+    "NEW_APPROACH_GAUSSIAN_KERNEL_SIZE", GAUSSIAN_KERNEL_SIZE, int
+)
+LOWCUT_BANDPASS, _src_lowcut = _resolve_filter_override(
+    "NEW_APPROACH_LOWCUT_BANDPASS", LOWCUT_BANDPASS, float
+)
+HIGHCUT_BANDPASS, _src_highcut = _resolve_filter_override(
+    "NEW_APPROACH_HIGHCUT_BANDPASS", HIGHCUT_BANDPASS, float
+)
+ORDER_BANDPASS, _src_order = _resolve_filter_override(
+    "NEW_APPROACH_ORDER_BANDPASS", ORDER_BANDPASS, int
+)
+print(
+    "[new_approach] Filter settings resolved (run_batch env override vs in-script default):\n"
+    f"    GAUSSIAN_KERNEL_SIZE = {GAUSSIAN_KERNEL_SIZE}  [{_src_gaussian}]\n"
+    f"    LOWCUT_BANDPASS      = {LOWCUT_BANDPASS} Hz  [{_src_lowcut}]\n"
+    f"    HIGHCUT_BANDPASS     = {HIGHCUT_BANDPASS} Hz  [{_src_highcut}]\n"
+    f"    ORDER_BANDPASS       = {ORDER_BANDPASS}  [{_src_order}]"
+)
 
 # Default per-ROI sub-ROI grid (rows; cols = rows). Overridable via the
 # NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI env var (JSON mapping {roi_name: rows}).
@@ -373,14 +402,14 @@ for roi_name in roi_names:
 
     t = np.arange(len(best_signal)) / fps
 
-    plt.figure(figsize=(10, 4))
+    fig_selected = plt.figure(figsize=(10, 4))
     plt.plot(t, best_signal)
     plt.xlabel("Time (s)")
     plt.ylabel("Signal")
     plt.title(f"Selected Sub-ROI {best_idx} (SQI={ratios[best_idx]:.3f})")
     plt.tight_layout()
-    fig.savefig(roi_dir / f"selected_subroi_signal.png", dpi=200, bbox_inches="tight")
-    plt.close()
+    fig_selected.savefig(roi_dir / "selected_subroi_signal.png", dpi=200, bbox_inches="tight")
+    plt.close(fig_selected)
 
     # Mark which sub-ROI was selected ----------------------------------------
     # 1) Save a face overlay (sub-ROI grid) with the chosen sub-ROI highlighted,

@@ -677,6 +677,7 @@ def plot_subroi_psds(
     #save plot
 
     fig.savefig(roi_dir / f"{prefix}_psds.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 def bandpass_subroi_means(
@@ -684,7 +685,7 @@ def bandpass_subroi_means(
     fs,
     lowcut,
     highcut,
-    order=4,
+    order,
     max_gap_frames=5,
     max_missing_fraction=0.2,
 ):
