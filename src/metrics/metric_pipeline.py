@@ -33,7 +33,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy import stats
-from scipy.signal import butter, sosfiltfilt
 
 try:
     from src.approaches.yang_et_al.utils_ground_truth import (
@@ -72,26 +71,6 @@ PROMINENCE_SIGNAL_OVERRIDES: dict[str, dict[str, float]] = {
         "floor": PEAK_PROMINENCE_SIGNAL,
     },
 }
-
-# Optional zero-phase Butterworth band-pass filter applied to the (resampled)
-# predicted signal BEFORE peak detection. High-frame-rate cameras (notably the
-# new_approach mwir and vario recordings) produce a noisy signal with many small
-# spurious peaks between the real cardiac peaks, which makes the true peaks hard to
-# detect. Restricting the signal to the plausible heart-rate band removes that
-# high-frequency noise (and slow baseline drift), so the real peaks dominate and the
-# peak count / instantaneous HR become reliable. This is more robust than only
-# raising the prominence, which can also drop genuine (low-amplitude) peaks.
-# Each entry maps a path fragment (matched case-insensitively, slash-agnostically
-# against the npz path) to a ``(low_hz, high_hz)`` passband; use ``None`` for one
-# bound to get a pure high-pass (low_hz only) or low-pass (high_hz only). ~0.7-4 Hz
-# corresponds to ~42-240 bpm. Paths that match nothing use
-# ``DEFAULT_PRED_SIGNAL_BANDPASS`` (``None`` -> no filtering, unchanged behaviour).
-PRED_SIGNAL_BANDPASS_OVERRIDES: dict[str, tuple[float | None, float | None]] = {
-    "new_approach/results/mwir": (0.7, 4.0),   # ~42-240 bpm; drop high-freq noise
-    "new_approach/results/vario": (0.7, 4.0),  # ~42-240 bpm; drop high-freq noise
-}
-DEFAULT_PRED_SIGNAL_BANDPASS: tuple[float | None, float | None] | None = None
-PRED_SIGNAL_BANDPASS_ORDER = 3  # Butterworth order (per direction; zero-phase)
 
 # A few mwir ECG ground-truth recordings need the default find_peaks settings
 # above relaxed, but they need DIFFERENT relaxations because their ECG lives on
@@ -190,74 +169,6 @@ def _prominence_signal_settings_for_path(
                 float(settings.get("std_fraction", std_fraction)),
             )
     return floor, std_fraction
-
-
-def _bandpass_for_path(
-    source_path: str | Path | None,
-) -> tuple[float | None, float | None] | None:
-    """Return the ``(low_hz, high_hz)`` predicted-signal band-pass for ``source_path``.
-
-    High-frame-rate recordings (keys of ``PRED_SIGNAL_BANDPASS_OVERRIDES``, notably
-    the new_approach mwir/vario signals) are noisy with many small spurious peaks, so
-    they are band-pass filtered to the heart-rate band before peak detection. Returns
-    the matching ``(low_hz, high_hz)`` (case-insensitive, slash-agnostic match) or
-    ``DEFAULT_PRED_SIGNAL_BANDPASS`` (``None`` -> no filtering) when nothing matches.
-    """
-    if source_path is None:
-        return DEFAULT_PRED_SIGNAL_BANDPASS
-    normalized_path = str(source_path).replace("\\", "/").lower()
-    for fragment, band in PRED_SIGNAL_BANDPASS_OVERRIDES.items():
-        if fragment.lower() in normalized_path:
-            return band
-    return DEFAULT_PRED_SIGNAL_BANDPASS
-
-
-def _bandpass_filter_signal(
-    signal: np.ndarray,
-    fs: float,
-    low_hz: float | None,
-    high_hz: float | None,
-    order: int = PRED_SIGNAL_BANDPASS_ORDER,
-) -> np.ndarray:
-    """Zero-phase Butterworth band/low/high-pass filter of a 1D signal.
-
-    ``low_hz`` / ``high_hz`` are the passband edges in Hz; pass ``None`` for one of
-    them for a pure high-pass (only ``low_hz``) or low-pass (only ``high_hz``). The
-    filter is applied forwards and backwards (``sosfiltfilt``) so it introduces no
-    phase shift, keeping the detected peak positions aligned with the cardiac events.
-    Returns the signal unchanged if no usable cutoff remains (cutoffs outside
-    ``(0, Nyquist)``) or the signal is too short for stable filtering.
-    """
-    sig = np.asarray(signal, dtype=float)
-    nyquist = 0.5 * float(fs)
-    if sig.size < 9 or nyquist <= 0:
-        return sig
-    low = None if low_hz is None else float(low_hz) / nyquist
-    high = None if high_hz is None else float(high_hz) / nyquist
-    # Drop any cutoff that is not strictly inside the normalized (0, 1) Nyquist range.
-    if low is not None and not (0.0 < low < 1.0):
-        low = None
-    if high is not None and not (0.0 < high < 1.0):
-        high = None
-    try:
-        if low is not None and high is not None:
-            if low >= high:
-                return sig
-            sos = butter(order, [low, high], btype="bandpass", output="sos")
-        elif low is not None:
-            sos = butter(order, low, btype="highpass", output="sos")
-        elif high is not None:
-            sos = butter(order, high, btype="lowpass", output="sos")
-        else:
-            return sig
-        # sosfiltfilt needs the signal longer than its internal padding length.
-        padlen = 3 * (2 * sos.shape[0] + 1)
-        if sig.size <= padlen:
-            return sig
-        return np.asarray(sosfiltfilt(sos, sig), dtype=float)
-    except Exception as exc:  # pragma: no cover - defensive; never fail the run
-        print(f"[metric_pipeline] Band-pass filtering skipped ({exc}).")
-        return sig
 
 
 def _normalize_approaches(approaches: tuple[str, ...] | str) -> tuple[str, ...]:
@@ -1264,26 +1175,6 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
     t = np.arange(L) / float(gt_fs_val)
 
-    # Optionally band-pass filter the predicted signal before peak detection. For
-    # high-frame-rate cameras (new_approach mwir/vario) the signal is noisy with many
-    # small spurious peaks; restricting it to the heart-rate band leaves the real
-    # cardiac peaks dominant. Zero-phase, so peak positions stay aligned. Other paths
-    # (DEFAULT_PRED_SIGNAL_BANDPASS is None) are left unchanged. See
-    # PRED_SIGNAL_BANDPASS_OVERRIDES.
-    pred_bandpass = _bandpass_for_path(signal_path)
-    if pred_bandpass is not None:
-        low_hz, high_hz = pred_bandpass
-        pred_rs_filtered = _bandpass_filter_signal(
-            pred_rs, gt_fs_val, low_hz, high_hz, order=PRED_SIGNAL_BANDPASS_ORDER
-        )
-        if pred_rs_filtered is not pred_rs:
-            print(
-                f"[metric_pipeline] Band-pass filtered predicted signal "
-                f"(low={low_hz} Hz, high={high_hz} Hz, order={PRED_SIGNAL_BANDPASS_ORDER}) "
-                f"for: {signal_path}"
-            )
-        pred_rs = pred_rs_filtered
-
     # Peak detection
     # Use a prominence that is at least a fraction of the predicted signal's standard
     # deviation (PEAK_PROMINENCE_SIGNAL_STD_FRACTION by default, or a per-approach/camera
@@ -1799,8 +1690,8 @@ if __name__ == "__main__":
     # accepts short ("new"/"yang"/"nair") or full ("new_approach"/...) names; set
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
-    APPROACHES_TO_RUN = ("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = None  # e.g. ("mwir", "vario") or None for all
+    APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
+    CAMERAS_TO_RUN = "mwir"  # e.g. ("mwir", "vario") or None for all
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
