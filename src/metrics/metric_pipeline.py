@@ -33,6 +33,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy import stats
+from scipy.signal import butter, sosfiltfilt
 
 try:
     from src.approaches.yang_et_al.utils_ground_truth import (
@@ -53,15 +54,44 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
 
 # Global defaults (previously set inside __main__); make available to all functions
 PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # absolute floor for the predicted-signal peak prominence
-# The predicted-signal peak prominence is taken as AT LEAST this fraction of the
-# signal's standard deviation, so the threshold scales with each signal's amplitude
-# (PEAK_PROMINENCE_SIGNAL above is just an absolute floor):
 #   effective prominence = max(PEAK_PROMINENCE_SIGNAL,
 #                              PEAK_PROMINENCE_SIGNAL_STD_FRACTION * std(signal)).
-PEAK_PROMINENCE_SIGNAL_STD_FRACTION = 0.1  # >= 10% of the signal's standard deviation
+PEAK_PROMINENCE_SIGNAL_STD_FRACTION = 0.3  # >= 20% of the signal's standard deviation
 PEAK_DISTANCE_SIGNAL = 0.01#int(max(1, gt_fs_val * 0.01))
 PEAK_DISTANCE_GT = 0.5 # 0.5 seems to work well
 PEAK_PROMINENCE_GT = 1.0 # 1.0 seems to work well
+
+# special cases (high frame rate creates more small peaks, so use a higher prominence floor to drop them):
+PROMINENCE_SIGNAL_OVERRIDES: dict[str, dict[str, float]] = {
+    "new_approach/results/mwir": {
+        "std_fraction": 0.6,   # higher frame rate -> noisier; drop small noise peaks
+        "floor": PEAK_PROMINENCE_SIGNAL,
+    },
+    "new_approach/results/vario": {
+        "std_fraction": 0.6,   # higher frame rate -> noisier; drop small noise peaks
+        "floor": PEAK_PROMINENCE_SIGNAL,
+    },
+}
+
+# Optional zero-phase Butterworth band-pass filter applied to the (resampled)
+# predicted signal BEFORE peak detection. High-frame-rate cameras (notably the
+# new_approach mwir and vario recordings) produce a noisy signal with many small
+# spurious peaks between the real cardiac peaks, which makes the true peaks hard to
+# detect. Restricting the signal to the plausible heart-rate band removes that
+# high-frequency noise (and slow baseline drift), so the real peaks dominate and the
+# peak count / instantaneous HR become reliable. This is more robust than only
+# raising the prominence, which can also drop genuine (low-amplitude) peaks.
+# Each entry maps a path fragment (matched case-insensitively, slash-agnostically
+# against the npz path) to a ``(low_hz, high_hz)`` passband; use ``None`` for one
+# bound to get a pure high-pass (low_hz only) or low-pass (high_hz only). ~0.7-4 Hz
+# corresponds to ~42-240 bpm. Paths that match nothing use
+# ``DEFAULT_PRED_SIGNAL_BANDPASS`` (``None`` -> no filtering, unchanged behaviour).
+PRED_SIGNAL_BANDPASS_OVERRIDES: dict[str, tuple[float | None, float | None]] = {
+    "new_approach/results/mwir": (0.7, 4.0),   # ~42-240 bpm; drop high-freq noise
+    "new_approach/results/vario": (0.7, 4.0),  # ~42-240 bpm; drop high-freq noise
+}
+DEFAULT_PRED_SIGNAL_BANDPASS: tuple[float | None, float | None] | None = None
+PRED_SIGNAL_BANDPASS_ORDER = 3  # Butterworth order (per direction; zero-phase)
 
 # A few mwir ECG ground-truth recordings need the default find_peaks settings
 # above relaxed, but they need DIFFERENT relaxations because their ECG lives on
@@ -102,6 +132,18 @@ DEFAULT_PLOT_BLAND_ALTMAN = True
 #                   pathological ECG. Requires the 'py-ecg-detectors' package.
 DEFAULT_GT_PEAK_METHOD = "find_peaks"
 
+# Map the short approach aliases used by scripts/run_batch.py ("new"/"yang"/"nair")
+# to the full approach folder names used here, so either form may be passed to
+# ``batch_evaluate_folder_structure`` (e.g. approaches=("new",) == ("new_approach",)).
+APPROACH_ALIASES: dict[str, str] = {
+    "new": "new_approach",
+    "new_approach": "new_approach",
+    "yang": "yang_et_al",
+    "yang_et_al": "yang_et_al",
+    "nair": "nair_et_al",
+    "nair_et_al": "nair_et_al",
+}
+
 
 def _relaxed_find_peaks_settings_for_path(
     source_path: str | Path | None,
@@ -122,6 +164,151 @@ def _relaxed_find_peaks_settings_for_path(
         if fragment.lower() in normalized_path:
             return settings
     return None
+
+
+def _prominence_signal_settings_for_path(
+    source_path: str | Path | None,
+) -> tuple[float, float]:
+    """Return ``(floor, std_fraction)`` for the predicted-signal peak prominence.
+
+    Defaults to ``(PEAK_PROMINENCE_SIGNAL, PEAK_PROMINENCE_SIGNAL_STD_FRACTION)``. A
+    few approach/camera combinations (keys of ``PROMINENCE_SIGNAL_OVERRIDES``) use a
+    different fraction because their predicted signal is noisier -- notably the
+    new_approach mwir and vario recordings, whose higher frame rate yields more small
+    noise peaks. Returns that override's ``(floor, std_fraction)`` when ``source_path``
+    matches one of the fragments (case-insensitive, slash-agnostic), else the defaults.
+    """
+    floor = PEAK_PROMINENCE_SIGNAL
+    std_fraction = PEAK_PROMINENCE_SIGNAL_STD_FRACTION
+    if source_path is None:
+        return floor, std_fraction
+    normalized_path = str(source_path).replace("\\", "/").lower()
+    for fragment, settings in PROMINENCE_SIGNAL_OVERRIDES.items():
+        if fragment.lower() in normalized_path:
+            return (
+                float(settings.get("floor", floor)),
+                float(settings.get("std_fraction", std_fraction)),
+            )
+    return floor, std_fraction
+
+
+def _bandpass_for_path(
+    source_path: str | Path | None,
+) -> tuple[float | None, float | None] | None:
+    """Return the ``(low_hz, high_hz)`` predicted-signal band-pass for ``source_path``.
+
+    High-frame-rate recordings (keys of ``PRED_SIGNAL_BANDPASS_OVERRIDES``, notably
+    the new_approach mwir/vario signals) are noisy with many small spurious peaks, so
+    they are band-pass filtered to the heart-rate band before peak detection. Returns
+    the matching ``(low_hz, high_hz)`` (case-insensitive, slash-agnostic match) or
+    ``DEFAULT_PRED_SIGNAL_BANDPASS`` (``None`` -> no filtering) when nothing matches.
+    """
+    if source_path is None:
+        return DEFAULT_PRED_SIGNAL_BANDPASS
+    normalized_path = str(source_path).replace("\\", "/").lower()
+    for fragment, band in PRED_SIGNAL_BANDPASS_OVERRIDES.items():
+        if fragment.lower() in normalized_path:
+            return band
+    return DEFAULT_PRED_SIGNAL_BANDPASS
+
+
+def _bandpass_filter_signal(
+    signal: np.ndarray,
+    fs: float,
+    low_hz: float | None,
+    high_hz: float | None,
+    order: int = PRED_SIGNAL_BANDPASS_ORDER,
+) -> np.ndarray:
+    """Zero-phase Butterworth band/low/high-pass filter of a 1D signal.
+
+    ``low_hz`` / ``high_hz`` are the passband edges in Hz; pass ``None`` for one of
+    them for a pure high-pass (only ``low_hz``) or low-pass (only ``high_hz``). The
+    filter is applied forwards and backwards (``sosfiltfilt``) so it introduces no
+    phase shift, keeping the detected peak positions aligned with the cardiac events.
+    Returns the signal unchanged if no usable cutoff remains (cutoffs outside
+    ``(0, Nyquist)``) or the signal is too short for stable filtering.
+    """
+    sig = np.asarray(signal, dtype=float)
+    nyquist = 0.5 * float(fs)
+    if sig.size < 9 or nyquist <= 0:
+        return sig
+    low = None if low_hz is None else float(low_hz) / nyquist
+    high = None if high_hz is None else float(high_hz) / nyquist
+    # Drop any cutoff that is not strictly inside the normalized (0, 1) Nyquist range.
+    if low is not None and not (0.0 < low < 1.0):
+        low = None
+    if high is not None and not (0.0 < high < 1.0):
+        high = None
+    try:
+        if low is not None and high is not None:
+            if low >= high:
+                return sig
+            sos = butter(order, [low, high], btype="bandpass", output="sos")
+        elif low is not None:
+            sos = butter(order, low, btype="highpass", output="sos")
+        elif high is not None:
+            sos = butter(order, high, btype="lowpass", output="sos")
+        else:
+            return sig
+        # sosfiltfilt needs the signal longer than its internal padding length.
+        padlen = 3 * (2 * sos.shape[0] + 1)
+        if sig.size <= padlen:
+            return sig
+        return np.asarray(sosfiltfilt(sos, sig), dtype=float)
+    except Exception as exc:  # pragma: no cover - defensive; never fail the run
+        print(f"[metric_pipeline] Band-pass filtering skipped ({exc}).")
+        return sig
+
+
+def _normalize_approaches(approaches: tuple[str, ...] | str) -> tuple[str, ...]:
+    """Map approach names through ``APPROACH_ALIASES`` (short -> full folder names).
+
+    Accepts a single string or an iterable of names so either the short run_batch
+    aliases ("new"/"yang"/"nair") or the full folder names ("new_approach"/...) work.
+    Unknown names are passed through unchanged (so custom folders still resolve).
+    """
+    if isinstance(approaches, str):
+        approaches = (approaches,)
+    normalized: list[str] = []
+    for approach in approaches:
+        key = str(approach).strip().lower()
+        normalized.append(APPROACH_ALIASES.get(key, key))
+    return tuple(normalized)
+
+
+def _normalize_camera_filter(
+    cameras: tuple[str, ...] | str | None,
+) -> set[str] | None:
+    """Return a lowercase set of camera names to keep, or ``None`` for all cameras.
+
+    Accepts a single string, an iterable, or ``None``. Empty / ``None`` entries are
+    dropped; if nothing usable remains the result is ``None`` (meaning no filtering).
+    """
+    if cameras is None:
+        return None
+    if isinstance(cameras, str):
+        cameras = (cameras,)
+    filtered = {
+        str(camera).strip().lower()
+        for camera in cameras
+        if camera is not None and str(camera).strip()
+    }
+    return filtered or None
+
+
+def _camera_subfolder_of(path: Path, results_dir: Path) -> str:
+    """Return the camera subfolder name (e.g. "mwir") of ``path`` under ``results_dir``.
+
+    npz files live at ``<results_dir>/<camera>/.../*.npz``; the camera is the first
+    path component relative to ``results_dir``. Returns "" when ``path`` is not nested
+    in a subfolder (or not under ``results_dir``), so such files are simply excluded
+    by any camera filter.
+    """
+    try:
+        relative = path.relative_to(results_dir)
+    except ValueError:
+        return ""
+    return relative.parts[0].lower() if len(relative.parts) >= 2 else ""
 
 
 def detect_ground_truth_peaks(
@@ -1077,19 +1264,41 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
     t = np.arange(L) / float(gt_fs_val)
 
+    # Optionally band-pass filter the predicted signal before peak detection. For
+    # high-frame-rate cameras (new_approach mwir/vario) the signal is noisy with many
+    # small spurious peaks; restricting it to the heart-rate band leaves the real
+    # cardiac peaks dominant. Zero-phase, so peak positions stay aligned. Other paths
+    # (DEFAULT_PRED_SIGNAL_BANDPASS is None) are left unchanged. See
+    # PRED_SIGNAL_BANDPASS_OVERRIDES.
+    pred_bandpass = _bandpass_for_path(signal_path)
+    if pred_bandpass is not None:
+        low_hz, high_hz = pred_bandpass
+        pred_rs_filtered = _bandpass_filter_signal(
+            pred_rs, gt_fs_val, low_hz, high_hz, order=PRED_SIGNAL_BANDPASS_ORDER
+        )
+        if pred_rs_filtered is not pred_rs:
+            print(
+                f"[metric_pipeline] Band-pass filtered predicted signal "
+                f"(low={low_hz} Hz, high={high_hz} Hz, order={PRED_SIGNAL_BANDPASS_ORDER}) "
+                f"for: {signal_path}"
+            )
+        pred_rs = pred_rs_filtered
 
     # Peak detection
-    # Use a prominence that is at least PEAK_PROMINENCE_SIGNAL_STD_FRACTION (10%) of the
-    # predicted signal's standard deviation, so the threshold scales with the signal's
-    # amplitude; PEAK_PROMINENCE_SIGNAL acts as an absolute floor.
+    # Use a prominence that is at least a fraction of the predicted signal's standard
+    # deviation (PEAK_PROMINENCE_SIGNAL_STD_FRACTION by default, or a per-approach/camera
+    # override), so the threshold scales with the signal's amplitude; the floor acts as
+    # an absolute minimum. new_approach mwir/vario use a larger fraction because their
+    # higher frame rate makes the signal noisier -- see PROMINENCE_SIGNAL_OVERRIDES.
+    prominence_floor, prominence_std_fraction = _prominence_signal_settings_for_path(signal_path)
     pred_signal_std = float(np.nanstd(pred_rs))
     pred_prominence = max(
-        PEAK_PROMINENCE_SIGNAL, PEAK_PROMINENCE_SIGNAL_STD_FRACTION * pred_signal_std
+        prominence_floor, prominence_std_fraction * pred_signal_std
     )
     print(
         f"[metric_pipeline] Predicted-signal peak prominence: {pred_prominence:.6g} "
-        f"(>= {PEAK_PROMINENCE_SIGNAL_STD_FRACTION:.0%} of signal std {pred_signal_std:.6g}, "
-        f"floor {PEAK_PROMINENCE_SIGNAL})"
+        f"(>= {prominence_std_fraction:.0%} of signal std {pred_signal_std:.6g}, "
+        f"floor {prominence_floor})"
     )
     pred_peaks, _ = detect_peaks_in_signal(pred_rs, gt_fs_val, min_distance_s=PEAK_DISTANCE_SIGNAL, prominence=pred_prominence)
     pred_peak_times = t[pred_peaks]
@@ -1448,6 +1657,7 @@ def batch_evaluate_folder(
 def batch_evaluate_folder_structure(
     root: str | Path,
     approaches: tuple[str, ...] = ("nair_et_al", "yang_et_al", "new_approach"),
+    cameras: tuple[str, ...] | str | None = None,
     results_subdir: str = "results",
     pattern: str = "*.npz",
     flip_ground_truth: bool = False,
@@ -1460,6 +1670,13 @@ def batch_evaluate_folder_structure(
     gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
 ) -> Dict[str, object]:
     """Evaluate every npz under ``<root>/<approach>/<results_subdir>/**`` for each approach.
+
+    ``approaches`` selects which approach subfolders to walk and accepts either the
+    short run_batch aliases ("new"/"yang"/"nair") or the full folder names
+    ("new_approach"/"yang_et_al"/"nair_et_al"). ``cameras`` optionally restricts the
+    run to specific camera subfolders (the first path component under ``results``,
+    e.g. ("mwir", "vario")); ``None`` evaluates every camera. Both mirror
+    run_batch.py's ``pipelines`` / ``cameras`` configuration.
 
     ``existing_entry_mode`` controls npz files that already have a row in the
     aggregate CSV: "skip" only computes metrics for files not yet in the CSV, while
@@ -1483,12 +1700,22 @@ def batch_evaluate_folder_structure(
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Root folder not found: {root}")
 
+    # Accept short ("new"/"yang"/"nair") or full approach names, like run_batch.py.
+    approaches = _normalize_approaches(approaches)
+    # Optional camera filter: the immediate subfolder of each approach's results dir
+    # (e.g. "mwir"/"vario"/"lepton"), matched case-insensitively. None = all cameras.
+    camera_filter = _normalize_camera_filter(cameras)
+
     if csv_output_path is None:
         csv_output_path = root / "all_npz_metrics.csv"
     csv_output_path = Path(csv_output_path)
     if overwrite_csv and csv_output_path.exists():
         print(f"[metric_pipeline] Overwriting existing summary CSV: {csv_output_path}")
         csv_output_path.unlink()
+
+    print(f"[metric_pipeline] Structure batch: approach(es): {list(approaches)}")
+    if camera_filter is not None:
+        print(f"[metric_pipeline] Structure batch: restricting to camera(s): {sorted(camera_filter)}")
 
     # Collect all npz files across the approach/results trees first (so the summary
     # print is meaningful and missing folders are reported clearly).
@@ -1499,6 +1726,8 @@ def batch_evaluate_folder_structure(
             print(f"[metric_pipeline] Structure batch: skipping missing results dir: {results_dir}")
             continue
         found = sorted(results_dir.rglob(pattern))
+        if camera_filter is not None:
+            found = [f for f in found if _camera_subfolder_of(f, results_dir) in camera_filter]
         print(f"[metric_pipeline] Structure batch: {approach}: found {len(found)} '{pattern}' file(s) under {results_dir}")
         npz_files.extend(found)
 
@@ -1565,6 +1794,14 @@ if __name__ == "__main__":
     #                   noisy/pathological ECG); needs the 'py-ecg-detectors' package.
     GT_PEAK_METHOD = "find_peaks"  # "find_peaks" or "staple"
 
+    # For RUN_MODE == "structure": restrict which approach(es) and camera(s) to
+    # evaluate (similar to run_batch.py's `pipelines` / `cameras`). APPROACHES_TO_RUN
+    # accepts short ("new"/"yang"/"nair") or full ("new_approach"/...) names; set
+    # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
+    # for all cameras.
+    APPROACHES_TO_RUN = ("nair_et_al", "yang_et_al", "new_approach")
+    CAMERAS_TO_RUN = None  # e.g. ("mwir", "vario") or None for all
+
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
     HARD_CODED_FLIP = False
@@ -1578,6 +1815,8 @@ if __name__ == "__main__":
         if HARD_CODED_ROOT.exists() and HARD_CODED_ROOT.is_dir():
             batch_evaluate_folder_structure(
                 root=HARD_CODED_ROOT,
+                approaches=APPROACHES_TO_RUN,
+                cameras=CAMERAS_TO_RUN,
                 pattern=HARD_CODED_PATTERN,
                 flip_ground_truth=HARD_CODED_FLIP,
                 tolerance_ms=HARD_CODED_TOLERANCE_MS,
