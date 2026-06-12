@@ -698,12 +698,32 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "predicted_fs",
     "gt_hr_mean",
     "signal_hr_mean",
+    "signal_hr_mean_diff_to_gt_mean",
+    "signal_hr_mean_abs_diff_to_gt_mean",
     "original_pipeline_bpm_estimate",
     "original_pipeline_bpm_estimate_diff_to_gt_mean",
+    "original_pipeline_bpm_estimate_abs_diff_to_gt_mean",
     "num_gt_peaks",
     "num_pred_peaks",
-    "num_matched_disregard",
+    # --- closest matching: all 'closest' columns are grouped before any 'disregard' ---
     "num_matched_closest",
+    # metrics_closest.*
+    "metrics_closest_rmse",
+    "metrics_closest_mae",
+    "metrics_closest_r2",
+    "metrics_closest_ks_pvalue",
+    "metrics_closest_mean_diff",
+    "metrics_closest_loa_low",
+    "metrics_closest_loa_high",
+    "metrics_closest_sd_diff",
+    "metrics_closest_num_pairs",
+    # ba_stats_closest.*
+    "ba_stats_closest_mean_diff",
+    "ba_stats_closest_loa_low",
+    "ba_stats_closest_loa_high",
+    "ba_stats_closest_sd_diff",
+    # --- disregard / tolerance matching: all 'disregard' columns come after ---
+    "num_matched_disregard",
     # metrics_disregard.*
     "metrics_disregard_rmse",
     "metrics_disregard_mae",
@@ -715,27 +735,61 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "metrics_disregard_sd_diff",
     "metrics_disregard_num_pairs",
     "metrics_disregard_num_matched",
-    # metrics_closest.*
-    "metrics_closest_rmse",
-    "metrics_closest_mae",
-    "metrics_closest_r2",
-    "metrics_closest_ks_pvalue",
-    "metrics_closest_mean_diff",
-    "metrics_closest_loa_low",
-    "metrics_closest_loa_high",
-    "metrics_closest_sd_diff",
-    "metrics_closest_num_pairs",
     # ba_stats_disregard.*
     "ba_stats_disregard_mean_diff",
     "ba_stats_disregard_loa_low",
     "ba_stats_disregard_loa_high",
     "ba_stats_disregard_sd_diff",
-    # ba_stats_closest.*
-    "ba_stats_closest_mean_diff",
-    "ba_stats_closest_loa_low",
-    "ba_stats_closest_loa_high",
-    "ba_stats_closest_sd_diff",
 ]
+
+
+def _backfill_derived_summary_columns(rows: list[dict]) -> int:
+    """Fill blank derived columns of already-migrated summary rows in place.
+
+    A few summary columns are pure functions of other columns that older CSVs already
+    contain, so when an old file is migrated to the current schema they can be computed
+    rather than left blank:
+
+    * ``signal_hr_mean_diff_to_gt_mean``      = ``signal_hr_mean`` - ``gt_hr_mean``
+    * ``signal_hr_mean_abs_diff_to_gt_mean``  = ``abs(signal_hr_mean_diff_to_gt_mean)``
+    * ``original_pipeline_bpm_estimate_abs_diff_to_gt_mean`` =
+      ``abs(original_pipeline_bpm_estimate_diff_to_gt_mean)``
+
+    Only cells that are currently blank/missing are filled, so genuine values written by
+    the pipeline are never overwritten. Returns the number of rows that were touched.
+    """
+
+    def _num(value: object) -> Optional[float]:
+        if value is None or value == "":
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if np.isfinite(parsed) else None
+
+    touched = 0
+    for row in rows:
+        changed = False
+        gt = _num(row.get("gt_hr_mean"))
+        sig = _num(row.get("signal_hr_mean"))
+        if gt is not None and sig is not None:
+            diff = sig - gt
+            if not row.get("signal_hr_mean_diff_to_gt_mean"):
+                row["signal_hr_mean_diff_to_gt_mean"] = diff
+                changed = True
+            if not row.get("signal_hr_mean_abs_diff_to_gt_mean"):
+                row["signal_hr_mean_abs_diff_to_gt_mean"] = abs(diff)
+                changed = True
+        orig_diff = _num(row.get("original_pipeline_bpm_estimate_diff_to_gt_mean"))
+        if orig_diff is not None and not row.get(
+            "original_pipeline_bpm_estimate_abs_diff_to_gt_mean"
+        ):
+            row["original_pipeline_bpm_estimate_abs_diff_to_gt_mean"] = abs(orig_diff)
+            changed = True
+        if changed:
+            touched += 1
+    return touched
 
 
 def _rewrite_csv_with_canonical_header(csv_path: str | Path) -> bool:
@@ -788,12 +842,15 @@ def _rewrite_csv_with_canonical_header(csv_path: str | Path) -> bool:
         note = f"realigned header over {len(migrated)} already-current row(s)"
 
     if migrated is not None:
+        backfilled = _backfill_derived_summary_columns(migrated)
         with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
             writer = csv.DictWriter(
                 csv_file, fieldnames=canonical, extrasaction="ignore", restval=""
             )
             writer.writeheader()
             writer.writerows(migrated)
+        if backfilled:
+            note = f"{note}; backfilled derived columns on {backfilled} row(s)"
         print(
             f"[metric_pipeline] Migrated summary CSV to the current column schema "
             f"({note}): {csv_path}"
@@ -842,16 +899,21 @@ def _flatten_metrics_for_csv(
         "predicted_fs": data.get("predicted_fs"),
         "gt_hr_mean": data.get("gt_hr_mean"),
         "signal_hr_mean": data.get("signal_hr_mean"),
+        "signal_hr_mean_diff_to_gt_mean": data.get("signal_hr_mean_diff_to_gt_mean"),
+        "signal_hr_mean_abs_diff_to_gt_mean": data.get("signal_hr_mean_abs_diff_to_gt_mean"),
         "original_pipeline_bpm_estimate": data.get("original_pipeline_bpm_estimate"),
         "original_pipeline_bpm_estimate_diff_to_gt_mean": data.get(
             "original_pipeline_bpm_estimate_diff_to_gt_mean"
         ),
+        "original_pipeline_bpm_estimate_abs_diff_to_gt_mean": data.get(
+            "original_pipeline_bpm_estimate_abs_diff_to_gt_mean"
+        ),
         "num_gt_peaks": data.get("num_gt_peaks"),
         "num_pred_peaks": data.get("num_pred_peaks"),
-        "num_matched_disregard": data.get("num_matched_disregard"),
         "num_matched_closest": data.get("num_matched_closest"),
+        "num_matched_disregard": data.get("num_matched_disregard"),
     }
-    for prefix in ("metrics_disregard", "metrics_closest", "ba_stats_disregard", "ba_stats_closest"):
+    for prefix in ("metrics_closest", "ba_stats_closest", "metrics_disregard", "ba_stats_disregard"):
         sub = data.get(prefix)
         if isinstance(sub, dict):
             for key, value in sub.items():
@@ -1304,6 +1366,16 @@ def evaluate_instantaneous_hr_against_ground_truth(
     gt_hr_mean = mean_hr_from_peak_times(gt_peak_times)
     signal_hr_mean = mean_hr_from_peak_times(pred_peak_times)
 
+    # Difference of the peak-based signal mean HR to the ground-truth mean HR
+    # (signal_hr_mean - gt_hr_mean, the same pred-minus-gt convention as Bland-Altman;
+    # positive = the signal over-estimates) plus its absolute value. Both are None when
+    # either mean is missing / non-finite.
+    signal_hr_mean_diff_to_gt_mean = None
+    signal_hr_mean_abs_diff_to_gt_mean = None
+    if _is_finite_scalar(signal_hr_mean) and _is_finite_scalar(gt_hr_mean):
+        signal_hr_mean_diff_to_gt_mean = float(signal_hr_mean) - float(gt_hr_mean)
+        signal_hr_mean_abs_diff_to_gt_mean = abs(signal_hr_mean_diff_to_gt_mean)
+
     # Original pipeline HR estimate-----------------------
     # yang_et_al and nair_et_al already produce a single heart-rate estimate (stored
     # as ``heart_rate_estimate_bpm`` in the npz metadata); new_approach leaves it None.
@@ -1314,9 +1386,13 @@ def evaluate_instantaneous_hr_against_ground_truth(
     if isinstance(metadata, dict) and _is_finite_scalar(metadata.get("heart_rate_estimate_bpm")):
         original_pipeline_bpm_estimate = float(metadata["heart_rate_estimate_bpm"])
     original_pipeline_bpm_estimate_diff_to_gt_mean = None
+    original_pipeline_bpm_estimate_abs_diff_to_gt_mean = None
     if original_pipeline_bpm_estimate is not None and _is_finite_scalar(gt_hr_mean):
         original_pipeline_bpm_estimate_diff_to_gt_mean = (
             original_pipeline_bpm_estimate - float(gt_hr_mean)
+        )
+        original_pipeline_bpm_estimate_abs_diff_to_gt_mean = abs(
+            original_pipeline_bpm_estimate_diff_to_gt_mean
         )
     print(
         f"[metric_pipeline] Original pipeline HR estimate: "
@@ -1529,8 +1605,11 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "ba_stats_closest": _serialize_for_json(ba_stats_closest),
         "gt_hr_mean": float(gt_hr_mean) if _is_finite_scalar(gt_hr_mean) else None,
         "signal_hr_mean": float(signal_hr_mean) if _is_finite_scalar(signal_hr_mean) else None,
+        "signal_hr_mean_diff_to_gt_mean": signal_hr_mean_diff_to_gt_mean,
+        "signal_hr_mean_abs_diff_to_gt_mean": signal_hr_mean_abs_diff_to_gt_mean,
         "original_pipeline_bpm_estimate": original_pipeline_bpm_estimate,
         "original_pipeline_bpm_estimate_diff_to_gt_mean": original_pipeline_bpm_estimate_diff_to_gt_mean,
+        "original_pipeline_bpm_estimate_abs_diff_to_gt_mean": original_pipeline_bpm_estimate_abs_diff_to_gt_mean,
         "num_gt_peaks": int(gt_peaks.size),
         "num_pred_peaks": int(pred_peaks.size),
         "num_matched_disregard": int(matched_gt_ihr.size),
