@@ -55,7 +55,7 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
 PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # absolute floor for the predicted-signal peak prominence
 #   effective prominence = max(PEAK_PROMINENCE_SIGNAL,
 #                              PEAK_PROMINENCE_SIGNAL_STD_FRACTION * std(signal)).
-PEAK_PROMINENCE_SIGNAL_STD_FRACTION = 0.3  # >= 20% of the signal's standard deviation
+PEAK_PROMINENCE_SIGNAL_STD_FRACTION = 0.35  # >= 20% of the signal's standard deviation
 PEAK_DISTANCE_SIGNAL = 0.01#int(max(1, gt_fs_val * 0.01))
 PEAK_DISTANCE_GT = 0.5 # 0.5 seems to work well
 PEAK_PROMINENCE_GT = 1.0 # 1.0 seems to work well
@@ -63,11 +63,11 @@ PEAK_PROMINENCE_GT = 1.0 # 1.0 seems to work well
 # special cases (high frame rate creates more small peaks, so use a higher prominence floor to drop them):
 PROMINENCE_SIGNAL_OVERRIDES: dict[str, dict[str, float]] = {
     "new_approach/results/mwir": {
-        "std_fraction": 0.7,   # higher frame rate -> noisier; drop small noise peaks
+        "std_fraction": 0.8,   # higher frame rate -> noisier; drop small noise peaks
         "floor": PEAK_PROMINENCE_SIGNAL,
     },
     "new_approach/results/vario": {
-        "std_fraction": 0.6,   # higher frame rate -> noisier; drop small noise peaks
+        "std_fraction": 0.8,   # higher frame rate -> noisier; drop small noise peaks
         "floor": PEAK_PROMINENCE_SIGNAL,
     },
 }
@@ -738,6 +738,88 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
 ]
 
 
+def _rewrite_csv_with_canonical_header(csv_path: str | Path) -> bool:
+    """Ensure an existing summary CSV uses the current ``METRICS_SUMMARY_CSV_FIELDNAMES``.
+
+    The summary-CSV schema grows over time (new columns added, e.g.
+    ``original_pipeline_bpm_estimate``). A CSV written with an older schema keeps its
+    old header, but new rows are appended in the *new* column order, which misaligns
+    every column after the first changed one (so e.g. the ``num_gt_peaks`` column ends
+    up showing another field's value even though the per-run JSON is correct). This
+    migrates such a file in place to the canonical schema BEFORE any append/remove:
+
+    * header already canonical -> nothing to do (returns ``False``).
+    * every data row has the same width as the file's own (old) header -> the file is
+      internally consistent, so rows are remapped by column name to the canonical
+      schema (new columns become blank, removed ones are dropped).
+    * the header is stale but every data row already has the canonical column count
+      -> the rows were written in the new order under an old header (the bug above);
+      the rows are kept as-is and only the header is rewritten to match.
+    * otherwise (mixed/unknown row widths) the file is genuinely inconsistent: it is
+      backed up next to itself and replaced by a fresh canonical header-only file so
+      the affected recordings can be re-evaluated cleanly.
+
+    Returns ``True`` when the file was migrated/rewritten, ``False`` otherwise.
+    """
+    csv_path = Path(csv_path)
+    if not csv_path.exists() or csv_path.stat().st_size == 0:
+        return False
+    with open(csv_path, newline="", encoding="utf-8") as csv_file:
+        reader = csv.reader(csv_file)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return False
+        if header == METRICS_SUMMARY_CSV_FIELDNAMES:
+            return False
+        data_rows = [row for row in reader if row]
+
+    canonical = METRICS_SUMMARY_CSV_FIELDNAMES
+    migrated: list[dict] | None = None
+    note = ""
+    if data_rows and all(len(row) == len(header) for row in data_rows):
+        # Rows are consistent with the file's own (older) header -> map by name.
+        migrated = [dict(zip(header, row)) for row in data_rows]
+        note = f"remapped {len(migrated)} row(s) by column name"
+    elif all(len(row) == len(canonical) for row in data_rows):
+        # Stale header but rows already use the current column order (append-after-
+        # schema-change symptom) -> keep the rows and just fix the header.
+        migrated = [dict(zip(canonical, row)) for row in data_rows]
+        note = f"realigned header over {len(migrated)} already-current row(s)"
+
+    if migrated is not None:
+        with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(
+                csv_file, fieldnames=canonical, extrasaction="ignore", restval=""
+            )
+            writer.writeheader()
+            writer.writerows(migrated)
+        print(
+            f"[metric_pipeline] Migrated summary CSV to the current column schema "
+            f"({note}): {csv_path}"
+        )
+        return True
+
+    # Inconsistent row widths -> the file can no longer be trusted column-by-column.
+    backup_path = csv_path.with_name(
+        f"{csv_path.stem}.corrupt-{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak.csv"
+    )
+    csv_path.rename(backup_path)
+    with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(
+            csv_file, fieldnames=canonical, extrasaction="ignore", restval=""
+        )
+        writer.writeheader()
+    print(
+        f"[metric_pipeline] WARNING: summary CSV header did not match its rows "
+        f"(a previous schema change misaligned it). Backed up the old file to "
+        f"{backup_path} and started a fresh CSV with the current schema: {csv_path}. "
+        f"Re-run the affected recordings (existing_entry_mode='overwrite' or "
+        f"overwrite_csv=True) to repopulate it."
+    )
+    return True
+
+
 def _flatten_metrics_for_csv(
     output_data: Dict[str, object],
     plots_folder: Optional[str | Path],
@@ -791,6 +873,9 @@ def append_metrics_summary_row(
     """
     csv_output_path = str(csv_output_path)
     os.makedirs(os.path.dirname(csv_output_path) or ".", exist_ok=True)
+    # Make sure an existing CSV uses the current column schema before appending, so a
+    # schema change (added columns) can never misalign the header from the data rows.
+    _rewrite_csv_with_canonical_header(csv_output_path)
     row = _flatten_metrics_for_csv(output_data, plots_folder, json_path)
     write_header = not os.path.exists(csv_output_path) or os.path.getsize(csv_output_path) == 0
     with open(csv_output_path, "a", newline="", encoding="utf-8") as csv_file:
@@ -838,16 +923,17 @@ def _remove_csv_rows_for_input_files(csv_path: str | Path, input_files: set[str]
     csv_path = Path(csv_path)
     if not csv_path.exists() or csv_path.stat().st_size == 0 or not input_files:
         return 0
+    # Heal a stale-schema header first so reading/rewriting stays column-aligned.
+    _rewrite_csv_with_canonical_header(csv_path)
     with open(csv_path, newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file)
-        fieldnames = reader.fieldnames or METRICS_SUMMARY_CSV_FIELDNAMES
         rows = list(reader)
     kept = [row for row in rows if row.get("input_file") not in input_files]
     removed = len(rows) - len(kept)
     if removed == 0:
         return 0
     with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction="ignore", restval="")
+        writer = csv.DictWriter(csv_file, fieldnames=METRICS_SUMMARY_CSV_FIELDNAMES, extrasaction="ignore", restval="")
         writer.writeheader()
         for row in kept:
             writer.writerow(row)
@@ -1534,6 +1620,11 @@ def batch_evaluate_folder(
         print(f"[metric_pipeline] Overwriting existing summary CSV: {csv_output_path}")
         csv_output_path.unlink()
 
+    # Migrate any existing CSV to the current column schema up-front, so reading the
+    # already-present files and rewriting rows stay column-aligned (heals CSVs written
+    # before new summary columns were added).
+    _rewrite_csv_with_canonical_header(csv_output_path)
+
     results: dict[str, object] = {}
     files = sorted(folder.glob(pattern))
     # Skip or overwrite files that already have a row in the aggregate CSV.
@@ -1631,6 +1722,10 @@ def batch_evaluate_folder_structure(
     if overwrite_csv and csv_output_path.exists():
         print(f"[metric_pipeline] Overwriting existing summary CSV: {csv_output_path}")
         csv_output_path.unlink()
+
+    # Migrate any existing CSV to the current column schema up-front (heals CSVs
+    # written before new summary columns were added; see _rewrite_csv_with_canonical_header).
+    _rewrite_csv_with_canonical_header(csv_output_path)
 
     print(f"[metric_pipeline] Structure batch: approach(es): {list(approaches)}")
     if camera_filter is not None:
