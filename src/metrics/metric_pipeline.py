@@ -698,6 +698,8 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "predicted_fs",
     "gt_hr_mean",
     "signal_hr_mean",
+    "original_pipeline_bpm_estimate",
+    "original_pipeline_bpm_estimate_diff_to_gt_mean",
     "num_gt_peaks",
     "num_pred_peaks",
     "num_matched_disregard",
@@ -758,6 +760,10 @@ def _flatten_metrics_for_csv(
         "predicted_fs": data.get("predicted_fs"),
         "gt_hr_mean": data.get("gt_hr_mean"),
         "signal_hr_mean": data.get("signal_hr_mean"),
+        "original_pipeline_bpm_estimate": data.get("original_pipeline_bpm_estimate"),
+        "original_pipeline_bpm_estimate_diff_to_gt_mean": data.get(
+            "original_pipeline_bpm_estimate_diff_to_gt_mean"
+        ),
         "num_gt_peaks": data.get("num_gt_peaks"),
         "num_pred_peaks": data.get("num_pred_peaks"),
         "num_matched_disregard": data.get("num_matched_disregard"),
@@ -1212,6 +1218,26 @@ def evaluate_instantaneous_hr_against_ground_truth(
     gt_hr_mean = mean_hr_from_peak_times(gt_peak_times)
     signal_hr_mean = mean_hr_from_peak_times(pred_peak_times)
 
+    # Original pipeline HR estimate-----------------------
+    # yang_et_al and nair_et_al already produce a single heart-rate estimate (stored
+    # as ``heart_rate_estimate_bpm`` in the npz metadata); new_approach leaves it None.
+    # Expose that estimate and its signed difference to the ground-truth mean HR
+    # (estimate - gt_hr_mean, the same pred-minus-gt convention as Bland-Altman) so the
+    # CSV can compare the pipeline's own number against the ground truth directly.
+    original_pipeline_bpm_estimate = None
+    if isinstance(metadata, dict) and _is_finite_scalar(metadata.get("heart_rate_estimate_bpm")):
+        original_pipeline_bpm_estimate = float(metadata["heart_rate_estimate_bpm"])
+    original_pipeline_bpm_estimate_diff_to_gt_mean = None
+    if original_pipeline_bpm_estimate is not None and _is_finite_scalar(gt_hr_mean):
+        original_pipeline_bpm_estimate_diff_to_gt_mean = (
+            original_pipeline_bpm_estimate - float(gt_hr_mean)
+        )
+    print(
+        f"[metric_pipeline] Original pipeline HR estimate: "
+        f"{original_pipeline_bpm_estimate} bpm; diff to GT mean: "
+        f"{original_pipeline_bpm_estimate_diff_to_gt_mean}"
+    )
+
     # Match GT & predicted HRs within a tolerance, others are disregarded-----------------------
     # Compute paired instantaneous-HR metrics using timestamp-based matching
     matched_gt_ihr, matched_pred_ihr, matched_gt_times, matched_pred_times = match_by_timestamp_tolerance(
@@ -1417,6 +1443,8 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "ba_stats_closest": _serialize_for_json(ba_stats_closest),
         "gt_hr_mean": float(gt_hr_mean) if _is_finite_scalar(gt_hr_mean) else None,
         "signal_hr_mean": float(signal_hr_mean) if _is_finite_scalar(signal_hr_mean) else None,
+        "original_pipeline_bpm_estimate": original_pipeline_bpm_estimate,
+        "original_pipeline_bpm_estimate_diff_to_gt_mean": original_pipeline_bpm_estimate_diff_to_gt_mean,
         "num_gt_peaks": int(gt_peaks.size),
         "num_pred_peaks": int(pred_peaks.size),
         "num_matched_disregard": int(matched_gt_ihr.size),
@@ -1690,8 +1718,8 @@ if __name__ == "__main__":
     # accepts short ("new"/"yang"/"nair") or full ("new_approach"/...) names; set
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
-    APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = "mwir"  # e.g. ("mwir", "vario") or None for all
+    APPROACHES_TO_RUN = ("nair_et_al", "yang_et_al", "new_approach") #("nair_et_al", "yang_et_al", "new_approach")
+    CAMERAS_TO_RUN = None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
