@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -245,6 +246,25 @@ def average_consecutive_frames(thermal_frames: np.ndarray, window_size: int) -> 
 	return averaged
 
 
+def _mean_skew_kurtosis(values: np.ndarray, axis: int) -> tuple[float, float]:
+	"""Return the mean skewness and mean excess (Fisher) kurtosis along ``axis``.
+
+	The skewness / excess kurtosis are computed for every 1D slice along ``axis``
+	(e.g. each pixel's time series for ``axis=0``, or each frame's pixels) and then
+	averaged across the remaining slices. Constant slices (zero variance, e.g. dead
+	pixels) yield NaN and are ignored. Interpreting the result: skew ~ 0 and excess
+	kurtosis ~ 0 => Gaussian; skew > 0 => right-skewed (long upper tail); excess
+	kurtosis > 0 => heavier tails / more outliers than a normal distribution.
+	"""
+	with warnings.catch_warnings():
+		# Constant slices trigger a precision-loss RuntimeWarning in the moment
+		# calculation; they simply become NaN and are dropped by nanmean below.
+		warnings.simplefilter("ignore")
+		skewness = stats.skew(values, axis=axis)
+		excess_kurtosis = stats.kurtosis(values, axis=axis, fisher=True)
+	return float(np.nanmean(skewness)), float(np.nanmean(excess_kurtosis))
+
+
 def calculate_netd_from_pixelwise_std(
 	thermal_frames: np.ndarray,
 	roi: tuple[int, int, int, int] | None = None,
@@ -272,13 +292,21 @@ def calculate_netd_from_pixelwise_std(
 	roi_frames = thermal_frames[:, y_slice, x_slice] # Get frames in ROI
 	pixelwise_std = roi_frames.std(axis=0, ddof=ddof) # Std dev over time for each pixel in ROI
 	netd_value = float(pixelwise_std.mean()) # Average of per-pixel temporal standard deviations
-	
+
 	mean_temperature = float(roi_frames.mean())
+
+	# Distribution shape of the temporal noise (each pixel over time), averaged over
+	# pixels. skew ~ 0 and excess kurtosis ~ 0 => the temporal noise is Gaussian, so the
+	# std-based NETD fully describes it; skew > 0 => right-skewed noise (long upper tail)
+	# where a robust measure (median/MAD) would describe the spread better.
+	noise_skewness, noise_excess_kurtosis = _mean_skew_kurtosis(roi_frames, axis=0)
 
 	return {
 		"netd_c": netd_value,
 		"netd_mk": float(netd_value * 1000.0),
 		"mean_temperature_c": mean_temperature,
+		"temporal_noise_skewness": noise_skewness,
+		"temporal_noise_excess_kurtosis": noise_excess_kurtosis,
 		"frame_count": int(thermal_frames.shape[0]),
 		"roi_shape": tuple(int(v) for v in roi_frames.shape[1:]),
 	}
@@ -288,12 +316,16 @@ def calculate_spatial_noise_from_frame_std(
 	thermal_frames: np.ndarray,
 	roi: tuple[int, int, int, int] | None = None,
 	ddof: int = 1,
+	compute_shape: bool = True,
 ) -> dict[str, float | int | tuple[int, int]]:
 	"""
 	Calculate spatial noise as the average of per-frame spatial standard deviations.
 
 	For each frame, compute the standard deviation across all pixels (or ROI pixels),
-	then average those per-frame standard deviations over time.
+	then average those per-frame standard deviations over time. When ``compute_shape``
+	is True, also report the skewness / excess kurtosis of the spatial value
+	distribution (averaged over frames); set it to False to skip that extra work
+	(e.g. inside the kernel-size search, which only needs the std).
 	"""
 	thermal_frames = np.asarray(thermal_frames, dtype=np.float32)
 	if thermal_frames.ndim != 3:
@@ -305,10 +337,24 @@ def calculate_spatial_noise_from_frame_std(
 	frame_spatial_std = roi_frames.std(axis=(1, 2), ddof=ddof) # Std dev across pixels for each frame
 	spatial_noise = float(frame_spatial_std.mean())
 
+	# Shape of the spatial value distribution, averaged over frames: for each frame the
+	# skewness / excess kurtosis across pixels, then averaged over frames. skew ~ 0 and
+	# excess kurtosis ~ 0 => roughly Gaussian spatial spread (so the std-based spatial
+	# noise, and the kernel-size search that minimizes it, are trustworthy); skew > 0 =>
+	# right-skewed (e.g. hot pixels / edges) where that std is inflated by the tail.
+	if compute_shape:
+		frame_pixels = roi_frames.reshape(roi_frames.shape[0], -1) # (n_frames, n_pixels)
+		spatial_skewness, spatial_excess_kurtosis = _mean_skew_kurtosis(frame_pixels, axis=1)
+	else:
+		spatial_skewness = float("nan")
+		spatial_excess_kurtosis = float("nan")
+
 	return {
 		"spatial_noise_c": spatial_noise,
 		"spatial_noise_mk": float(spatial_noise * 1000.0),
 		"frame_std_std_c": float(frame_spatial_std.std(ddof=ddof)),
+		"spatial_skewness": spatial_skewness,
+		"spatial_excess_kurtosis": spatial_excess_kurtosis,
 		"frame_count": int(thermal_frames.shape[0]),
 		"roi_shape": tuple(int(v) for v in roi_frames.shape[1:]),
 	}
@@ -388,11 +434,18 @@ def calculate_neighbor_temporal_correlation(
 def _format_histogram_summary(values: np.ndarray, frame_count: int, bins: int) -> str:
 	"""Format summary statistics for histogram annotation."""
 	values = np.asarray(values, dtype=np.float32)
+	# Skewness / excess kurtosis quantify how far the value distribution is from a
+	# Gaussian: skew ~ 0 and excess kurtosis ~ 0 => Gaussian; skew > 0 => right-skewed
+	# (long upper tail); excess kurtosis > 0 => heavier tails / more outliers than normal.
+	skewness = float(stats.skew(values, axis=None))
+	excess_kurtosis = float(stats.kurtosis(values, axis=None, fisher=True))
 	return (
 		f"Frames: {frame_count}    "
 		f"Bins: {bins}    "
 		f"Mean: {values.mean():.3f} °C    "
 		f"Std: {values.std(ddof=1):.3f} °C    "
+		f"Skew: {skewness:.3f}    "
+		f"Excess kurt: {excess_kurtosis:.3f}    "
 		f"Min: {values.min():.3f} °C    "
 		f"Max: {values.max():.3f} °C"
 	)
@@ -756,8 +809,10 @@ def find_optimal_kernel_size(
 		# Apply Gaussian smoothing
 		smoothed = reduce_spatial_noise_gaussian(thermal_frames, kernel_size=kernel_size)
 
-		# Calculate spatial noise for smoothed frames
-		spatial_result = calculate_spatial_noise_from_frame_std(smoothed, roi=roi, ddof=ddof)
+		# Calculate spatial noise for smoothed frames (skip the distribution-shape
+		# stats here: the kernel search only needs the std, and computing skew /
+		# kurtosis for every kernel size would be needlessly slow).
+		spatial_result = calculate_spatial_noise_from_frame_std(smoothed, roi=roi, ddof=ddof, compute_shape=False)
 		results_by_kernel[kernel_size] = spatial_result
 		spatial_noise_values[kernel_size] = spatial_result["spatial_noise_c"]
 
@@ -783,6 +838,8 @@ def format_netd_result(result: dict[str, float | int | tuple[int, int]]) -> str:
 	return (
 		f"NETD (temporal noise): {result['netd_c']:.6f} °C ({result['netd_mk']:.2f} mK)\n"
 		f"Mean temperature: {result['mean_temperature_c']:.6f} °C\n"
+		f"Temporal noise skewness (mean over pixels): {result['temporal_noise_skewness']:.4f} (0 = symmetric, >0 = right-skewed)\n"
+		f"Temporal noise excess kurtosis (mean over pixels): {result['temporal_noise_excess_kurtosis']:.4f} (0 = Gaussian tails)\n"
 	)
 
 
@@ -791,6 +848,8 @@ def format_spatial_noise_result(result: dict[str, float | int | tuple[int, int]]
 	return (
 		f"Spatial noise (Average over all frames): {result['spatial_noise_c']:.6f} °C ({result['spatial_noise_mk']:.2f} mK)\n"
 		f"Per-frame std std (so std of spatial noise): {result['frame_std_std_c']:.6f} °C\n"
+		f"Spatial skewness (mean over frames): {result['spatial_skewness']:.4f} (0 = symmetric, >0 = right-skewed)\n"
+		f"Spatial excess kurtosis (mean over frames): {result['spatial_excess_kurtosis']:.4f} (0 = Gaussian tails)\n"
 		f"Frames: {result['frame_count']}\n"
 		f"ROI shape: {result['roi_shape']}"
 	)
