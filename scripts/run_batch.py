@@ -369,6 +369,62 @@ def iter_face_rows(csv_path: Path, area: str = "face") -> list[dict[str, str]]:
 	return [row for row in rows if row.get("area", "").strip().lower() == target]
 
 
+# The individuals recorded across every camera CSV (the `person` column uses these
+# lowercase names). Used by the optional per-individual batch filter.
+KNOWN_INDIVIDUALS = ("ina", "julian", "paulo")
+
+
+def normalize_individuals_filter(
+	individuals: tuple[str, ...] | list[str] | str | None,
+) -> set[str] | None:
+	"""Return a lowercase set of individual names to keep, or ``None`` for all.
+
+	Accepts a single name, an iterable of names, or ``None``/empty (meaning no
+	filtering). Unknown names are kept as-is (so custom names still work) but a
+	warning is printed when a name matches none of ``KNOWN_INDIVIDUALS``.
+	"""
+	if individuals is None:
+		return None
+	if isinstance(individuals, str):
+		individuals = [individuals]
+	wanted = {
+		str(name).strip().lower()
+		for name in individuals
+		if name is not None and str(name).strip()
+	}
+	if not wanted:
+		return None
+	unknown = wanted - set(KNOWN_INDIVIDUALS)
+	if unknown:
+		print(
+			f"Warning: individuals filter contains name(s) not in {KNOWN_INDIVIDUALS}: "
+			f"{sorted(unknown)}. They only match if a CSV 'person'/recording name contains them."
+		)
+	return wanted
+
+
+def filter_rows_by_individual(
+	rows: list[dict[str, str]],
+	individuals: set[str] | None,
+) -> list[dict[str, str]]:
+	"""Keep only rows whose individual is in ``individuals`` (``None``/empty keeps all).
+
+	Each requested name is matched (case-insensitively) against the row's ``person``
+	column and, as a fallback, its recording filename stem -- so "paulo" selects both
+	the mwir/lepton recordings (person='paulo') and the vario ones whose file is named
+	'P1_thermal_data_all_frames' but whose person column is still 'paulo'.
+	"""
+	if not individuals:
+		return rows
+	kept: list[dict[str, str]] = []
+	for row in rows:
+		person = str(row.get("person", "")).strip().lower()
+		stem = Path(str(row.get("recording_path", ""))).stem.lower()
+		if any(want == person or want in person or want in stem for want in individuals):
+			kept.append(row)
+	return kept
+
+
 def run_one_row(
 	main_script: Path,
 	config_path: Path,
@@ -508,6 +564,7 @@ def run_combination(
 	roi_name: str | None,
 	used_rois: list[str] | None,
 	*,
+	individuals: set[str] | None = None,
 	limit_rows: int | None,
 	dry_run: bool,
 	save_plots: bool,
@@ -579,6 +636,8 @@ def run_combination(
 
 	# Get the rows for the selected area from CSV (temple for manual ROI, else face)
 	face_rows = iter_face_rows(csv_path, area=area_filter)
+	# Optional per-individual filter (e.g. only "paulo"); None keeps all individuals.
+	face_rows = filter_rows_by_individual(face_rows, individuals)
 	if limit_rows is not None:
 		face_rows = face_rows[:limit_rows]
 
@@ -590,6 +649,7 @@ def run_combination(
 	print(f"FPS:             {fps}")
 	print(f"ROI Name:        {roi_name}")
 	print(f"Used ROIs:       {used_rois}")
+	print(f"Individuals:     {sorted(individuals) if individuals else 'all'}")
 	print(f"Manual ROI:      {manual_roi_enabled}"
 	      + (f" (mode={manual_roi_mode}, split={manual_roi_split_enabled}, grid={manual_roi_subroi_grid}, backend={manual_roi_backend})" if manual_roi_enabled else ""))
 	print(f"Area Filter:     {area_filter}")
@@ -676,16 +736,20 @@ def main() -> int:
 	# The batch runs for every combination of pipeline x camera x ROI config below.
 	# Put a single entry in a list to run just one (previous behaviour).
 	pipelines = ["new"]              # any of "yang", "nair", "new"
-	cameras = ["mwir", "vario", "lepton"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
+	cameras = ["mwir"]#, "vario", "lepton"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
+	# Restrict the batch to specific individual(s): any of "ina", "julian", "paulo".
+	# None (or []) processes every individual. Matched case-insensitively against each
+	# CSV row's `person` column, e.g. individuals = ["paulo"] or ["ina", "julian"].
+	individuals = None
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
 		#{"roi_name": "tracker", "used_rois": ["forehead"]},
 		#{"roi_name": "dlib", "used_rois": ["forehead"]},
-		{"roi_name": "forehead", "used_rois": ["forehead"]},
-		{"roi_name": "glabella", "used_rois": ["glabella"]},
-		{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
-		{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
-		{"roi_name": "whole_face", "used_rois": ["whole_face"]},
+		#{"roi_name": "forehead", "used_rois": ["forehead"]},
+		#{"roi_name": "glabella", "used_rois": ["glabella"]},
+		#{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
+		#{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
+		#{"roi_name": "whole_face", "used_rois": ["whole_face"]},
 		{"roi_name": "manual_rectangle", "used_rois": ["forehead"]},
 	]
 	limit_rows = None  # e.g., 5 (None = process all rows)
@@ -719,6 +783,8 @@ def main() -> int:
 		cameras = [cameras]
 	if isinstance(roi_configs, dict):
 		roi_configs = [roi_configs]
+	# Normalize the optional per-individual filter to a lowercase set (None = all).
+	individuals_filter = normalize_individuals_filter(individuals)
 
 	# Cartesian product: pipeline x camera x ROI config.
 	all_combinations = [
@@ -742,6 +808,8 @@ def main() -> int:
 
 	print(f"\n{'#'*60}")
 	print(f"Batch Runner: {len(combinations)} combination(s) to run")
+	if individuals_filter:
+		print(f"Restricted to individual(s): {sorted(individuals_filter)}")
 	print(f"{'#'*60}")
 	for idx, (pipeline, camera, roi_config) in enumerate(combinations, 1):
 		print(
@@ -773,6 +841,7 @@ def main() -> int:
 			camera,
 			roi_config.get("roi_name"),
 			roi_config.get("used_rois"),
+			individuals=individuals_filter,
 			limit_rows=limit_rows,
 			dry_run=dry_run,
 			save_plots=save_plots,
