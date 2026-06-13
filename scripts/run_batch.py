@@ -100,11 +100,12 @@ NEW_APPROACH_FILTER_SETTINGS_BY_CAMERA = {
 # (single-side forehead, glabella). ROI names not listed fall back to the
 # in-script default. Passed via NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI (JSON).
 NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI = {
-	"forehead": 5,
+	"forehead":  [3,4,6,8],
 	"left_forehead": 4,
 	"right_forehead": 4,
 	"glabella": 3,
 	"manual_rectangle": 2,
+	"manual_rectangle_front_view": 2,
 }
 
 
@@ -608,9 +609,19 @@ def run_combination(
 	# Manual ROI detection is selected purely by the roi_name containing "manual"
 	# (else the tracker/mediapipe/dlib detection is used, as before).
 	manual_roi_enabled = "manual" in str(roi_name).lower()
-	# When manual ROI is used, process the temple recordings (the manual drawing
-	# targets the temple area); otherwise process the face recordings as before.
-	area_filter = "temple" if manual_roi_enabled else "face"
+	# A "front view" manual ROI (roi_name contains "front_view", e.g.
+	# "manual_rectangle_front_view") is drawn on the FRONT-view recordings
+	# (area == "face") -- i.e. exactly the files for which manual detection is
+	# normally NOT applied. Every other manual ROI targets the temple recordings
+	# (the manual drawing targets the temple area); non-manual detection processes
+	# the face recordings as before.
+	manual_roi_front_view = manual_roi_enabled and "front_view" in str(roi_name).lower()
+	if manual_roi_front_view:
+		area_filter = "face"
+	elif manual_roi_enabled:
+		area_filter = "temple"
+	else:
+		area_filter = "face"
 	# Resolve CSV and config paths
 	csv_path = PROJECT_ROOT / "experiments" / "experiments_info" / f"{camera}_experiments.csv"
 	# Group runs by roi_name under the camera dir so multiple ROI configs for the
@@ -740,17 +751,18 @@ def main() -> int:
 	# Restrict the batch to specific individual(s): any of "ina", "julian", "paulo".
 	# None (or []) processes every individual. Matched case-insensitively against each
 	# CSV row's `person` column, e.g. individuals = ["paulo"] or ["ina", "julian"].
-	individuals = None
+	individuals = ["julian", "paulo", "ina"]
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
 		#{"roi_name": "tracker", "used_rois": ["forehead"]},
 		#{"roi_name": "dlib", "used_rois": ["forehead"]},
-		#{"roi_name": "forehead", "used_rois": ["forehead"]},
+		{"roi_name": "forehead", "used_rois": ["forehead"]},
 		#{"roi_name": "glabella", "used_rois": ["glabella"]},
 		#{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
 		#{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
 		#{"roi_name": "whole_face", "used_rois": ["whole_face"]},
-		{"roi_name": "manual_rectangle", "used_rois": ["forehead"]},
+		#{"roi_name": "manual_rectangle", "used_rois": ["forehead"]},
+		#{"roi_name": "manual_rectangle_front_view", "used_rois": ["forehead"]},
 	]
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute
