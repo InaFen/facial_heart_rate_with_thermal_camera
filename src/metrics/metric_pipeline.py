@@ -97,6 +97,17 @@ RELAXED_GT_FIND_PEAKS_SETTINGS: dict[str, dict[str, float | None]] = {
     },
 }
 
+# A few recordings detect roughly twice as many predicted peaks as there are real
+# heartbeats (so their instantaneous HR comes out ~2x too high). For these, an extra
+# "halved" variant is additionally evaluated where every second detected predicted peak
+# is dropped (keep the 1st, 3rd, 5th, ...) before all metrics are recomputed. Each rule
+# is an ``(path_fragment, roi)`` pair; BOTH must appear in the npz path (matched
+# case-insensitively, slash-agnostically) for the rule to fire. Currently this targets
+# the new_approach mwir manual_rectangle recordings only.
+DROP_EVERY_SECOND_PEAK_RULES: tuple[dict[str, str], ...] = (
+    {"path_fragment": "new_approach/results/mwir", "roi": "manual_rectangle"},
+)
+
 # Default evaluation parameters
 DEFAULT_TOLERANCE_MS = 500.0
 DEFAULT_PATTERN = "*.npz"
@@ -169,6 +180,26 @@ def _prominence_signal_settings_for_path(
                 float(settings.get("std_fraction", std_fraction)),
             )
     return floor, std_fraction
+
+
+def _should_drop_every_second_signal_peak(source_path: str | Path | None) -> bool:
+    """Whether to additionally drop every second predicted peak for ``source_path``.
+
+    A few recordings detect roughly twice as many predicted peaks as there are real
+    heartbeats, which doubles the instantaneous HR. ``DROP_EVERY_SECOND_PEAK_RULES``
+    lists those as ``(path_fragment, roi)`` pairs; both fragments must appear in the npz
+    path (case-insensitive, slash-agnostic) for the rule to fire -- notably the
+    new_approach mwir manual_rectangle recordings. Returns ``True`` on a match.
+    """
+    if source_path is None:
+        return False
+    normalized_path = str(source_path).replace("\\", "/").lower()
+    for rule in DROP_EVERY_SECOND_PEAK_RULES:
+        fragment = str(rule.get("path_fragment", "")).lower()
+        roi_token = str(rule.get("roi", "")).lower()
+        if fragment and roi_token and fragment in normalized_path and roi_token in normalized_path:
+            return True
+    return False
 
 
 def _normalize_approaches(approaches: tuple[str, ...] | str) -> tuple[str, ...]:
@@ -609,6 +640,77 @@ def compute_metrics_with_optional_bland_altman(
     return metrics, ba_stats
 
 
+def _match_and_score_ihr(
+    gt_ihr: np.ndarray,
+    gt_ihr_times: np.ndarray,
+    pred_ihr: np.ndarray,
+    pred_ihr_times: np.ndarray,
+    tolerance_ms: float,
+) -> Dict[str, object]:
+    """Match predicted vs ground-truth instantaneous HR and score both strategies.
+
+    Runs the same two matchings used by the main evaluation and scores each with
+    regression + KS + Bland-Altman metrics:
+      * tolerance / "disregard": nearest match within ``tolerance_ms`` (unmatched points
+        dropped);
+      * "closest": every GT point matched to its nearest prediction and vice versa
+        (nothing dropped).
+    Returns a dict with the matched arrays, the combined closest arrays, the raw
+    closest-match mapping and the metric/Bland-Altman dicts, so callers can both report
+    and plot the result. Used for the drop-every-second-peak ("halved") variant.
+    """
+    matched_gt_ihr, matched_pred_ihr, matched_gt_times, matched_pred_times = (
+        match_by_timestamp_tolerance(
+            gt_values=gt_ihr,
+            gt_times=gt_ihr_times,
+            pred_values=pred_ihr,
+            pred_times=pred_ihr_times,
+            tolerance_ms=tolerance_ms,
+        )
+    )
+    disregard_metrics, ba_disregard = compute_metrics_with_optional_bland_altman(
+        matched_gt_ihr, matched_pred_ihr, plot_bland_altman=False
+    )
+    disregard_metrics["num_matched"] = int(matched_gt_ihr.size)
+
+    closest_matches = match_by_nearest_timestamp(
+        gt_values=gt_ihr,
+        gt_times=gt_ihr_times,
+        pred_values=pred_ihr,
+        pred_times=pred_ihr_times,
+    )
+    closest_gt_ihr = np.concatenate(
+        [closest_matches["gt_to_pred_gt_values"], closest_matches["pred_to_gt_gt_values"]]
+    )
+    closest_pred_ihr = np.concatenate(
+        [closest_matches["gt_to_pred_pred_values"], closest_matches["pred_to_gt_pred_values"]]
+    )
+    closest_gt_times = np.concatenate(
+        [closest_matches["gt_to_pred_gt_times"], closest_matches["pred_to_gt_gt_times"]]
+    )
+    closest_pred_times = np.concatenate(
+        [closest_matches["gt_to_pred_pred_times"], closest_matches["pred_to_gt_pred_times"]]
+    )
+    closest_metrics, ba_closest = compute_metrics_with_optional_bland_altman(
+        closest_gt_ihr, closest_pred_ihr, plot_bland_altman=False
+    )
+    return {
+        "matched_gt_ihr": matched_gt_ihr,
+        "matched_pred_ihr": matched_pred_ihr,
+        "matched_gt_times": matched_gt_times,
+        "matched_pred_times": matched_pred_times,
+        "disregard_metrics": disregard_metrics,
+        "ba_disregard": ba_disregard,
+        "closest_matches": closest_matches,
+        "closest_gt_ihr": closest_gt_ihr,
+        "closest_pred_ihr": closest_pred_ihr,
+        "closest_gt_times": closest_gt_times,
+        "closest_pred_times": closest_pred_times,
+        "closest_metrics": closest_metrics,
+        "ba_closest": ba_closest,
+    }
+
+
 def _to_json_string(value: object) -> str:
     """Convert arrays/dicts/scalars to a JSON string for CSV storage."""
 
@@ -740,6 +842,42 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "ba_stats_disregard_loa_low",
     "ba_stats_disregard_loa_high",
     "ba_stats_disregard_sd_diff",
+    # --- halved variant: every second predicted peak dropped (only populated for the
+    #     new_approach mwir manual_rectangle recordings; blank elsewhere). Same layout
+    #     as above, all 'closest' columns before any 'disregard' column. ---
+    "signal_hr_mean_halved",
+    "signal_hr_mean_halved_diff_to_gt_mean",
+    "signal_hr_mean_halved_abs_diff_to_gt_mean",
+    "num_pred_peaks_halved",
+    "num_matched_closest_halved",
+    "metrics_closest_halved_rmse",
+    "metrics_closest_halved_mae",
+    "metrics_closest_halved_r2",
+    "metrics_closest_halved_ks_pvalue",
+    "metrics_closest_halved_mean_diff",
+    "metrics_closest_halved_loa_low",
+    "metrics_closest_halved_loa_high",
+    "metrics_closest_halved_sd_diff",
+    "metrics_closest_halved_num_pairs",
+    "ba_stats_closest_halved_mean_diff",
+    "ba_stats_closest_halved_loa_low",
+    "ba_stats_closest_halved_loa_high",
+    "ba_stats_closest_halved_sd_diff",
+    "num_matched_disregard_halved",
+    "metrics_disregard_halved_rmse",
+    "metrics_disregard_halved_mae",
+    "metrics_disregard_halved_r2",
+    "metrics_disregard_halved_ks_pvalue",
+    "metrics_disregard_halved_mean_diff",
+    "metrics_disregard_halved_loa_low",
+    "metrics_disregard_halved_loa_high",
+    "metrics_disregard_halved_sd_diff",
+    "metrics_disregard_halved_num_pairs",
+    "metrics_disregard_halved_num_matched",
+    "ba_stats_disregard_halved_mean_diff",
+    "ba_stats_disregard_halved_loa_low",
+    "ba_stats_disregard_halved_loa_high",
+    "ba_stats_disregard_halved_sd_diff",
 ]
 
 
@@ -912,8 +1050,25 @@ def _flatten_metrics_for_csv(
         "num_pred_peaks": data.get("num_pred_peaks"),
         "num_matched_closest": data.get("num_matched_closest"),
         "num_matched_disregard": data.get("num_matched_disregard"),
+        "signal_hr_mean_halved": data.get("signal_hr_mean_halved"),
+        "signal_hr_mean_halved_diff_to_gt_mean": data.get("signal_hr_mean_halved_diff_to_gt_mean"),
+        "signal_hr_mean_halved_abs_diff_to_gt_mean": data.get(
+            "signal_hr_mean_halved_abs_diff_to_gt_mean"
+        ),
+        "num_pred_peaks_halved": data.get("num_pred_peaks_halved"),
+        "num_matched_closest_halved": data.get("num_matched_closest_halved"),
+        "num_matched_disregard_halved": data.get("num_matched_disregard_halved"),
     }
-    for prefix in ("metrics_closest", "ba_stats_closest", "metrics_disregard", "ba_stats_disregard"):
+    for prefix in (
+        "metrics_closest",
+        "ba_stats_closest",
+        "metrics_disregard",
+        "ba_stats_disregard",
+        "metrics_closest_halved",
+        "ba_stats_closest_halved",
+        "metrics_disregard_halved",
+        "ba_stats_disregard_halved",
+    ):
         sub = data.get(prefix)
         if isinstance(sub, dict):
             for key, value in sub.items():
@@ -1460,6 +1615,51 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
     print(f"[metric_pipeline] Closest-matching pairs combined size: {closest_gt_ihr.size}")
 
+    # Optional "halved" variant: a few recordings detect ~2x as many predicted peaks as
+    # there are real heartbeats (see DROP_EVERY_SECOND_PEAK_RULES -- notably the
+    # new_approach mwir manual_rectangle recordings), which roughly doubles the
+    # instantaneous HR. For those, additionally drop every second detected predicted
+    # peak (keep the 1st, 3rd, 5th, ...) and recompute every metric, so the doubled-peak
+    # result can be compared against the halved one. All halved values stay None/empty
+    # for every other recording.
+    drop_every_second_peak = _should_drop_every_second_signal_peak(signal_path)
+    pred_peaks_halved = np.array([], dtype=int)
+    pred_peak_times_halved = np.array([], dtype=float)
+    pred_ihr_halved = np.array([], dtype=float)
+    pred_ihr_times_halved = np.array([], dtype=float)
+    signal_hr_mean_halved = None
+    signal_hr_mean_halved_diff_to_gt_mean = None
+    signal_hr_mean_halved_abs_diff_to_gt_mean = None
+    halved: Dict[str, object] | None = None
+    if drop_every_second_peak:
+        pred_peaks_halved = np.asarray(pred_peaks, dtype=int)[::2]
+        pred_peak_times_halved = (
+            t[pred_peaks_halved] if pred_peaks_halved.size else np.array([], dtype=float)
+        )
+        pred_ihr_halved, pred_ihr_times_halved = instantaneous_hr_from_peak_times(
+            pred_peak_times_halved
+        )
+        signal_hr_mean_halved = mean_hr_from_peak_times(pred_peak_times_halved)
+        if _is_finite_scalar(signal_hr_mean_halved) and _is_finite_scalar(gt_hr_mean):
+            signal_hr_mean_halved_diff_to_gt_mean = (
+                float(signal_hr_mean_halved) - float(gt_hr_mean)
+            )
+            signal_hr_mean_halved_abs_diff_to_gt_mean = abs(
+                signal_hr_mean_halved_diff_to_gt_mean
+            )
+        halved = _match_and_score_ihr(
+            gt_ihr=gt_ihr,
+            gt_ihr_times=gt_ihr_times,
+            pred_ihr=pred_ihr_halved,
+            pred_ihr_times=pred_ihr_times_halved,
+            tolerance_ms=tolerance_ms,
+        )
+        print(
+            f"[metric_pipeline] Drop-every-second-peak variant active: predicted peaks "
+            f"{pred_peaks.size} -> {pred_peaks_halved.size}; signal_hr_mean "
+            f"{signal_hr_mean} -> {signal_hr_mean_halved}"
+        )
+
     # Create output folder named after the input NPZ file inside a `metric_results` root
     output_root = signal_path.parent / "metric_results"
     output_folder = output_root / signal_path.stem
@@ -1471,9 +1671,11 @@ def evaluate_instantaneous_hr_against_ground_truth(
     if not plot_steps and not plot_bland_altman:
         print("[metric_pipeline] No plots requested (both plot_steps and plot_bland_altman are False). Skipping plot generation.")
 
-    # Optional plotting: one combined figure with the requested subplots
+    # Optional plotting: one combined figure with the requested subplots. The halved-
+    # peak variant (when active) adds two extra panels at the bottom.
     if plot_steps:
-        fig, axes = plt.subplots(4, 1, figsize=(14, 20))
+        n_panels = 6 if (drop_every_second_peak and halved is not None) else 4
+        fig, axes = plt.subplots(n_panels, 1, figsize=(14, 5 * n_panels))
         fig.suptitle("Instantaneous HR evaluation", fontsize=15)
 
         # 1) Ground-truth signal with detected peaks
@@ -1540,6 +1742,77 @@ def evaluate_instantaneous_hr_against_ground_truth(
         axes[3].legend(loc="best", ncol=2)
         axes[3].grid(alpha=0.2)
 
+        # 5) + 6) Halved-peak variant (only for the drop-every-second-peak recordings):
+        # show which predicted peaks survive and the resulting closest-matched IHR.
+        if drop_every_second_peak and halved is not None:
+            axes[4].plot(t, pred_rs, label="Predicted (resampled)", alpha=0.5, color="C1")
+            if pred_peaks.size > 0:
+                axes[4].scatter(
+                    pred_peak_times,
+                    pred_rs[pred_peaks],
+                    s=25,
+                    color="C1",
+                    alpha=0.35,
+                    label="All detected peaks",
+                )
+            if pred_peaks_halved.size > 0:
+                axes[4].scatter(
+                    pred_peak_times_halved,
+                    pred_rs[pred_peaks_halved],
+                    s=55,
+                    color="C3",
+                    edgecolors="black",
+                    linewidths=0.4,
+                    label="Kept peaks (every 2nd dropped)",
+                )
+            axes[4].set_title("Predicted signal: every second detected peak dropped")
+            axes[4].set_xlabel("Time (s)")
+            axes[4].set_ylabel("Amplitude")
+            axes[4].legend(loc="best")
+            axes[4].grid(alpha=0.2)
+
+            axes[5].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.5, marker="o")
+            axes[5].plot(
+                pred_ihr_times_halved,
+                pred_ihr_halved,
+                label="Pred IHR (every 2nd peak dropped)",
+                color="C3",
+                alpha=0.75,
+                marker="o",
+            )
+            halved_closest = halved["closest_matches"]
+            if halved_closest["gt_to_pred_gt_times"].size > 0:
+                axes[5].scatter(
+                    halved_closest["gt_to_pred_gt_times"],
+                    halved_closest["gt_to_pred_gt_values"],
+                    s=40,
+                    color="C0",
+                    edgecolors="black",
+                    linewidths=0.4,
+                    label="GT matched to closest Pred",
+                )
+                axes[5].scatter(
+                    halved_closest["gt_to_pred_pred_times"],
+                    halved_closest["gt_to_pred_pred_values"],
+                    s=40,
+                    color="C3",
+                    edgecolors="black",
+                    linewidths=0.4,
+                    label="Pred matched from GT",
+                )
+                for x_gt, y_gt, x_pred, y_pred in zip(
+                    halved_closest["gt_to_pred_gt_times"],
+                    halved_closest["gt_to_pred_gt_values"],
+                    halved_closest["gt_to_pred_pred_times"],
+                    halved_closest["gt_to_pred_pred_values"],
+                ):
+                    axes[5].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.3, linewidth=0.8)
+            axes[5].set_title("IHR (closest matching) with every second predicted peak dropped")
+            axes[5].set_xlabel("Time (s)")
+            axes[5].set_ylabel("HR (bpm)")
+            axes[5].legend(loc="best", ncol=2)
+            axes[5].grid(alpha=0.2)
+
         plt.tight_layout()
         combined_plot_path = output_folder / "01_combined_evaluation.png"
         print(f"[metric_pipeline] Saving combined plot to: {combined_plot_path}")
@@ -1580,6 +1853,45 @@ def evaluate_instantaneous_hr_against_ground_truth(
             plt.savefig(ba_closest_path, dpi=150, bbox_inches="tight")
             plt.close(fig)
 
+    # Halved-peak variant Bland-Altman plots: only generated for the
+    # drop-every-second-peak recordings (new_approach mwir manual_rectangle).
+    if (plot_bland_altman or plot_steps) and drop_every_second_peak and halved is not None:
+        if halved["matched_gt_ihr"].size > 0:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            bland_altman(
+                halved["matched_gt_ihr"],
+                halved["matched_pred_ihr"],
+                plot=True,
+                ax=ax,
+                title=f"Bland-Altman: Tolerance matching, every 2nd peak dropped (±{tolerance_ms:.0f} ms)",
+            )
+            ba_disregard_halved_path = output_folder / "04_bland_altman_disregard_halved.png"
+            print(
+                f"[metric_pipeline] Saving Bland-Altman (disregard, halved) to: "
+                f"{ba_disregard_halved_path}"
+            )
+            fig.tight_layout()
+            plt.savefig(ba_disregard_halved_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+        if halved["closest_gt_ihr"].size > 0:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            bland_altman(
+                halved["closest_gt_ihr"],
+                halved["closest_pred_ihr"],
+                plot=True,
+                ax=ax,
+                title="Bland-Altman: Closest matching, every 2nd peak dropped",
+            )
+            ba_closest_halved_path = output_folder / "05_bland_altman_closest_halved.png"
+            print(
+                f"[metric_pipeline] Saving Bland-Altman (closest, halved) to: "
+                f"{ba_closest_halved_path}"
+            )
+            fig.tight_layout()
+            plt.savefig(ba_closest_halved_path, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
     # Save output data as JSON for easy inspection
     def _serialize_for_json(obj):
         """Convert numpy types to JSON-serializable Python types."""
@@ -1614,6 +1926,30 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "num_pred_peaks": int(pred_peaks.size),
         "num_matched_disregard": int(matched_gt_ihr.size),
         "num_matched_closest": int(closest_gt_ihr.size),
+        "signal_hr_mean_halved": (
+            float(signal_hr_mean_halved) if _is_finite_scalar(signal_hr_mean_halved) else None
+        ),
+        "signal_hr_mean_halved_diff_to_gt_mean": signal_hr_mean_halved_diff_to_gt_mean,
+        "signal_hr_mean_halved_abs_diff_to_gt_mean": signal_hr_mean_halved_abs_diff_to_gt_mean,
+        "num_pred_peaks_halved": int(pred_peaks_halved.size) if drop_every_second_peak else None,
+        "num_matched_disregard_halved": (
+            int(halved["matched_gt_ihr"].size) if halved is not None else None
+        ),
+        "num_matched_closest_halved": (
+            int(halved["closest_gt_ihr"].size) if halved is not None else None
+        ),
+        "metrics_disregard_halved": (
+            _serialize_for_json(halved["disregard_metrics"]) if halved is not None else None
+        ),
+        "ba_stats_disregard_halved": (
+            _serialize_for_json(halved["ba_disregard"]) if halved is not None else None
+        ),
+        "metrics_closest_halved": (
+            _serialize_for_json(halved["closest_metrics"]) if halved is not None else None
+        ),
+        "ba_stats_closest_halved": (
+            _serialize_for_json(halved["ba_closest"]) if halved is not None else None
+        ),
     }
 
     output_json_path = output_folder / "00_metrics.json"
