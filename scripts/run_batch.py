@@ -105,7 +105,7 @@ NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI = {
 	"right_forehead": 4,
 	"glabella": 3,
 	"manual_rectangle": 2,
-	"manual_rectangle_front_view": 2,
+	"manual_rectangle_front_view": 8,
 }
 
 
@@ -751,18 +751,18 @@ def main() -> int:
 	# Restrict the batch to specific individual(s): any of "ina", "julian", "paulo".
 	# None (or []) processes every individual. Matched case-insensitively against each
 	# CSV row's `person` column, e.g. individuals = ["paulo"] or ["ina", "julian"].
-	individuals = ["julian", "paulo", "ina"]
+	individuals = ["julian"]
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
 		#{"roi_name": "tracker", "used_rois": ["forehead"]},
 		#{"roi_name": "dlib", "used_rois": ["forehead"]},
-		{"roi_name": "forehead", "used_rois": ["forehead"]},
+		#{"roi_name": "forehead", "used_rois": ["forehead"]},
 		#{"roi_name": "glabella", "used_rois": ["glabella"]},
 		#{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
 		#{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
 		#{"roi_name": "whole_face", "used_rois": ["whole_face"]},
 		#{"roi_name": "manual_rectangle", "used_rois": ["forehead"]},
-		#{"roi_name": "manual_rectangle_front_view", "used_rois": ["forehead"]},
+		{"roi_name": "manual_rectangle_front_view", "used_rois": ["forehead"]},
 	]
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute

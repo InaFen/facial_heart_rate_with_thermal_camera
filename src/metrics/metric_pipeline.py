@@ -63,7 +63,7 @@ PEAK_PROMINENCE_GT = 1.0 # 1.0 seems to work well
 # special cases (high frame rate creates more small peaks, so use a higher prominence floor to drop them):
 PROMINENCE_SIGNAL_OVERRIDES: dict[str, dict[str, float]] = {
     "new_approach/results/mwir": {
-        "std_fraction": 0.8,   # higher frame rate -> noisier; drop small noise peaks
+        "std_fraction": 0.8,   #0.8 # higher frame rate -> noisier; drop small noise peaks
         "floor": PEAK_PROMINENCE_SIGNAL,
     },
     "new_approach/results/vario": {
@@ -2228,8 +2228,8 @@ if __name__ == "__main__":
     # accepts short ("new"/"yang"/"nair") or full ("new_approach"/...) names; set
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
-    APPROACHES_TO_RUN = ("nair_et_al", "yang_et_al", "new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
+    CAMERAS_TO_RUN = "mwir" #None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
