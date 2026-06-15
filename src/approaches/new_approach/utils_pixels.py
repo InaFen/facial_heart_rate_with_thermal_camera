@@ -869,7 +869,13 @@ def select_best_subroi(
     weight_peak_clarity=0.5,
     min_peak_clarity=None,
 ):
-    """Select the best sub-ROI from BOTH the HR-band power and a peak-clarity score.
+    """Select the best sub-ROI from the HR-band power and/or a peak-clarity score.
+
+    The two (normalised) criteria are weighted and combined. A criterion with a
+    zero weight is ignored entirely -- including its NaNs -- so e.g.
+    ``weight_peak_clarity=0`` gives a purely SQI-based selection in which a strong
+    sub-ROI is never dropped just because its peak-clarity score is undefined.
+
     Parameters
     ----------
     subroi_signals : array, shape (T, N)
@@ -879,10 +885,12 @@ def select_best_subroi(
     hr_band : tuple(float, float)
         Heart-rate band in Hz.
     weight_band_power, weight_peak_clarity : float
-        Relative weights of the two (normalised) criteria. Set
-        ``weight_peak_clarity=0`` to recover the original HR-band-only behaviour.
+        Relative weights of the two (normalised) criteria (their sum must be > 0).
+        Set ``weight_peak_clarity=0`` for an HR-band-only (SQI) selection, or
+        ``weight_band_power=0`` for a peak-clarity-only selection.
     min_peak_clarity : float or None
-        Optional hard threshold on the raw peak-clarity score in [0, 1].
+        Optional hard threshold on the raw peak-clarity score in [0, 1]; applied
+        only when peak clarity carries weight.
 
     Returns
     -------
@@ -894,17 +902,34 @@ def select_best_subroi(
     band_power_ratio = compute_hr_band_power_ratios(subroi_signals, fs, hr_band)
     peak_clarity, clarity_parts = compute_peak_clarity_scores(subroi_signals, fs, hr_band)
 
-    usable = np.isfinite(band_power_ratio) & np.isfinite(peak_clarity)
+    weight_band_power = float(weight_band_power)
+    weight_peak_clarity = float(weight_peak_clarity)
+    weight_sum = weight_band_power + weight_peak_clarity
+    if weight_sum <= 0:
+        raise ValueError("weight_band_power + weight_peak_clarity must be > 0.")
+    use_band_power = weight_band_power > 0
+    use_peak_clarity = weight_peak_clarity > 0
+
+    # A sub-ROI is usable only if every criterion that actually carries weight is finite
+    # for it. A zero-weight criterion is ignored entirely (including its NaNs), so e.g.
+    # an SQI-only selection (weight_peak_clarity == 0) never drops a strong sub-ROI just
+    # because its peak-clarity score happens to be undefined.
+    usable = np.ones(subroi_signals.shape[1], dtype=bool)
+    if use_band_power:
+        usable &= np.isfinite(band_power_ratio)
+    if use_peak_clarity:
+        usable &= np.isfinite(peak_clarity)
     if not np.any(usable):
         raise ValueError(
-            "No usable sub-ROI signal for combined selection: every sub-ROI is empty, "
+            "No usable sub-ROI signal for selection: every sub-ROI is empty, "
             "has residual NaNs, or has no measurable peaks. Try a coarser SUBROI_GRID, "
             "or relax max_gap_frames / max_missing_fraction in bandpass_subroi_means."
         )
 
-    # Optional hard gate: only keep sub-ROIs with sufficiently clear peaks.
+    # Optional hard gate: only keep sub-ROIs with sufficiently clear peaks (applies only
+    # when peak clarity is actually considered).
     candidate = usable.copy()
-    if min_peak_clarity is not None:
+    if use_peak_clarity and min_peak_clarity is not None:
         gated = candidate & (peak_clarity >= float(min_peak_clarity))
         if np.any(gated):
             candidate = gated
@@ -914,18 +939,22 @@ def select_best_subroi(
                 f"{min_peak_clarity}; ignoring the gate and ranking all usable sub-ROIs."
             )
 
-    # Normalise each criterion across the candidate sub-ROIs, then combine.
+    # Normalise each criterion across the candidate sub-ROIs, then combine. Only the
+    # weighted criteria contribute; an unweighted criterion is left out so its NaNs can
+    # neither influence nor invalidate the combined score.
     bp_norm = _normalize_01(np.where(candidate, band_power_ratio, np.nan))
     pc_norm = _normalize_01(np.where(candidate, peak_clarity, np.nan))
 
-    weight_sum = float(weight_band_power) + float(weight_peak_clarity)
-    if weight_sum <= 0:
-        raise ValueError("weight_band_power + weight_peak_clarity must be > 0.")
     combined = np.full(subroi_signals.shape[1], np.nan)
-    valid = np.isfinite(bp_norm) & np.isfinite(pc_norm)
-    combined[valid] = (
-        weight_band_power * bp_norm[valid] + weight_peak_clarity * pc_norm[valid]
-    ) / weight_sum
+    if use_band_power and use_peak_clarity:
+        valid = np.isfinite(bp_norm) & np.isfinite(pc_norm)
+        combined[valid] = (
+            weight_band_power * bp_norm[valid] + weight_peak_clarity * pc_norm[valid]
+        ) / weight_sum
+    elif use_band_power:
+        combined = np.where(np.isfinite(bp_norm), bp_norm, np.nan)
+    else:  # peak clarity only
+        combined = np.where(np.isfinite(pc_norm), pc_norm, np.nan)
 
     best_idx = int(np.nanargmax(combined))
     print(

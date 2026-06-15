@@ -54,17 +54,34 @@ ORDER_BANDPASS = 4
 
 HR_BAND = (0.92, 3.0) # 55 bpm to 180 bpm, in Hz (0.92/60 to 3.0/60)
 
-# Sub-ROI selection: the chosen sub-ROI is picked from BOTH the HR-band power ratio
-# (SQI = power inside the HR band / total power) AND a peak-clarity score (how clean
-# and regular the peaks are), so a signal with "many small peaks on a broad peak" is
-# not chosen just because its power happens to sit in the HR band. The two criteria are
-# normalised across sub-ROIs and combined with these weights (set
-# SUBROI_WEIGHT_PEAK_CLARITY = 0 to recover the old HR-band-only behaviour). Set
-# SUBROI_MIN_PEAK_CLARITY to a value in [0, 1] (e.g. 0.3) to additionally exclude
-# sub-ROIs with very noisy peaks before ranking (None = no hard gate).
+# Sub-ROI selection. By default the best sub-ROI is chosen SOLELY by the HR-band power
+# ratio (SQI = power inside the HR band / total power), i.e. purely by signal strength
+# in the heart-rate band. Set CONSIDER_PEAK_CLARITY_IN_SELECTION = True to ALSO factor
+# in a peak-clarity score (how clean and regular the peaks are), so a signal with "many
+# small peaks on a broad peak" is not chosen just because its power happens to sit in
+# the HR band; the two criteria are then normalised across sub-ROIs and combined with
+# the weights below.
+CONSIDER_PEAK_CLARITY_IN_SELECTION = False
+
+# Used ONLY when CONSIDER_PEAK_CLARITY_IN_SELECTION is True. SUBROI_WEIGHT_* weight the
+# (normalised) HR-band power and peak-clarity criteria; SUBROI_MIN_PEAK_CLARITY (in
+# [0, 1], e.g. 0.3) additionally drops sub-ROIs with very noisy peaks before ranking
+# (None = no hard gate). When the flag is False these are ignored and the selection is
+# SQI-only (weight_band_power=1, weight_peak_clarity=0, no clarity gate).
 SUBROI_WEIGHT_BAND_POWER = 0.5
 SUBROI_WEIGHT_PEAK_CLARITY = 0.5
 SUBROI_MIN_PEAK_CLARITY = None
+
+# Resolve the selection weights/gate actually passed to select_best_subroi from the
+# flag above: combined SQI + peak-clarity scoring when enabled, otherwise SQI-only.
+if CONSIDER_PEAK_CLARITY_IN_SELECTION:
+    _SELECT_WEIGHT_BAND_POWER = SUBROI_WEIGHT_BAND_POWER
+    _SELECT_WEIGHT_PEAK_CLARITY = SUBROI_WEIGHT_PEAK_CLARITY
+    _SELECT_MIN_PEAK_CLARITY = SUBROI_MIN_PEAK_CLARITY
+else:
+    _SELECT_WEIGHT_BAND_POWER = 1.0
+    _SELECT_WEIGHT_PEAK_CLARITY = 0.0
+    _SELECT_MIN_PEAK_CLARITY = None
 
 # --- run_batch overrides ---------------------------------------------------
 # When launched via scripts/run_batch.py, the spatial Gaussian + temporal
@@ -345,16 +362,18 @@ def process_subroi_grid(
         prefix= "after_bandpass"
     )
 
-    # Choose sub-ROI for final heart rate detection from BOTH the HR-band power ratio
-    # (SQI) AND a peak-clarity score, so a signal with many small/ragged peaks is not
-    # selected just because its power sits in the HR band. ---------------
+    # Choose sub-ROI for final heart rate detection. By default this is based SOLELY on
+    # the HR-band power ratio (SQI = signal strength in the HR band); when
+    # CONSIDER_PEAK_CLARITY_IN_SELECTION is True a peak-clarity score is additionally
+    # factored in so a signal with many small/ragged peaks is not selected just because
+    # its power sits in the HR band. ---------------
     best_idx, subroi_scores = select_best_subroi(
         subroi_signals=filtered_subroi_means,
         fs=fps,
         hr_band=HR_BAND,
-        weight_band_power=SUBROI_WEIGHT_BAND_POWER,
-        weight_peak_clarity=SUBROI_WEIGHT_PEAK_CLARITY,
-        min_peak_clarity=SUBROI_MIN_PEAK_CLARITY,
+        weight_band_power=_SELECT_WEIGHT_BAND_POWER,
+        weight_peak_clarity=_SELECT_WEIGHT_PEAK_CLARITY,
+        min_peak_clarity=_SELECT_MIN_PEAK_CLARITY,
     )
 
     # Plot selected sub-ROI
