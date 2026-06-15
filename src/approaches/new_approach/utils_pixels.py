@@ -6,7 +6,7 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import welch
+from scipy.signal import welch, find_peaks
 import numpy as np
 from scipy.signal import butter, filtfilt
 
@@ -751,34 +751,7 @@ def select_best_subroi_by_hr_band_power(
         HR-band power / total power for each sub-ROI.
     """
 
-    n_subrois = subroi_signals.shape[1]
-    band_power_ratios = np.full(n_subrois, np.nan)
-
-    for i in range(n_subrois):
-        signal = subroi_signals[:, i].astype(float)
-
-        finite = np.isfinite(signal)
-        # Skip sub-ROIs that are entirely empty (no usable samples at all).
-        if finite.sum() < 2:
-            continue
-
-        # Fill any residual NaNs (long gaps / leading/trailing NaNs that the
-        # small-gap interpolation in the bandpass step left behind) so Welch
-        # gets a fully finite signal. Edges are held constant via np.interp.
-        if not finite.all():
-            #idx = np.arange(len(signal))
-            #signal = np.interp(idx, idx[finite], signal[finite])
-            continue    # skip sub-ROIs with residual NaNs, as they likely have too much missing data for reliable HR-band power estimation
-
-        freqs, psd = welch(signal, fs=fs)
-
-        total_power = np.trapz(psd, freqs)
-
-        hr_mask = (freqs >= hr_band[0]) & (freqs <= hr_band[1])
-        hr_power = np.trapz(psd[hr_mask], freqs[hr_mask])
-
-        if total_power > 0:
-            band_power_ratios[i] = hr_power / total_power
+    band_power_ratios = compute_hr_band_power_ratios(subroi_signals, fs, hr_band)
 
     if not np.any(np.isfinite(band_power_ratios)):
         raise ValueError(
@@ -793,3 +766,181 @@ def select_best_subroi_by_hr_band_power(
     print(f"Selected sub-ROI {best_idx} with HR-band power ratio {band_power_ratios[best_idx]:.3f}")
 
     return best_idx, band_power_ratios
+
+
+def _normalize_01(values):
+    """Min-max normalise a 1D array to [0, 1], ignoring NaNs.
+
+    NaNs stay NaN; a constant (zero-range) set of finite values maps to 0.5 so no
+    sub-ROI is unfairly favoured when a criterion happens to be identical everywhere.
+    """
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(values)
+    out = np.full_like(values, np.nan)
+    if finite.sum() == 0:
+        return out
+    vmin = float(np.min(values[finite]))
+    vmax = float(np.max(values[finite]))
+    if vmax - vmin <= 0:
+        out[finite] = 0.5
+    else:
+        out[finite] = (values[finite] - vmin) / (vmax - vmin)
+    return out
+
+
+def compute_hr_band_power_ratios(subroi_signals, fs, hr_band=(0.7, 3.0)):
+    """HR-band power / total power for each sub-ROI (NaN where unusable).
+
+    Factored out of :func:`select_best_subroi_by_hr_band_power` so the same ratio can
+    be reused by the combined selector without recomputing it.
+    """
+    n_subrois = subroi_signals.shape[1]
+    band_power_ratios = np.full(n_subrois, np.nan)
+    for i in range(n_subrois):
+        signal = subroi_signals[:, i].astype(float)
+        finite = np.isfinite(signal)
+        # Skip sub-ROIs that are entirely empty or still have residual NaNs (long
+        # gaps the small-gap interpolation in the bandpass step left behind).
+        if finite.sum() < 2 or not finite.all():
+            continue
+        freqs, psd = welch(signal, fs=fs)
+        total_power = np.trapz(psd, freqs)
+        hr_mask = (freqs >= hr_band[0]) & (freqs <= hr_band[1])
+        hr_power = np.trapz(psd[hr_mask], freqs[hr_mask])
+        if total_power > 0:
+            band_power_ratios[i] = hr_power / total_power
+    return band_power_ratios
+
+
+def compute_peak_clarity_scores(subroi_signals, fs, hr_band=(0.7, 3.0)):
+    """Compute a peak-clarity score for each sub-ROI signal, based on the shape of the autocorrelation and the presence of extra peaks in the signal. NaN where
+unusable.
+    """
+    n_subrois = subroi_signals.shape[1]
+    clarity = np.full(n_subrois, np.nan)
+    periodicity = np.full(n_subrois, np.nan)
+    ripple = np.full(n_subrois, np.nan)
+
+    for i in range(n_subrois):
+        signal = subroi_signals[:, i].astype(float)
+        finite = np.isfinite(signal)
+        # Need enough finite, gap-free samples to judge peak shape reliably.
+        if finite.sum() < 8 or not finite.all():
+            continue
+        sig = signal - np.mean(signal)
+        std = float(np.std(sig))
+        if std <= 0:
+            continue
+        sig = sig / std
+        n = sig.size
+
+        # (1) Autocorrelation periodicity at the HR period.
+        autocorr = np.correlate(sig, sig, mode="full")[n - 1:]
+        autocorr = autocorr / autocorr[0]
+        lo_lag = max(1, int(np.floor(fs / hr_band[1])))
+        hi_lag = min(n - 1, int(np.ceil(fs / hr_band[0])))
+        if hi_lag > lo_lag:
+            periodicity[i] = float(np.clip(np.max(autocorr[lo_lag:hi_lag + 1]), 0.0, 1.0))
+
+        # (2) Ripple / extra-peak penalty: count ALL local maxima (any tiny ripple
+        #     counts) and compare to the number of beats expected from the dominant
+        #     HR-band frequency.
+        local_maxima, _ = find_peaks(sig)
+        freqs, psd = welch(sig, fs=fs)
+        band = (freqs >= hr_band[0]) & (freqs <= hr_band[1])
+        if local_maxima.size > 0 and np.any(band):
+            f_dom = float(freqs[band][int(np.argmax(psd[band]))])
+            expected_beats = f_dom * (n / fs)
+            if expected_beats > 0:
+                ripple[i] = float(np.clip(expected_beats / local_maxima.size, 0.0, 1.0))
+
+        parts = [v for v in (periodicity[i], ripple[i]) if np.isfinite(v)]
+        if parts:
+            clarity[i] = float(np.mean(parts))
+
+    return clarity, {"periodicity": periodicity, "ripple": ripple}
+
+
+def select_best_subroi(
+    subroi_signals,
+    fs,
+    hr_band=(0.7, 3.0),
+    weight_band_power=0.5,
+    weight_peak_clarity=0.5,
+    min_peak_clarity=None,
+):
+    """Select the best sub-ROI from BOTH the HR-band power and a peak-clarity score.
+    Parameters
+    ----------
+    subroi_signals : array, shape (T, N)
+        One signal per sub-ROI (already bandpassed).
+    fs : float
+        Sampling frequency in Hz.
+    hr_band : tuple(float, float)
+        Heart-rate band in Hz.
+    weight_band_power, weight_peak_clarity : float
+        Relative weights of the two (normalised) criteria. Set
+        ``weight_peak_clarity=0`` to recover the original HR-band-only behaviour.
+    min_peak_clarity : float or None
+        Optional hard threshold on the raw peak-clarity score in [0, 1].
+
+    Returns
+    -------
+    best_idx : int
+    scores : dict[str, ndarray]
+        Per-sub-ROI 'band_power_ratio', 'peak_clarity', 'periodicity', 'ripple',
+        'band_power_norm', 'peak_clarity_norm' and 'combined' (NaN where unusable).
+    """
+    band_power_ratio = compute_hr_band_power_ratios(subroi_signals, fs, hr_band)
+    peak_clarity, clarity_parts = compute_peak_clarity_scores(subroi_signals, fs, hr_band)
+
+    usable = np.isfinite(band_power_ratio) & np.isfinite(peak_clarity)
+    if not np.any(usable):
+        raise ValueError(
+            "No usable sub-ROI signal for combined selection: every sub-ROI is empty, "
+            "has residual NaNs, or has no measurable peaks. Try a coarser SUBROI_GRID, "
+            "or relax max_gap_frames / max_missing_fraction in bandpass_subroi_means."
+        )
+
+    # Optional hard gate: only keep sub-ROIs with sufficiently clear peaks.
+    candidate = usable.copy()
+    if min_peak_clarity is not None:
+        gated = candidate & (peak_clarity >= float(min_peak_clarity))
+        if np.any(gated):
+            candidate = gated
+        else:
+            print(
+                f"[select_best_subroi] No sub-ROI reaches min_peak_clarity="
+                f"{min_peak_clarity}; ignoring the gate and ranking all usable sub-ROIs."
+            )
+
+    # Normalise each criterion across the candidate sub-ROIs, then combine.
+    bp_norm = _normalize_01(np.where(candidate, band_power_ratio, np.nan))
+    pc_norm = _normalize_01(np.where(candidate, peak_clarity, np.nan))
+
+    weight_sum = float(weight_band_power) + float(weight_peak_clarity)
+    if weight_sum <= 0:
+        raise ValueError("weight_band_power + weight_peak_clarity must be > 0.")
+    combined = np.full(subroi_signals.shape[1], np.nan)
+    valid = np.isfinite(bp_norm) & np.isfinite(pc_norm)
+    combined[valid] = (
+        weight_band_power * bp_norm[valid] + weight_peak_clarity * pc_norm[valid]
+    ) / weight_sum
+
+    best_idx = int(np.nanargmax(combined))
+    print(
+        f"Selected sub-ROI {best_idx}: combined={combined[best_idx]:.3f} "
+        f"(HR-band power ratio={band_power_ratio[best_idx]:.3f}, "
+        f"peak clarity={peak_clarity[best_idx]:.3f})"
+    )
+
+    scores = {
+        "band_power_ratio": band_power_ratio,
+        "peak_clarity": peak_clarity,
+        "periodicity": clarity_parts["periodicity"],
+        "ripple": clarity_parts["ripple"],
+        "band_power_norm": bp_norm,
+        "peak_clarity_norm": pc_norm,
+        "combined": combined,
+    }
+    return best_idx, scores

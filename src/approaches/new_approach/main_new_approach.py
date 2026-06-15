@@ -4,6 +4,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     _parse_asc_file,
     load_gray_frame,
 )
-from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi_by_hr_band_power, save_subroi_overlay_with_highlight, compute_subroi_location_info
+from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi, save_subroi_overlay_with_highlight, compute_subroi_location_info
 from src.approaches.yang_et_al.utils_ground_truth import (
 	load_ground_truth_signal,
 	get_ground_truth_segment
@@ -52,6 +53,18 @@ HIGHCUT_BANDPASS = 0.7 # according to individual camera possibilities
 ORDER_BANDPASS = 4
 
 HR_BAND = (0.92, 3.0) # 55 bpm to 180 bpm, in Hz (0.92/60 to 3.0/60)
+
+# Sub-ROI selection: the chosen sub-ROI is picked from BOTH the HR-band power ratio
+# (SQI = power inside the HR band / total power) AND a peak-clarity score (how clean
+# and regular the peaks are), so a signal with "many small peaks on a broad peak" is
+# not chosen just because its power happens to sit in the HR band. The two criteria are
+# normalised across sub-ROIs and combined with these weights (set
+# SUBROI_WEIGHT_PEAK_CLARITY = 0 to recover the old HR-band-only behaviour). Set
+# SUBROI_MIN_PEAK_CLARITY to a value in [0, 1] (e.g. 0.3) to additionally exclude
+# sub-ROIs with very noisy peaks before ranking (None = no hard gate).
+SUBROI_WEIGHT_BAND_POWER = 0.5
+SUBROI_WEIGHT_PEAK_CLARITY = 0.5
+SUBROI_MIN_PEAK_CLARITY = None
 
 # --- run_batch overrides ---------------------------------------------------
 # When launched via scripts/run_batch.py, the spatial Gaussian + temporal
@@ -91,10 +104,15 @@ print(
     f"    ORDER_BANDPASS       = {ORDER_BANDPASS}  [{_src_order}]"
 )
 
-# Default per-ROI sub-ROI grid (rows; cols = rows). Overridable via the
-# NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI env var (JSON mapping {roi_name: rows}).
+# Default per-ROI sub-ROI grid sizes (rows; cols = rows). Each ROI maps to EITHER
+# a single grid size (one int) OR a list of grid sizes to try, e.g. [3, 4, 6, 8].
+# When several sizes are given, the full sub-ROI pipeline is run once per grid size
+# and the best signal across ALL grid sizes is chosen by SQI (HR-band power ratio).
+# ROI names not listed fall back to the scalar SUBROI_GRID_ROWS default. Overridable
+# via NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI (JSON mapping {roi_name: rows} OR
+# {roi_name: [rows, ...]}).
 SUBROI_GRID_ROWS_BY_ROI = {
-    "forehead": 8,
+    "forehead": [3, 4, 6, 8],
     "left_forehead": 5,
     "right_forehead": 5,
     "glabella": 3,
@@ -102,16 +120,43 @@ SUBROI_GRID_ROWS_BY_ROI = {
 _grid_by_roi_env = os.environ.get("NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI")
 if _grid_by_roi_env:
     try:
+        # Keep raw values (int OR list); they are normalised per ROI in
+        # resolve_subroi_grid_rows_list, so both scalars and lists round-trip.
         SUBROI_GRID_ROWS_BY_ROI.update(
-            {str(k).strip().lower(): int(v) for k, v in json.loads(_grid_by_roi_env).items()}
+            {str(k).strip().lower(): v for k, v in json.loads(_grid_by_roi_env).items()}
         )
     except (ValueError, TypeError) as exc:
         print(f"[new_approach] Could not parse NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI: {exc}")
 
 
-def resolve_subroi_grid_rows(roi_name: str) -> int:
-    """Return the sub-ROI grid row count for an ROI (falls back to the default)."""
-    return int(SUBROI_GRID_ROWS_BY_ROI.get(str(roi_name).strip().lower(), SUBROI_GRID_ROWS))
+def _normalize_grid_sizes(value) -> list[int]:
+    """Coerce a grid-size spec (a single int or a list of ints) into a sorted
+    list of unique positive grid sizes."""
+    raw = list(value) if isinstance(value, (list, tuple, set)) else [value]
+    sizes = []
+    for v in raw:
+        try:
+            iv = int(v)
+        except (ValueError, TypeError):
+            continue
+        if iv >= 1:
+            sizes.append(iv)
+    return sorted(set(sizes))
+
+
+def resolve_subroi_grid_rows_list(roi_name: str) -> list[int]:
+    """Return the list of sub-ROI grid row counts to try for an ROI.
+
+    Accepts both scalar (single grid) and list (multiple grids) entries in
+    SUBROI_GRID_ROWS_BY_ROI; ROI names not listed fall back to the scalar
+    SUBROI_GRID_ROWS default. When more than one size is returned, the pipeline
+    is run once per grid size and the best signal across all of them is chosen
+    by SQI (HR-band power ratio).
+    """
+    sizes = _normalize_grid_sizes(
+        SUBROI_GRID_ROWS_BY_ROI.get(str(roi_name).strip().lower(), SUBROI_GRID_ROWS)
+    )
+    return sizes or _normalize_grid_sizes(SUBROI_GRID_ROWS)
 
 
 def safe_name(value: str) -> str:
@@ -152,20 +197,243 @@ else:
     src_end_frame = None
 
 
+def process_subroi_grid(
+    grid_rows: int,
+    *,
+    roi_name: str,
+    grid_dir: Path,
+    raw_frame_signals: list[np.ndarray],
+    smoothed_frames: list[np.ndarray],
+    coords_per_frame: list[np.ndarray],
+    time_axis: np.ndarray,
+    n_frames: int,
+    source_frames: list[np.ndarray],
+    fps: float,
+) -> dict:
+    """Run the full sub-ROI pipeline for ONE grid size and return its result.
+
+    Splits the ROI into ``grid_rows x grid_rows`` sub-ROIs, computes/plots the
+    raw, Gaussian-smoothed and band-passed sub-ROI mean signals, writes the
+    sub-ROI overlay video, and selects the best sub-ROI (combined HR-band SQI +
+    peak-clarity score). All artifacts are written into ``grid_dir``. The
+    returned dict carries the selected signal plus its SQI so the caller can
+    pick the best grid size across several candidates (cross-grid winner is
+    chosen by SQI, which - unlike the within-grid 'combined' score - is
+    comparable across grid sizes).
+    """
+    SUBROI_GRID_ROWS = int(grid_rows)
+    SUBROI_GRID_COLS = SUBROI_GRID_ROWS
+    n_cells = SUBROI_GRID_ROWS * SUBROI_GRID_COLS
+
+    # Compute subROI means and plot before and after smoothing ------------------------------------------------
+    # For each stage (raw and Gaussian-smoothed): divide the ROI into a
+    # SUBROI_GRID_ROWS x SUBROI_GRID_COLS grid using each frame's own
+    # bounding box and compute every sub-ROI's mean signal per frame.
+    # Frames where a sub-ROI has no pixels stay NaN (shown as gaps, no
+    # interpolation).
+    stages = [
+        ("01_raw", raw_frame_signals, f"{roi_name} - Raw"),
+        (
+            "02_gaussian_smoothed",
+            smoothed_frames,
+            f"{roi_name} - Gaussian smoothed (kernel={GAUSSIAN_KERNEL_SIZE})",
+        ),
+    ]
+
+    cmap = plt.get_cmap("tab10")
+    for prefix, frame_values_list, label in stages:
+        # Whole-ROI mean signal over time (mean of all pixels per frame).
+        mean_signal = np.array(
+            [np.nanmean(v) if np.asarray(v).size else np.nan for v in frame_values_list],
+            dtype=float,
+        )
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.plot(time_axis, mean_signal, color="black", linewidth=2.0, label="Mean signal")
+        ax.set_title(f"{label} mean signal")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Temperature")
+        ax.grid(alpha=0.25)
+        ax.legend(loc="upper right")
+        fig.savefig(grid_dir / f"{prefix}_mean_signal.png", dpi=200, bbox_inches="tight")
+        plt.close(fig)
+
+        # Compute subROI means ----------------------------------------------------------------
+        subroi_means = compute_subroi_means(frame_values_list, coords_per_frame, len(frame_values_list), n_cells, SUBROI_GRID_ROWS, SUBROI_GRID_COLS)
+
+        # Sub-ROI mean signals, each sub-ROI in its own subplot
+        plot_subroi_means(
+            n_cells=n_cells,
+            subroi_means=subroi_means,
+            time_axis=time_axis,
+            label=label,
+            roi_dir=grid_dir,
+            prefix=prefix,
+            SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+            SUBROI_GRID_COLS=SUBROI_GRID_COLS)
+
+    # Sub-ROI overlay video-------------------------------------------------
+    # draw the sub-ROI grid onto the (already loaded) source frames.
+    # Distinct BGR colors per sub-ROI cell (matching the tab10 colormap used in plots)
+    subroi_cmap = plt.get_cmap("tab10")
+    cell_colors_bgr = [
+        tuple(int(round(c * 255)) for c in subroi_cmap(cell % 10)[:3][::-1]) for cell in range(n_cells)
+    ]
+    if source_frames:
+        n_video = min(len(source_frames), n_frames)
+        frame_height, frame_width = source_frames[0].shape[:2]
+        video_path = str(grid_dir / "subrois_overlay.mp4")
+        first_frame_png_path = str(grid_dir / "subrois_overlay_first_frame.png")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+
+        write_subrois_video(
+            writer = writer,
+            n_video=n_video,
+            source_frames=source_frames,
+            coords_per_frame=coords_per_frame,
+            video_path=video_path,
+            SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+            SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+            n_cells=n_cells,
+            cell_colors_bgr=cell_colors_bgr,
+            frame_height=frame_height,
+            frame_width=frame_width,
+            first_frame_png_path=first_frame_png_path)
+
+    # PSDs of sub-ROIs before and after temporal denoising -----------
+    plot_subroi_psds(
+        subroi_means = subroi_means,
+        fs = fps,
+        fmin= 0,
+        fmax= None,
+        nperseg= None,
+        roi_dir= grid_dir,
+        prefix= "before_bandpass"
+    )
+
+    # Apply bandpass ----------------------------------------------------------------------
+    filtered_subroi_means = bandpass_subroi_means(
+        subroi_means,
+        fs=fps,
+        lowcut=LOWCUT_BANDPASS,
+        highcut=HIGHCUT_BANDPASS,
+        order=ORDER_BANDPASS,
+        max_gap_frames=3,      # interpolate gaps of ≤3 frames # TODO double check
+        max_missing_fraction=0.15, # TODO double check
+    )
+
+    # Sub-ROI mean signals after the temporal bandpass, one sub-ROI per subplot
+    # (same layout as 01_raw_subrois / 02_gaussian_smoothed_subrois).
+    plot_subroi_means(
+        n_cells=n_cells,
+        subroi_means=filtered_subroi_means,
+        time_axis=time_axis,
+        label=f"{roi_name} - Bandpassed ({LOWCUT_BANDPASS}-{HIGHCUT_BANDPASS} Hz, order={ORDER_BANDPASS})",
+        roi_dir=grid_dir,
+        prefix="03_bandpassed",
+        SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+        SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+    )
+
+    plot_subroi_psds(
+        subroi_means = filtered_subroi_means,
+        fs = fps,
+        fmin= 0,
+        fmax= None,
+        nperseg= None,
+        roi_dir= grid_dir,
+        prefix= "after_bandpass"
+    )
+
+    # Choose sub-ROI for final heart rate detection from BOTH the HR-band power ratio
+    # (SQI) AND a peak-clarity score, so a signal with many small/ragged peaks is not
+    # selected just because its power sits in the HR band. ---------------
+    best_idx, subroi_scores = select_best_subroi(
+        subroi_signals=filtered_subroi_means,
+        fs=fps,
+        hr_band=HR_BAND,
+        weight_band_power=SUBROI_WEIGHT_BAND_POWER,
+        weight_peak_clarity=SUBROI_WEIGHT_PEAK_CLARITY,
+        min_peak_clarity=SUBROI_MIN_PEAK_CLARITY,
+    )
+
+    # Plot selected sub-ROI
+    best_signal = filtered_subroi_means[:, best_idx]
+    t = np.arange(len(best_signal)) / fps
+    fig_selected = plt.figure(figsize=(10, 4))
+    plt.plot(t, best_signal)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Signal")
+    plt.title(
+        f"Selected Sub-ROI {best_idx} (grid {SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS}) "
+        f"(combined={subroi_scores['combined'][best_idx]:.3f}, "
+        f"SQI={subroi_scores['band_power_ratio'][best_idx]:.3f}, "
+        f"peak clarity={subroi_scores['peak_clarity'][best_idx]:.3f})"
+    )
+    plt.tight_layout()
+    fig_selected.savefig(grid_dir / "selected_subroi_signal.png", dpi=200, bbox_inches="tight")
+    plt.close(fig_selected)
+
+    # Mark which sub-ROI was selected ----------------------------------------
+    # 1) Save a face overlay (sub-ROI grid) with the chosen sub-ROI highlighted,
+    #    so it is visually clear which sub-ROI produced the final signal.
+    # 2) Save the sub-ROI's location id (index/row/col + normalized center) so it
+    #    can be compared across persons/recordings (the normalized center is
+    #    comparable even across different grid sizes).
+    best_subroi_info = compute_subroi_location_info(
+        best_idx, SUBROI_GRID_ROWS, SUBROI_GRID_COLS, roi_name=roi_name
+    )
+    best_subroi_info["sqi_hr_band_power_ratio"] = float(subroi_scores["band_power_ratio"][best_idx])
+    best_subroi_info["peak_clarity"] = float(subroi_scores["peak_clarity"][best_idx])
+    best_subroi_info["combined_selection_score"] = float(subroi_scores["combined"][best_idx])
+    with open(grid_dir / "selected_subroi_location.json", "w", encoding="utf-8") as jf:
+        json.dump(best_subroi_info, jf, ensure_ascii=False, indent=2)
+    print(f"  [grid {SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS}] selected sub-ROI location: {best_subroi_info}")
+
+    if source_frames:
+        save_subroi_overlay_with_highlight(
+            source_frame=source_frames[0],
+            coords=coords_per_frame[0],
+            grid_rows=SUBROI_GRID_ROWS,
+            grid_cols=SUBROI_GRID_COLS,
+            n_cells=n_cells,
+            cell_colors_bgr=cell_colors_bgr,
+            output_path=grid_dir / "selected_subroi_overlay.png",
+            highlight_cell=best_idx,
+        )
+
+    return {
+        "grid_rows": SUBROI_GRID_ROWS,
+        "grid_cols": SUBROI_GRID_COLS,
+        "n_cells": n_cells,
+        "best_idx": int(best_idx),
+        "best_signal": np.asarray(best_signal, dtype=float),
+        "best_subroi_info": best_subroi_info,
+        "subroi_scores": subroi_scores,
+        "sqi": float(subroi_scores["band_power_ratio"][best_idx]),
+        "combined": float(subroi_scores["combined"][best_idx]),
+        "peak_clarity": float(subroi_scores["peak_clarity"][best_idx]),
+        "grid_dir": grid_dir,
+    }
+
+
 # --- Process every selected ROI --------------------------------------------
-# Location id of the selected (best) sub-ROI of the last processed ROI; saved
-# into the result metadata so it can be compared across persons/recordings.
+# best_signal / best_subroi_info hold the result of the last processed ROI; the
+# latter is saved into the result metadata so it can be compared across
+# persons/recordings.
+best_signal = None
 best_subroi_info = None
 for roi_name in roi_names:
     print(f"Processing ROI: {roi_name}")
 
-    # Per-ROI sub-ROI grid: larger ROIs (whole forehead) are split into more
-    # sub-ROIs than smaller ones (single-side forehead, glabella). Driven by
-    # SUBROI_GRID_ROWS_BY_ROI (overridable via run_batch env var).
-    SUBROI_GRID_ROWS = resolve_subroi_grid_rows(roi_name)
-    SUBROI_GRID_COLS = SUBROI_GRID_ROWS
-    n_cells = SUBROI_GRID_ROWS * SUBROI_GRID_COLS
-    print(f"  sub-ROI grid: {SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS} ({n_cells} sub-ROIs)")
+    # Per-ROI sub-ROI grid sizes: larger ROIs (whole forehead) are split into more
+    # sub-ROIs than smaller ones (single-side forehead, glabella). Each ROI may map
+    # to SEVERAL grid sizes (e.g. forehead -> [3, 4, 6, 8]); the full sub-ROI
+    # pipeline is then run once per grid size and the best signal across ALL grid
+    # sizes is picked by SQI further below. Driven by SUBROI_GRID_ROWS_BY_ROI
+    # (overridable via the run_batch env var).
+    grid_rows_list = resolve_subroi_grid_rows_list(roi_name)
+    print(f"  sub-ROI grid sizes to try: {', '.join(f'{g}x{g}' for g in grid_rows_list)}")
 
     roi_dir = output_root / safe_name(roi_name)
     roi_dir.mkdir(parents=True, exist_ok=True)
@@ -251,60 +519,8 @@ for roi_name in roi_names:
         # Store soley the smoothed pixel values (not coordinates, relative or absoulte, are stored)
         smoothed_frames.append(normalized[rel_ys, rel_xs])
 
-    
-    # Compute subROI means and plot before and after smoothing ------------------------------------------------
-    # For each stage (raw and Gaussian-smoothed): divide the ROI into a
-    # SUBROI_GRID_ROWS x SUBROI_GRID_COLS grid using each frame's own
-    # bounding box and compute every sub-ROI's mean signal per frame.
-    # Frames where a sub-ROI has no pixels stay NaN (shown as gaps, no
-    # interpolation).
-    
-
-    stages = [
-        ("01_raw", raw_frame_signals, f"{roi_name} - Raw"),
-        (
-            "02_gaussian_smoothed",
-            smoothed_frames,
-            f"{roi_name} - Gaussian smoothed (kernel={GAUSSIAN_KERNEL_SIZE})",
-        ),
-    ]
-
-    cmap = plt.get_cmap("tab10")
-    for prefix, frame_values_list, label in stages:
-        # Whole-ROI mean signal over time (mean of all pixels per frame).
-        mean_signal = np.array(
-            [np.nanmean(v) if np.asarray(v).size else np.nan for v in frame_values_list],
-            dtype=float,
-        )
-        fig, ax = plt.subplots(figsize=(12, 5))
-        ax.plot(time_axis, mean_signal, color="black", linewidth=2.0, label="Mean signal")
-        ax.set_title(f"{label} mean signal")
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Temperature")
-        ax.grid(alpha=0.25)
-        ax.legend(loc="upper right")
-        fig.savefig(roi_dir / f"{prefix}_mean_signal.png", dpi=200, bbox_inches="tight")
-        plt.close(fig)
-
-        # Compute subROI means ----------------------------------------------------------------
-        subroi_means = compute_subroi_means(frame_values_list, coords_per_frame, len(frame_values_list), n_cells, SUBROI_GRID_ROWS, SUBROI_GRID_COLS)
-
-
-        # Sub-ROI mean signals, each sub-ROI in its own subplot
-        plot_subroi_means(
-            n_cells=n_cells,
-            subroi_means=subroi_means,
-            time_axis=time_axis,
-            label=label,
-            roi_dir=roi_dir,
-            prefix=prefix,
-            SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
-            SUBROI_GRID_COLS=SUBROI_GRID_COLS)
-        
-
-    # Sub-ROI overlay video-------------------------------------------------
-    # draw the sub-ROI grid onto the source frames (one video per ROI)
-    # Get whole data (rather than only ROI data) for video creation
+    # Sub-ROI overlay source frames (grid-independent: load ONCE here and reuse
+    # for every grid size below, instead of re-reading them per grid).
     source_frames: list[np.ndarray] = []
     gray_path = configs.path_gray_frames
     if os.path.isfile(gray_path) and gray_path.endswith(".npy"):
@@ -330,126 +546,62 @@ for roi_name in roi_names:
     if not source_frames:
         print(f"[sub-ROI video] No source frames could be loaded from {gray_path}; overlay video will be skipped.")
 
-    # Distinct BGR colors per sub-ROI cell (matching the tab10 colormap used in plots)
-    subroi_cmap = plt.get_cmap("tab10")
-    cell_colors_bgr = [
-        tuple(int(round(c * 255)) for c in subroi_cmap(cell % 10)[:3][::-1]) for cell in range(n_cells)
-    ]   
-    if source_frames:
-        n_video = min(len(source_frames), n_frames)
-        frame_height, frame_width = source_frames[0].shape[:2]
-        video_path = str(roi_dir / "subrois_overlay.mp4")
-        first_frame_png_path = str(roi_dir / "subrois_overlay_first_frame.png")
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
-
-        write_subrois_video(
-            writer = writer,
-            n_video=n_video,
-            source_frames=source_frames,
-            coords_per_frame=coords_per_frame,
-            video_path=video_path,
-            SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
-            SUBROI_GRID_COLS=SUBROI_GRID_COLS,
-            n_cells=n_cells,
-            cell_colors_bgr=cell_colors_bgr,
-            frame_height=frame_height,
-            frame_width=frame_width,
-            first_frame_png_path=first_frame_png_path)
-
-    # PSDs of sub-ROIs before and after temporal denoising -----------    
-    plot_subroi_psds(
-        subroi_means = subroi_means,
-        fs = fps,
-        fmin= 0,
-        fmax= None,
-        nperseg= None,
-        roi_dir= roi_dir,
-        prefix= "before_bandpass"
-    )
-
-    # Apply bandpass ----------------------------------------------------------------------  
-    filtered_subroi_means = bandpass_subroi_means(
-        subroi_means,
-        fs=fps,
-        lowcut=LOWCUT_BANDPASS,
-        highcut=HIGHCUT_BANDPASS,
-        order=ORDER_BANDPASS,
-        max_gap_frames=3,      # interpolate gaps of ≤3 frames # TODO double check
-        max_missing_fraction=0.15, # TODO double check
-    )
-
-    # Sub-ROI mean signals after the temporal bandpass, one sub-ROI per subplot
-    # (same layout as 01_raw_subrois / 02_gaussian_smoothed_subrois).
-    plot_subroi_means(
-        n_cells=n_cells,
-        subroi_means=filtered_subroi_means,
-        time_axis=time_axis,
-        label=f"{roi_name} - Bandpassed ({LOWCUT_BANDPASS}-{HIGHCUT_BANDPASS} Hz, order={ORDER_BANDPASS})",
-        roi_dir=roi_dir,
-        prefix="03_bandpassed",
-        SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
-        SUBROI_GRID_COLS=SUBROI_GRID_COLS,
-    )
-
-
-    plot_subroi_psds(
-        subroi_means = filtered_subroi_means,
-        fs = fps,
-        fmin= 0,
-        fmax= None,
-        nperseg= None,
-        roi_dir= roi_dir,
-        prefix= "after_bandpass"
-    )
-
-    # Choose sub-ROI for final heart rate detection based on power in HR frequency band/ total power ---------------
-    best_idx, ratios = select_best_subroi_by_hr_band_power(
-        subroi_signals = filtered_subroi_means,
-        fs = fps,
-        hr_band = HR_BAND)
-    
-    # Plot selected sub-ROI
-    # Get selected signal
-    best_signal = filtered_subroi_means[:, best_idx]
-
-    t = np.arange(len(best_signal)) / fps
-
-    fig_selected = plt.figure(figsize=(10, 4))
-    plt.plot(t, best_signal)
-    plt.xlabel("Time (s)")
-    plt.ylabel("Signal")
-    plt.title(f"Selected Sub-ROI {best_idx} (SQI={ratios[best_idx]:.3f})")
-    plt.tight_layout()
-    fig_selected.savefig(roi_dir / "selected_subroi_signal.png", dpi=200, bbox_inches="tight")
-    plt.close(fig_selected)
-
-    # Mark which sub-ROI was selected ----------------------------------------
-    # 1) Save a face overlay (sub-ROI grid) with the chosen sub-ROI highlighted,
-    #    so it is visually clear which sub-ROI produced the final signal.
-    # 2) Save the sub-ROI's location id (index/row/col + normalized center) so it
-    #    can be compared across persons/recordings (same ROI -> same index means
-    #    the same sub-ROI was used; the normalized center is comparable even
-    #    across different grid sizes).
-    best_subroi_info = compute_subroi_location_info(
-        best_idx, SUBROI_GRID_ROWS, SUBROI_GRID_COLS, roi_name=roi_name
-    )
-    best_subroi_info["sqi_hr_band_power_ratio"] = float(ratios[best_idx])
-    with open(roi_dir / "selected_subroi_location.json", "w", encoding="utf-8") as jf:
-        json.dump(best_subroi_info, jf, ensure_ascii=False, indent=2)
-    print(f"Selected sub-ROI location: {best_subroi_info}")
-
-    if source_frames:
-        save_subroi_overlay_with_highlight(
-            source_frame=source_frames[0],
-            coords=coords_per_frame[0],
-            grid_rows=SUBROI_GRID_ROWS,
-            grid_cols=SUBROI_GRID_COLS,
-            n_cells=n_cells,
-            cell_colors_bgr=cell_colors_bgr,
-            output_path=roi_dir / "selected_subroi_overlay.png",
-            highlight_cell=best_idx,
+    # Run the full sub-ROI pipeline once per grid size. Per-grid plots/videos go
+    # into a grid_<r>x<c> subfolder so successive grids do not overwrite each
+    # other; within each grid the best sub-ROI is chosen by the combined SQI +
+    # peak-clarity score (see select_best_subroi / process_subroi_grid).
+    grid_results = []
+    for grid_rows in grid_rows_list:
+        grid_dir = roi_dir / f"grid_{grid_rows}x{grid_rows}"
+        grid_dir.mkdir(parents=True, exist_ok=True)
+        print(f"  sub-ROI grid: {grid_rows}x{grid_rows} ({grid_rows * grid_rows} sub-ROIs) -> {grid_dir.name}")
+        grid_results.append(
+            process_subroi_grid(
+                grid_rows,
+                roi_name=roi_name,
+                grid_dir=grid_dir,
+                raw_frame_signals=raw_frame_signals,
+                smoothed_frames=smoothed_frames,
+                coords_per_frame=coords_per_frame,
+                time_axis=time_axis,
+                n_frames=n_frames,
+                source_frames=source_frames,
+                fps=fps,
+            )
         )
+
+    # Cross-grid selection: the per-grid 'combined' score is min-max normalised
+    # WITHIN each grid's sub-ROIs, so it is NOT comparable across grids. The SQI
+    # (HR-band power ratio) is an absolute fraction of in-band power and IS
+    # comparable across grid sizes -> use it to pick the overall best grid/signal.
+    best_grid = max(
+        grid_results,
+        key=lambda r: r["sqi"] if np.isfinite(r["sqi"]) else -np.inf,
+    )
+    best_signal = best_grid["best_signal"]
+    best_subroi_info = dict(best_grid["best_subroi_info"])
+    best_subroi_info["grid_sizes_tried"] = list(grid_rows_list)
+    best_subroi_info["cross_grid_selection_metric"] = "sqi_hr_band_power_ratio"
+    _grid_summary = ", ".join(
+        f"{r['grid_rows']}x{r['grid_rows']} (SQI={r['sqi']:.3f}, clarity={r['peak_clarity']:.3f})"
+        for r in grid_results
+    )
+    print(
+        f"[{roi_name}] Best grid across {len(grid_results)} size(s): "
+        f"{best_grid['grid_rows']}x{best_grid['grid_cols']} by SQI={best_grid['sqi']:.3f} "
+        f"(sub-ROI {best_grid['best_idx']}). Candidates: {_grid_summary}"
+    )
+
+    # Mirror the winning grid's selection artifacts into the ROI-level folder so
+    # the top-level ROI directory always shows the final chosen sub-ROI.
+    for _fname in (
+        "selected_subroi_signal.png",
+        "selected_subroi_location.json",
+        "selected_subroi_overlay.png",
+    ):
+        _src_artifact = best_grid["grid_dir"] / _fname
+        if _src_artifact.is_file():
+            shutil.copy2(_src_artifact, roi_dir / _fname)
 
 
 print("Own pipeline done.")
