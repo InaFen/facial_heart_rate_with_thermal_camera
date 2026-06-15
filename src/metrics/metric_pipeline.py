@@ -444,6 +444,103 @@ def _shade_agreement_background(
         ax.axvspan(start, end, facecolor=agreement_color, edgecolor="none", zorder=0)
 
 
+def _save_hr_agreement_plot(
+    output_path: str | Path,
+    *,
+    time_grid: np.ndarray,
+    hr_agreement: Dict[str, object],
+    pred_signal: np.ndarray,
+    pred_peaks: np.ndarray,
+    pred_peak_times: np.ndarray,
+    pred_ihr_times: np.ndarray,
+    pred_ihr: np.ndarray,
+    gt_segment: np.ndarray,
+    gt_peaks: np.ndarray,
+    gt_peak_times: np.ndarray,
+    gt_ihr_times: np.ndarray,
+    gt_ihr: np.ndarray,
+    max_bpm_diff: float = HR_AGREEMENT_MAX_BPM_DIFF,
+    pred_color: str = "C1",
+    pred_signal_label: str = "Predicted (resampled)",
+    pred_peaks_label: str = "Pred peaks",
+    pred_ihr_label: str = "Pred IHR",
+    panel1_title: str = "Predicted signal",
+    suptitle_note: str = "",
+) -> str:
+    """Save the 3-panel HR-agreement figure (predicted signal, GT ECG, compared IHR).
+
+    The three panels share one time axis and a light-green (|Pred - GT| instantaneous
+    HR <= ``max_bpm_diff`` bpm) / grey (else / HR undefined) background driven by
+    ``hr_agreement['agreement_mask']`` (see compute_hr_agreement_over_time /
+    _shade_agreement_background). ``suptitle_note`` is appended to the figure title and
+    the predicted curves use ``pred_color`` / the given labels, so the same routine
+    renders both the primary and the every-2nd-peak-dropped ("halved") variants.
+    """
+    time_grid = np.asarray(time_grid, dtype=float)
+    pred_signal = np.asarray(pred_signal, dtype=float)
+    gt_segment = np.asarray(gt_segment, dtype=float)
+    pred_peaks = np.asarray(pred_peaks, dtype=int)
+    gt_peaks = np.asarray(gt_peaks, dtype=int)
+    agreement_mask = np.asarray(hr_agreement["agreement_mask"], dtype=bool)
+    thr = float(max_bpm_diff)
+    agreement_seconds = float(hr_agreement["agreement_seconds"])
+    comparable_seconds = float(hr_agreement["comparable_seconds"])
+
+    fig, axes = plt.subplots(3, 1, figsize=(14, 13), sharex=True)
+    fig.suptitle(
+        f"HR agreement within +/-{thr:.0f} bpm{suptitle_note} "
+        f"(green = agreement; total {agreement_seconds:.1f} s "
+        f"of {comparable_seconds:.1f} comparable s)",
+        fontsize=15,
+    )
+
+    # 1) Predicted signal with detected peaks
+    _shade_agreement_background(axes[0], time_grid, agreement_mask)
+    axes[0].plot(time_grid, pred_signal, color=pred_color, alpha=0.85, label=pred_signal_label)
+    if pred_peaks.size > 0:
+        axes[0].scatter(pred_peak_times, pred_signal[pred_peaks], s=22, color=pred_color, edgecolors="black", linewidths=0.4, label=pred_peaks_label)
+    axes[0].set_title(panel1_title)
+    axes[0].set_ylabel("Amplitude")
+    axes[0].legend(loc="best")
+    axes[0].grid(alpha=0.2)
+
+    # 2) Ground-truth ECG with detected peaks
+    _shade_agreement_background(axes[1], time_grid, agreement_mask)
+    axes[1].plot(time_grid, gt_segment, color="C0", alpha=0.85, label="Ground truth (ECG)")
+    if gt_peaks.size > 0:
+        axes[1].scatter(gt_peak_times, gt_segment[gt_peaks], s=22, color="C0", edgecolors="black", linewidths=0.4, label="GT peaks")
+    axes[1].set_title("Ground-truth ECG")
+    axes[1].set_ylabel("Amplitude")
+    axes[1].legend(loc="best")
+    axes[1].grid(alpha=0.2)
+
+    # 3) Compared instantaneous heart rates
+    _shade_agreement_background(axes[2], time_grid, agreement_mask)
+    axes[2].plot(gt_ihr_times, gt_ihr, color="C0", alpha=0.8, marker="o", label="GT IHR")
+    axes[2].plot(pred_ihr_times, pred_ihr, color=pred_color, alpha=0.8, marker="o", label=pred_ihr_label)
+    axes[2].set_title(f"Instantaneous HR (green where |Pred - GT| <= {thr:.0f} bpm)")
+    axes[2].set_xlabel("Time (s)")
+    axes[2].set_ylabel("HR (bpm)")
+    line_handles, line_labels = axes[2].get_legend_handles_labels()
+    bg_handles = [
+        Patch(facecolor="#b6e8b6", edgecolor="none", label=f"<= {thr:.0f} bpm difference"),
+        Patch(facecolor="#e0e0e0", edgecolor="none", label=f"> {thr:.0f} bpm / HR undefined"),
+    ]
+    axes[2].legend(
+        line_handles + bg_handles,
+        line_labels + [h.get_label() for h in bg_handles],
+        loc="best",
+        ncol=2,
+    )
+    axes[2].grid(alpha=0.2)
+
+    plt.tight_layout()
+    print(f"[metric_pipeline] Saving HR-agreement plot to: {output_path}")
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return str(output_path)
+
+
 def _is_finite_scalar(value) -> bool:
     """Safely test whether a (possibly non-numeric) value is finite.
 
@@ -976,6 +1073,9 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "signal_hr_mean_halved_diff_to_gt_mean",
     "signal_hr_mean_halved_abs_diff_to_gt_mean",
     "num_pred_peaks_halved",
+    "hr_agreement_seconds_halved",
+    "hr_comparable_seconds_halved",
+    "hr_agreement_fraction_halved",
     "num_matched_closest_halved",
     "metrics_closest_halved_rmse",
     "metrics_closest_halved_mae",
@@ -1187,6 +1287,9 @@ def _flatten_metrics_for_csv(
             "signal_hr_mean_halved_abs_diff_to_gt_mean"
         ),
         "num_pred_peaks_halved": data.get("num_pred_peaks_halved"),
+        "hr_agreement_seconds_halved": data.get("hr_agreement_seconds_halved"),
+        "hr_comparable_seconds_halved": data.get("hr_comparable_seconds_halved"),
+        "hr_agreement_fraction_halved": data.get("hr_agreement_fraction_halved"),
         "num_matched_closest_halved": data.get("num_matched_closest_halved"),
         "num_matched_disregard_halved": data.get("num_matched_disregard_halved"),
     }
@@ -1781,6 +1884,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
     signal_hr_mean_halved_diff_to_gt_mean = None
     signal_hr_mean_halved_abs_diff_to_gt_mean = None
     halved: Dict[str, object] | None = None
+    hr_agreement_halved: Dict[str, object] | None = None
     if drop_every_second_peak:
         pred_peaks_halved = np.asarray(pred_peaks, dtype=int)[::2]
         pred_peak_times_halved = (
@@ -1804,10 +1908,24 @@ def evaluate_instantaneous_hr_against_ground_truth(
             pred_ihr_times=pred_ihr_times_halved,
             tolerance_ms=tolerance_ms,
         )
+        hr_agreement_halved = compute_hr_agreement_over_time(
+            gt_ihr_times=gt_ihr_times,
+            gt_ihr=gt_ihr,
+            pred_ihr_times=pred_ihr_times_halved,
+            pred_ihr=pred_ihr_halved,
+            time_grid=t,
+            max_bpm_diff=HR_AGREEMENT_MAX_BPM_DIFF,
+        )
         print(
             f"[metric_pipeline] Drop-every-second-peak variant active: predicted peaks "
             f"{pred_peaks.size} -> {pred_peaks_halved.size}; signal_hr_mean "
             f"{signal_hr_mean} -> {signal_hr_mean_halved}"
+        )
+        print(
+            f"[metric_pipeline] HR agreement (halved) within +/-{HR_AGREEMENT_MAX_BPM_DIFF:.0f} bpm: "
+            f"{hr_agreement_halved['agreement_seconds']:.2f} s of "
+            f"{hr_agreement_halved['comparable_seconds']:.2f} comparable s "
+            f"(fraction={hr_agreement_halved['agreement_fraction']})"
         )
 
     # Create output folder named after the input NPZ file inside a `metric_results` root
@@ -2046,63 +2164,49 @@ def evaluate_instantaneous_hr_against_ground_truth(
     # instantaneous HRs share one time axis, with a light-green background wherever the
     # two HR estimates agree within +/-HR_AGREEMENT_MAX_BPM_DIFF bpm and a grey
     # background everywhere else (outside the threshold or where HR is undefined). See
-    # compute_hr_agreement_over_time / _shade_agreement_background.
+    # compute_hr_agreement_over_time / _shade_agreement_background. The same plot is
+    # additionally produced for the every-2nd-peak-dropped ("halved") variant whenever
+    # that variant was computed for this recording.
     if plot_steps or plot_bland_altman:
-        agreement_mask = np.asarray(hr_agreement["agreement_mask"], dtype=bool)
-        thr = HR_AGREEMENT_MAX_BPM_DIFF
-        fig, axes = plt.subplots(3, 1, figsize=(14, 13), sharex=True)
-        fig.suptitle(
-            f"HR agreement within +/-{thr:.0f} bpm "
-            f"(green = agreement; total {hr_agreement['agreement_seconds']:.1f} s "
-            f"of {hr_agreement['comparable_seconds']:.1f} comparable s)",
-            fontsize=15,
+        _save_hr_agreement_plot(
+            output_folder / "06_hr_agreement_highlighted.png",
+            time_grid=t,
+            hr_agreement=hr_agreement,
+            pred_signal=pred_rs,
+            pred_peaks=pred_peaks,
+            pred_peak_times=pred_peak_times,
+            pred_ihr_times=pred_ihr_times,
+            pred_ihr=pred_ihr,
+            gt_segment=gt_segment,
+            gt_peaks=gt_peaks,
+            gt_peak_times=gt_peak_times,
+            gt_ihr_times=gt_ihr_times,
+            gt_ihr=gt_ihr,
+            max_bpm_diff=HR_AGREEMENT_MAX_BPM_DIFF,
         )
 
-        # 1) Predicted signal with detected peaks
-        _shade_agreement_background(axes[0], t, agreement_mask)
-        axes[0].plot(t, pred_rs, color="C1", alpha=0.85, label="Predicted (resampled)")
-        if pred_peaks.size > 0:
-            axes[0].scatter(pred_peak_times, pred_rs[pred_peaks], s=22, color="C1", edgecolors="black", linewidths=0.4, label="Pred peaks")
-        axes[0].set_title("Predicted signal")
-        axes[0].set_ylabel("Amplitude")
-        axes[0].legend(loc="best")
-        axes[0].grid(alpha=0.2)
-
-        # 2) Ground-truth ECG with detected peaks
-        _shade_agreement_background(axes[1], t, agreement_mask)
-        axes[1].plot(t, gt_segment, color="C0", alpha=0.85, label="Ground truth (ECG)")
-        if gt_peaks.size > 0:
-            axes[1].scatter(gt_peak_times, gt_segment[gt_peaks], s=22, color="C0", edgecolors="black", linewidths=0.4, label="GT peaks")
-        axes[1].set_title("Ground-truth ECG")
-        axes[1].set_ylabel("Amplitude")
-        axes[1].legend(loc="best")
-        axes[1].grid(alpha=0.2)
-
-        # 3) Compared instantaneous heart rates
-        _shade_agreement_background(axes[2], t, agreement_mask)
-        axes[2].plot(gt_ihr_times, gt_ihr, color="C0", alpha=0.8, marker="o", label="GT IHR")
-        axes[2].plot(pred_ihr_times, pred_ihr, color="C1", alpha=0.8, marker="o", label="Pred IHR")
-        axes[2].set_title(f"Instantaneous HR (green where |Pred - GT| <= {thr:.0f} bpm)")
-        axes[2].set_xlabel("Time (s)")
-        axes[2].set_ylabel("HR (bpm)")
-        line_handles, line_labels = axes[2].get_legend_handles_labels()
-        bg_handles = [
-            Patch(facecolor="#b6e8b6", edgecolor="none", label=f"<= {thr:.0f} bpm difference"),
-            Patch(facecolor="#e0e0e0", edgecolor="none", label=f"> {thr:.0f} bpm / HR undefined"),
-        ]
-        axes[2].legend(
-            line_handles + bg_handles,
-            line_labels + [h.get_label() for h in bg_handles],
-            loc="best",
-            ncol=2,
-        )
-        axes[2].grid(alpha=0.2)
-
-        plt.tight_layout()
-        agreement_plot_path = output_folder / "06_hr_agreement_highlighted.png"
-        print(f"[metric_pipeline] Saving HR-agreement plot to: {agreement_plot_path}")
-        plt.savefig(agreement_plot_path, dpi=150, bbox_inches="tight")
-        plt.close()
+        if drop_every_second_peak and hr_agreement_halved is not None:
+            _save_hr_agreement_plot(
+                output_folder / "07_hr_agreement_highlighted_halved.png",
+                time_grid=t,
+                hr_agreement=hr_agreement_halved,
+                pred_signal=pred_rs,
+                pred_peaks=pred_peaks_halved,
+                pred_peak_times=pred_peak_times_halved,
+                pred_ihr_times=pred_ihr_times_halved,
+                pred_ihr=pred_ihr_halved,
+                gt_segment=gt_segment,
+                gt_peaks=gt_peaks,
+                gt_peak_times=gt_peak_times,
+                gt_ihr_times=gt_ihr_times,
+                gt_ihr=gt_ihr,
+                max_bpm_diff=HR_AGREEMENT_MAX_BPM_DIFF,
+                pred_color="C3",
+                pred_peaks_label="Kept peaks (every 2nd dropped)",
+                pred_ihr_label="Pred IHR (every 2nd peak dropped)",
+                panel1_title="Predicted signal: every second detected peak dropped",
+                suptitle_note=", every 2nd predicted peak dropped",
+            )
 
     # Save output data as JSON for easy inspection
     def _serialize_for_json(obj):
@@ -2151,6 +2255,17 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "signal_hr_mean_halved_diff_to_gt_mean": signal_hr_mean_halved_diff_to_gt_mean,
         "signal_hr_mean_halved_abs_diff_to_gt_mean": signal_hr_mean_halved_abs_diff_to_gt_mean,
         "num_pred_peaks_halved": int(pred_peaks_halved.size) if drop_every_second_peak else None,
+        "hr_agreement_seconds_halved": (
+            float(hr_agreement_halved["agreement_seconds"]) if hr_agreement_halved is not None else None
+        ),
+        "hr_comparable_seconds_halved": (
+            float(hr_agreement_halved["comparable_seconds"]) if hr_agreement_halved is not None else None
+        ),
+        "hr_agreement_fraction_halved": (
+            float(hr_agreement_halved["agreement_fraction"])
+            if hr_agreement_halved is not None and _is_finite_scalar(hr_agreement_halved["agreement_fraction"])
+            else None
+        ),
         "num_matched_disregard_halved": (
             int(halved["matched_gt_ihr"].size) if halved is not None else None
         ),
@@ -2217,6 +2332,15 @@ def evaluate_instantaneous_hr_against_ground_truth(
     out["hr_comparable_seconds"] = hr_agreement["comparable_seconds"]
     out["hr_agreement_fraction"] = hr_agreement["agreement_fraction"]
     out["hr_agreement_max_bpm_diff"] = float(HR_AGREEMENT_MAX_BPM_DIFF)
+    out["hr_agreement_seconds_halved"] = (
+        hr_agreement_halved["agreement_seconds"] if hr_agreement_halved is not None else None
+    )
+    out["hr_comparable_seconds_halved"] = (
+        hr_agreement_halved["comparable_seconds"] if hr_agreement_halved is not None else None
+    )
+    out["hr_agreement_fraction_halved"] = (
+        hr_agreement_halved["agreement_fraction"] if hr_agreement_halved is not None else None
+    )
 
     return out
 
