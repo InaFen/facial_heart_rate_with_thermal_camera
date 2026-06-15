@@ -61,7 +61,7 @@ HR_BAND = (0.92, 3.0) # 55 bpm to 180 bpm, in Hz (0.92/60 to 3.0/60)
 # small peaks on a broad peak" is not chosen just because its power happens to sit in
 # the HR band; the two criteria are then normalised across sub-ROIs and combined with
 # the weights below.
-CONSIDER_PEAK_CLARITY_IN_SELECTION = False
+CONSIDER_PEAK_CLARITY_IN_SELECTION = True
 
 # Used ONLY when CONSIDER_PEAK_CLARITY_IN_SELECTION is True. SUBROI_WEIGHT_* weight the
 # (normalised) HR-band power and peak-clarity criteria; SUBROI_MIN_PEAK_CLARITY (in

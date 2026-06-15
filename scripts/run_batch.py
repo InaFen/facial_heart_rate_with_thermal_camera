@@ -105,7 +105,7 @@ NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI = {
 	"right_forehead": 4,
 	"glabella": 3,
 	"manual_rectangle": 2,
-	"manual_rectangle_front_view": 8,
+	"manual_rectangle_front_view": [8],
 }
 
 
