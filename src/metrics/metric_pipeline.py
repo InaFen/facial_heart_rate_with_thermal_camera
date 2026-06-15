@@ -32,6 +32,7 @@ import matplotlib
 # run. Forcing Agg removes the X dependency entirely. Set before importing pyplot.
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from scipy import stats
 
 try:
@@ -107,6 +108,12 @@ RELAXED_GT_FIND_PEAKS_SETTINGS: dict[str, dict[str, float | None]] = {
 DROP_EVERY_SECOND_PEAK_RULES: tuple[dict[str, str], ...] = (
     {"path_fragment": "new_approach/results/mwir", "roi": "manual_rectangle"},
 )
+
+# Two heart-rate estimates "agree" at a moment when their instantaneous HR differs by
+# no more than this many bpm. The total time (in seconds) of such agreement across the
+# recording is reported as a metric (``hr_agreement_seconds``) and used to shade the
+# HR-agreement plot green (within the threshold) vs grey (outside / HR undefined).
+HR_AGREEMENT_MAX_BPM_DIFF = 5.0
 
 # Default evaluation parameters
 DEFAULT_TOLERANCE_MS = 500.0
@@ -321,6 +328,120 @@ def instantaneous_hr_from_peak_times(peak_times: np.ndarray) -> Tuple[np.ndarray
     hr_inst = 60.0 / ibi[valid]
     hr_times = (peak_times[:-1][valid] + peak_times[1:][valid]) / 2.0
     return hr_inst.astype(float), hr_times.astype(float)
+
+
+def compute_hr_agreement_over_time(
+    gt_ihr_times: np.ndarray,
+    gt_ihr: np.ndarray,
+    pred_ihr_times: np.ndarray,
+    pred_ihr: np.ndarray,
+    time_grid: np.ndarray,
+    max_bpm_diff: float = HR_AGREEMENT_MAX_BPM_DIFF,
+) -> Dict[str, object]:
+    """Find where predicted & ground-truth instantaneous HR agree within ``max_bpm_diff``.
+
+    Both instantaneous-HR series are linearly interpolated onto ``time_grid`` (the dense
+    signal time axis). Only grid samples that lie inside BOTH series' time spans are
+    "comparable" -- outside those spans the instantaneous HR is undefined. A grid sample
+    is "in agreement" when it is comparable AND the absolute HR difference there is
+    ``<= max_bpm_diff`` bpm. The total agreement duration is simply the number of
+    in-agreement grid samples times the grid spacing, i.e. how many seconds of the
+    signal track the ground-truth HR to within ``max_bpm_diff`` bpm.
+
+    Returns a dict with:
+      - ``abs_diff``: |pred - gt| on the grid (NaN where not comparable),
+      - ``comparable_mask`` / ``agreement_mask``: bool arrays over ``time_grid``,
+      - ``agreement_seconds`` / ``comparable_seconds``: durations in seconds,
+      - ``agreement_fraction``: agreement_seconds / comparable_seconds (NaN if none),
+      - ``max_bpm_diff``: the threshold used.
+    """
+    time_grid = np.asarray(time_grid, dtype=float)
+    gt_ihr_times = np.asarray(gt_ihr_times, dtype=float)
+    gt_ihr = np.asarray(gt_ihr, dtype=float)
+    pred_ihr_times = np.asarray(pred_ihr_times, dtype=float)
+    pred_ihr = np.asarray(pred_ihr, dtype=float)
+
+    n = int(time_grid.size)
+    abs_diff = np.full(n, np.nan, dtype=float)
+    comparable_mask = np.zeros(n, dtype=bool)
+    agreement_mask = np.zeros(n, dtype=bool)
+
+    dt = float(np.median(np.diff(time_grid))) if time_grid.size >= 2 else 0.0
+
+    if gt_ihr_times.size >= 2 and pred_ihr_times.size >= 2 and dt > 0:
+        # Overlap of the two series' time spans = where both HRs are defined.
+        lo = max(float(gt_ihr_times.min()), float(pred_ihr_times.min()))
+        hi = min(float(gt_ihr_times.max()), float(pred_ihr_times.max()))
+        if hi > lo:
+            comparable_mask = (time_grid >= lo) & (time_grid <= hi)
+            if np.any(comparable_mask):
+                gt_on_grid = np.interp(time_grid, gt_ihr_times, gt_ihr)
+                pred_on_grid = np.interp(time_grid, pred_ihr_times, pred_ihr)
+                diff = np.abs(pred_on_grid - gt_on_grid)
+                abs_diff = np.where(comparable_mask, diff, np.nan)
+                agreement_mask = comparable_mask & (abs_diff <= float(max_bpm_diff))
+
+    agreement_seconds = float(np.count_nonzero(agreement_mask) * dt)
+    comparable_seconds = float(np.count_nonzero(comparable_mask) * dt)
+    agreement_fraction = (
+        agreement_seconds / comparable_seconds if comparable_seconds > 0 else float("nan")
+    )
+    return {
+        "abs_diff": abs_diff,
+        "comparable_mask": comparable_mask,
+        "agreement_mask": agreement_mask,
+        "agreement_seconds": agreement_seconds,
+        "comparable_seconds": comparable_seconds,
+        "agreement_fraction": agreement_fraction,
+        "max_bpm_diff": float(max_bpm_diff),
+    }
+
+
+def _mask_to_spans(
+    time_grid: np.ndarray, mask: np.ndarray
+) -> list[tuple[float, float]]:
+    """Convert a boolean ``mask`` over ``time_grid`` into ``(start, end)`` time spans.
+
+    Each maximal run of ``True`` samples becomes one ``(start_time, end_time)`` pair; the
+    end is extended by one grid step so adjacent shaded spans tile the axis without gaps.
+    """
+    time_grid = np.asarray(time_grid, dtype=float)
+    mask = np.asarray(mask, dtype=bool)
+    if time_grid.size == 0 or mask.size == 0 or not mask.any():
+        return []
+    dt = float(np.median(np.diff(time_grid))) if time_grid.size >= 2 else 0.0
+    spans: list[tuple[float, float]] = []
+    in_run = False
+    start_idx = 0
+    for i, flag in enumerate(mask):
+        if flag and not in_run:
+            in_run = True
+            start_idx = i
+        elif not flag and in_run:
+            in_run = False
+            spans.append((float(time_grid[start_idx]), float(time_grid[i - 1] + dt)))
+    if in_run:
+        spans.append((float(time_grid[start_idx]), float(time_grid[-1] + dt)))
+    return spans
+
+
+def _shade_agreement_background(
+    ax: plt.Axes,
+    time_grid: np.ndarray,
+    agreement_mask: np.ndarray,
+    *,
+    agreement_color: str = "#b6e8b6",
+    background_color: str = "#e0e0e0",
+) -> None:
+    """Shade ``ax`` grey everywhere and light green where ``agreement_mask`` is True.
+
+    ``time_grid`` and ``agreement_mask`` must be aligned. The green spans are drawn
+    behind the data (``zorder=0``). Used by the HR-agreement plot so the signal, ECG
+    and HR subplots share one green (<= threshold) / grey (else) backdrop.
+    """
+    ax.set_facecolor(background_color)
+    for start, end in _mask_to_spans(time_grid, agreement_mask):
+        ax.axvspan(start, end, facecolor=agreement_color, edgecolor="none", zorder=0)
 
 
 def _is_finite_scalar(value) -> bool:
@@ -807,6 +928,12 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "original_pipeline_bpm_estimate_abs_diff_to_gt_mean",
     "num_gt_peaks",
     "num_pred_peaks",
+    # --- per-moment HR agreement: total seconds where |pred - gt| instantaneous HR is
+    #     within hr_agreement_max_bpm_diff bpm (and the comparable overlap / fraction). ---
+    "hr_agreement_max_bpm_diff",
+    "hr_agreement_seconds",
+    "hr_comparable_seconds",
+    "hr_agreement_fraction",
     # --- closest matching: all 'closest' columns are grouped before any 'disregard' ---
     "num_matched_closest",
     # metrics_closest.*
@@ -1048,6 +1175,10 @@ def _flatten_metrics_for_csv(
         ),
         "num_gt_peaks": data.get("num_gt_peaks"),
         "num_pred_peaks": data.get("num_pred_peaks"),
+        "hr_agreement_max_bpm_diff": data.get("hr_agreement_max_bpm_diff"),
+        "hr_agreement_seconds": data.get("hr_agreement_seconds"),
+        "hr_comparable_seconds": data.get("hr_comparable_seconds"),
+        "hr_agreement_fraction": data.get("hr_agreement_fraction"),
         "num_matched_closest": data.get("num_matched_closest"),
         "num_matched_disregard": data.get("num_matched_disregard"),
         "signal_hr_mean_halved": data.get("signal_hr_mean_halved"),
@@ -1615,6 +1746,25 @@ def evaluate_instantaneous_hr_against_ground_truth(
 
     print(f"[metric_pipeline] Closest-matching pairs combined size: {closest_gt_ihr.size}")
 
+    # Per-moment HR agreement: total time (s) where the predicted and ground-truth
+    # instantaneous HRs differ by <= HR_AGREEMENT_MAX_BPM_DIFF bpm. Both IHR series are
+    # interpolated onto the signal time axis ``t``; only the overlap where both are
+    # defined is comparable. Drives the 06_hr_agreement plot's green/grey background.
+    hr_agreement = compute_hr_agreement_over_time(
+        gt_ihr_times=gt_ihr_times,
+        gt_ihr=gt_ihr,
+        pred_ihr_times=pred_ihr_times,
+        pred_ihr=pred_ihr,
+        time_grid=t,
+        max_bpm_diff=HR_AGREEMENT_MAX_BPM_DIFF,
+    )
+    print(
+        f"[metric_pipeline] HR agreement within +/-{HR_AGREEMENT_MAX_BPM_DIFF:.0f} bpm: "
+        f"{hr_agreement['agreement_seconds']:.2f} s of "
+        f"{hr_agreement['comparable_seconds']:.2f} comparable s "
+        f"(fraction={hr_agreement['agreement_fraction']})"
+    )
+
     # Optional "halved" variant: a few recordings detect ~2x as many predicted peaks as
     # there are real heartbeats (see DROP_EVERY_SECOND_PEAK_RULES -- notably the
     # new_approach mwir manual_rectangle recordings), which roughly doubles the
@@ -1892,6 +2042,68 @@ def evaluate_instantaneous_hr_against_ground_truth(
             plt.savefig(ba_closest_halved_path, dpi=150, bbox_inches="tight")
             plt.close(fig)
 
+    # HR-agreement plot: the predicted signal, the ground-truth ECG and the compared
+    # instantaneous HRs share one time axis, with a light-green background wherever the
+    # two HR estimates agree within +/-HR_AGREEMENT_MAX_BPM_DIFF bpm and a grey
+    # background everywhere else (outside the threshold or where HR is undefined). See
+    # compute_hr_agreement_over_time / _shade_agreement_background.
+    if plot_steps or plot_bland_altman:
+        agreement_mask = np.asarray(hr_agreement["agreement_mask"], dtype=bool)
+        thr = HR_AGREEMENT_MAX_BPM_DIFF
+        fig, axes = plt.subplots(3, 1, figsize=(14, 13), sharex=True)
+        fig.suptitle(
+            f"HR agreement within +/-{thr:.0f} bpm "
+            f"(green = agreement; total {hr_agreement['agreement_seconds']:.1f} s "
+            f"of {hr_agreement['comparable_seconds']:.1f} comparable s)",
+            fontsize=15,
+        )
+
+        # 1) Predicted signal with detected peaks
+        _shade_agreement_background(axes[0], t, agreement_mask)
+        axes[0].plot(t, pred_rs, color="C1", alpha=0.85, label="Predicted (resampled)")
+        if pred_peaks.size > 0:
+            axes[0].scatter(pred_peak_times, pred_rs[pred_peaks], s=22, color="C1", edgecolors="black", linewidths=0.4, label="Pred peaks")
+        axes[0].set_title("Predicted signal")
+        axes[0].set_ylabel("Amplitude")
+        axes[0].legend(loc="best")
+        axes[0].grid(alpha=0.2)
+
+        # 2) Ground-truth ECG with detected peaks
+        _shade_agreement_background(axes[1], t, agreement_mask)
+        axes[1].plot(t, gt_segment, color="C0", alpha=0.85, label="Ground truth (ECG)")
+        if gt_peaks.size > 0:
+            axes[1].scatter(gt_peak_times, gt_segment[gt_peaks], s=22, color="C0", edgecolors="black", linewidths=0.4, label="GT peaks")
+        axes[1].set_title("Ground-truth ECG")
+        axes[1].set_ylabel("Amplitude")
+        axes[1].legend(loc="best")
+        axes[1].grid(alpha=0.2)
+
+        # 3) Compared instantaneous heart rates
+        _shade_agreement_background(axes[2], t, agreement_mask)
+        axes[2].plot(gt_ihr_times, gt_ihr, color="C0", alpha=0.8, marker="o", label="GT IHR")
+        axes[2].plot(pred_ihr_times, pred_ihr, color="C1", alpha=0.8, marker="o", label="Pred IHR")
+        axes[2].set_title(f"Instantaneous HR (green where |Pred - GT| <= {thr:.0f} bpm)")
+        axes[2].set_xlabel("Time (s)")
+        axes[2].set_ylabel("HR (bpm)")
+        line_handles, line_labels = axes[2].get_legend_handles_labels()
+        bg_handles = [
+            Patch(facecolor="#b6e8b6", edgecolor="none", label=f"<= {thr:.0f} bpm difference"),
+            Patch(facecolor="#e0e0e0", edgecolor="none", label=f"> {thr:.0f} bpm / HR undefined"),
+        ]
+        axes[2].legend(
+            line_handles + bg_handles,
+            line_labels + [h.get_label() for h in bg_handles],
+            loc="best",
+            ncol=2,
+        )
+        axes[2].grid(alpha=0.2)
+
+        plt.tight_layout()
+        agreement_plot_path = output_folder / "06_hr_agreement_highlighted.png"
+        print(f"[metric_pipeline] Saving HR-agreement plot to: {agreement_plot_path}")
+        plt.savefig(agreement_plot_path, dpi=150, bbox_inches="tight")
+        plt.close()
+
     # Save output data as JSON for easy inspection
     def _serialize_for_json(obj):
         """Convert numpy types to JSON-serializable Python types."""
@@ -1926,6 +2138,13 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "num_pred_peaks": int(pred_peaks.size),
         "num_matched_disregard": int(matched_gt_ihr.size),
         "num_matched_closest": int(closest_gt_ihr.size),
+        "hr_agreement_max_bpm_diff": float(HR_AGREEMENT_MAX_BPM_DIFF),
+        "hr_agreement_seconds": float(hr_agreement["agreement_seconds"]),
+        "hr_comparable_seconds": float(hr_agreement["comparable_seconds"]),
+        "hr_agreement_fraction": (
+            float(hr_agreement["agreement_fraction"])
+            if _is_finite_scalar(hr_agreement["agreement_fraction"]) else None
+        ),
         "signal_hr_mean_halved": (
             float(signal_hr_mean_halved) if _is_finite_scalar(signal_hr_mean_halved) else None
         ),
@@ -1994,6 +2213,10 @@ def evaluate_instantaneous_hr_against_ground_truth(
     }
     out["output_folder"] = str(output_folder)
     out["metrics_json_path"] = str(output_json_path)
+    out["hr_agreement_seconds"] = hr_agreement["agreement_seconds"]
+    out["hr_comparable_seconds"] = hr_agreement["comparable_seconds"]
+    out["hr_agreement_fraction"] = hr_agreement["agreement_fraction"]
+    out["hr_agreement_max_bpm_diff"] = float(HR_AGREEMENT_MAX_BPM_DIFF)
 
     return out
 
