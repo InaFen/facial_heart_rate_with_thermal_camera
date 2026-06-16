@@ -51,6 +51,7 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
         detect_peaks_in_signal,
         mean_hr_from_peak_times,
     )
+from helpers_metric_pipeline import save_single_plot
 
 # Global defaults (previously set inside __main__); make available to all functions
 PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # absolute floor for the predicted-signal peak prominence
@@ -2085,6 +2086,16 @@ def evaluate_instantaneous_hr_against_ground_truth(
         combined_plot_path = output_folder / "01_combined_evaluation.png"
         print(f"[metric_pipeline] Saving combined plot to: {combined_plot_path}")
         plt.savefig(combined_plot_path, dpi=150, bbox_inches="tight")
+
+        save_single_plot(axes[0], output_folder / "01_1_gt_signal_peaks.png")
+        save_single_plot(axes[1], output_folder / "01_2_pred_signal_peaks.png")
+        save_single_plot(axes[2], output_folder / "01_3_ihr_tolerance_matching.png")
+        save_single_plot(axes[3], output_folder / "01_4_ihr_closest_matching.png")
+
+        if drop_every_second_peak and halved is not None:
+            save_single_plot(axes[4], output_folder / "01_5_halved_peaks_signal.png")
+            save_single_plot(axes[5], output_folder / "01_6_halved_peaks_ihr.png")
+
         plt.close()
 
     # Generate and save Bland-Altman plots for both matching strategies
@@ -2575,8 +2586,8 @@ if __name__ == "__main__":
     # accepts short ("new"/"yang"/"nair") or full ("new_approach"/...) names; set
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
-    APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = "mwir" #None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    APPROACHES_TO_RUN = ("nair_et_al", "yang_et_al") #("nair_et_al", "yang_et_al", "new_approach")
+    CAMERAS_TO_RUN = None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
