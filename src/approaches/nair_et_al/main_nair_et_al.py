@@ -71,6 +71,7 @@ SUBROI_GRID_ROWS_BY_ROI = {
     "left_forehead": 2,
     "right_forehead": 2,
     "glabella": 2,
+    "manual_rectangle_front_view": 6,
     "manual_rectangle": 2
 }
 
