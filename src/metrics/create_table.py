@@ -18,6 +18,9 @@ from the regular ``*_closest_*`` columns, except r² which is dropped because it
 of the COMPOSITE_METRICS used to select the best ROI) for *every* recording across all
 approaches (Nair et al., Yang et al. and the own approach), reading the best-ROI summary CSV
 (``saved_results/all_npz_metrics_best_roi.csv``) and reporting the ROI selected there.
+Recordings whose selected ROI is the side-view ``manual_rectangle`` are dropped (those
+side-view temple experiments are reported separately in the own-approach tables); the
+front-view ``manual_rectangle_front_view`` recordings are kept.
 """
 
 from __future__ import annotations
@@ -368,7 +371,8 @@ def _create_own_approach_manual_table(
         lambda p: _experiment_label(p, view_label, region_label)
     )
     for out_col, (closest_col, halved_col) in _COLUMN_SOURCES.items():
-        
+        if out_col == "r²":
+            continue
         table[out_col] = np.where(
             use_halved, df[halved_col].to_numpy(), df[closest_col].to_numpy()
         )
@@ -502,12 +506,15 @@ def create_table_best_roi_all_approaches(
 
     Reads the best-ROI summary CSV (default ``saved_results/all_npz_metrics_best_roi.csv``,
     produced by ``summarize_metrics.py`` -- one row per recording, already reduced to its
-    winning ROI) and keeps EVERY row, across all approaches (Nair et al., Yang et al. and
-    the own approach). The reported metric columns are the same as the manual-ROI tables
-    but always taken from the regular ``closest`` columns (the ``closest_halved`` variant is
-    not used here) and **without r²**, which is not one of the COMPOSITE_METRICS used to
-    select the best ROI. Four descriptive columns lead: Approach, Camera, Experiment
-    (Participant x, experiment y, before/after sport) and ROI (the ROI selected in the CSV).
+    winning ROI) and keeps every row except those whose selected ROI is the side-view
+    ``manual_rectangle`` (dropped because those side-view temple experiments are reported
+    separately in the own-approach tables; the front-view ``manual_rectangle_front_view``
+    recordings are kept), across all approaches (Nair et al., Yang et al. and the own
+    approach). The reported metric columns are the same as the manual-ROI tables but always
+    taken from the regular ``closest`` columns (the ``closest_halved`` variant is not used
+    here) and **without r²**, which is not one of the COMPOSITE_METRICS used to select the
+    best ROI. Four descriptive columns lead: Approach, Camera, Experiment (Participant x,
+    experiment y, before/after sport) and ROI (the ROI selected in the CSV).
 
     Parameters
     ----------
@@ -547,11 +554,20 @@ def create_table_best_roi_all_approaches(
     if df.empty:
         raise ValueError(f"No rows found in {csv_path}.")
 
+    # Drop the side-view temple recordings (roi == "manual_rectangle"); they are reported
+    # separately in the own-approach side-view table. Exact match keeps the front-view
+    # "manual_rectangle_front_view" recordings (a different ROI token).
+    df = df.loc[df["roi"].astype(str) != "manual_rectangle"].copy()
+    if df.empty:
+        raise ValueError(
+            f"No rows left in {csv_path} after dropping side-view 'manual_rectangle' rows."
+        )
+
     pf = df["plots_folder"].astype(str)
     table = pd.DataFrame(index=df.index)
     table["Approach"] = pf.apply(_approach_label)
     table["Camera"] = pf.apply(_detect_camera)
-    table["Experiment"] = pf.apply(_participant_sport_label)
+    #table["Experiment"] = pf.apply(_participant_sport_label)
     table["ROI"] = df["roi"].astype(str)
     # Always the regular closest columns (first element of each _COLUMN_SOURCES pair).
     # r² is skipped here: it is not one of the COMPOSITE_METRICS used to rank / select the
