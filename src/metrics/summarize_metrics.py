@@ -49,6 +49,10 @@ correct one:
               loa_width Limits-of-agreement width = 2 * 1.96 * sd_diff. Lower is better.
     ks_pvalue Two-sample KS p-value (distribution similarity). Higher = more similar.
               Weak ranking signal.
+    hr_agreement_fraction
+              Fraction of the comparable time where the predicted and ground-truth
+              instantaneous HR agree within HR_AGREEMENT_MAX_BPM_DIFF (5) bpm (the
+              ``hr_agreement_fraction`` column). Higher is better.
 
 The selection criterion is hard-coded to ``composite`` (it is not user selectable):
 within each recording the candidate ROIs are *ranked* on each of {mae, rmse, abs_bias,
@@ -61,6 +65,7 @@ Usage
 -----
     python -m src.metrics.summarize_metrics             # always uses the composite criterion
     python -m src.metrics.summarize_metrics --verbose   # also print the per-recording ranking
+    python -m src.metrics.summarize_metrics --exclude-manual-rectangle  # drop manual_rectangle ROIs
 """
 
 from __future__ import annotations
@@ -86,6 +91,7 @@ ROI_VOCABULARY: Tuple[str, ...] = (
     "left_forehead",
     "right_forehead",
     "whole_face",
+    "manual_rectangle_front_view",
     "manual_rectangle",
     "forehead",
     "glabella",
@@ -109,11 +115,11 @@ AVAILABLE_METRICS: Tuple[str, ...] = (
     "sd_diff",
     "loa_width",
     #"ks_pvalue",
+    "hr_agreement_fraction",
     "composite",
 )
-# Sub-metrics averaged (by rank) for the scale-free "composite" criterion. r2 is left
-# out on purpose - it is unstable for near-constant HR over a 20 s window.
-COMPOSITE_METRICS: Tuple[str, ...] = ("mae", "rmse", "abs_bias", "sd_diff")
+# Sub-metrics averaged (by rank) for the scale-free "composite" criterion.
+COMPOSITE_METRICS: Tuple[str, ...] = ("mae", "rmse", "abs_bias", "sd_diff", "loa_width", "hr_agreement_fraction")
 
 # Columns prepended to every output row.
 HELPER_FIELDNAMES: Tuple[str, ...] = (
@@ -174,9 +180,9 @@ def split_plots_folder(plots_folder: str) -> Tuple[str, str, str]:
 def selection_score(row: Dict[str, str], metric: str) -> Optional[float]:
     """Return a "lower is better" score for ``row`` under ``metric`` (``None`` if N/A).
 
-    Criteria where higher is better (``r2``, ``ks_pvalue``) are negated so callers can
-    always minimise. The ``composite`` criterion is handled separately (it needs the
-    whole group) and is rejected here.
+    Criteria where higher is better (``r2``, ``ks_pvalue``, ``hr_agreement_fraction``) are
+    negated so callers can always minimise. The ``composite`` criterion is handled
+    separately (it needs the whole group) and is rejected here.
     """
     if metric == "mae":
         return _to_float(row.get("metrics_closest_mae"))
@@ -197,6 +203,9 @@ def selection_score(row: Dict[str, str], metric: str) -> Optional[float]:
     if metric == "ks_pvalue":
         pvalue = _to_float(row.get("metrics_closest_ks_pvalue"))
         return -pvalue if pvalue is not None else None  # maximise -> negate
+    if metric == "hr_agreement_fraction":
+        fraction = _to_float(row.get("hr_agreement_fraction"))
+        return -fraction if fraction is not None else None  # maximise -> negate
     raise ValueError(f"Unknown selection metric: {metric!r}")
 
 
@@ -277,8 +286,14 @@ def summarize_best_rois(
     output_csv: str | Path = DEFAULT_OUTPUT_CSV,
     metric: str = SELECTION_METRIC,
     verbose: bool = False,
+    exclude_manual_rectangle: bool = False,
 ) -> Path:
     """Write ``output_csv`` keeping only the best-ROI row per recording.
+
+    When ``exclude_manual_rectangle`` is True, any ROI whose name contains
+    ``"manual_rectangle"`` (i.e. both ``manual_rectangle`` and
+    ``manual_rectangle_front_view``) is dropped before grouping, so it neither competes
+    for nor appears as a recording's best ROI.
 
     Returns the output path. Raises ``ValueError`` for an unknown ``metric`` and
     ``FileNotFoundError`` if the input CSV is missing.
@@ -307,8 +322,12 @@ def summarize_best_rois(
     groups: "defaultdict[str, List[Dict[str, str]]]" = defaultdict(list)
     group_order: List[str] = []
     roi_of: Dict[int, str] = {}
+    excluded_manual = 0
     for row in rows:
         group_key, roi, _recording = split_plots_folder(row.get("plots_folder", ""))
+        if exclude_manual_rectangle and "manual_rectangle" in roi:
+            excluded_manual += 1
+            continue
         if group_key not in groups:
             group_order.append(group_key)
         groups[group_key].append(row)
@@ -365,6 +384,7 @@ def summarize_best_rois(
         win_counter=win_counter,
         multi_win_counter=multi_win_counter,
         output_csv=output_csv,
+        excluded_manual=excluded_manual,
     )
     return output_csv
 
@@ -384,12 +404,17 @@ def _print_summary(
     win_counter: "Counter[Tuple[str, str, str]]",
     multi_win_counter: "Counter[Tuple[str, str, str]]",
     output_csv: Path,
+    excluded_manual: int = 0,
 ) -> None:
     """Print how many rows were reduced and which ROI won most often per approach/camera."""
     print(
         f"[summarize_metrics] {input_rows} rows -> {groups} recordings "
         f"(best ROI by '{metric}') -> {output_csv}"
     )
+    if excluded_manual:
+        print(
+            f"  excluded {excluded_manual} 'manual_rectangle' ROI row(s) before selection"
+        )
 
     def render(counter: "Counter[Tuple[str, str, str]]", title: str) -> None:
         if not counter:
@@ -406,7 +431,7 @@ def _print_summary(
             )
             print(f"    {approach}/{camera}: {ordered}")
 
-    render(multi_win_counter, "ROI wins among recordings with >1 ROI (the real contest)")
+    render(multi_win_counter, "ROI wins among recordings with >1 ROI")
     render(win_counter, "ROI wins across all recordings (incl. single-ROI recordings)")
 
 
@@ -421,6 +446,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         action="store_true",
         help="Print the per-recording ROI ranking for multi-ROI recordings.",
     )
+    parser.add_argument(
+        "--exclude-manual-rectangle",
+        action="store_true",
+        default=False,
+        help="Disregard ROIs whose name contains 'manual_rectangle' "
+        "(covers both manual_rectangle and manual_rectangle_front_view).",
+    )
     args = parser.parse_args(argv)
     # The selection criterion is intentionally hard-coded (see SELECTION_METRIC); it is
     # not exposed as a CLI option.
@@ -428,6 +460,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         input_csv=args.input,
         output_csv=args.output,
         verbose=args.verbose,
+        exclude_manual_rectangle=args.exclude_manual_rectangle,
     )
 
 
