@@ -20,6 +20,9 @@ al., Yang et al. and the own approach) and reports both perspectives at once (a
 in the side-view table the MWIR side-view rows use the *halved* metrics where those exist
 (only the own approach's MWIR manual recordings have a halved variant); every other row --
 including the Nair et al./Yang et al. MWIR rows -- uses the regular ``*_closest_*`` metrics.
+``create_table_side_view_all_approaches`` and ``create_table_front_view_all_approaches``
+produce the same content split into two single-perspective tables (one with all side-view
+temple recordings, one with all front-view face recordings) instead of one combined table.
 
 ``create_table_best_roi_all_approaches`` builds a table with the same metric columns (always
 from the regular ``*_closest_*`` columns) for *every* recording across all approaches (Nair
@@ -58,6 +61,18 @@ DEFAULT_OUTPUT_CSV_MANUAL_ALL = (
 )
 DEFAULT_OUTPUT_TEX_MANUAL_ALL = (
     REPO_ROOT / "saved_results" / "table_manual_all_approaches.tex"
+)
+DEFAULT_OUTPUT_CSV_SIDE_ALL = (
+    REPO_ROOT / "saved_results" / "table_side_view_all_approaches.csv"
+)
+DEFAULT_OUTPUT_TEX_SIDE_ALL = (
+    REPO_ROOT / "saved_results" / "table_side_view_all_approaches.tex"
+)
+DEFAULT_OUTPUT_CSV_FRONT_ALL = (
+    REPO_ROOT / "saved_results" / "table_front_view_all_approaches.csv"
+)
+DEFAULT_OUTPUT_TEX_FRONT_ALL = (
+    REPO_ROOT / "saved_results" / "table_front_view_all_approaches.tex"
 )
 DEFAULT_INPUT_BEST_ROI_CSV = (
     REPO_ROOT / "saved_results" / "all_npz_metrics_best_roi.csv"
@@ -522,36 +537,39 @@ def create_table_manual_front_view_own_approach(
     )
 
 
-def create_table_manual_all_approaches(
-    csv_path: str | Path = DEFAULT_INPUT_CSV,
-    output_path: Optional[str | Path] = None,
+def _create_manual_all_approaches_table(
+    csv_path: str | Path,
+    output_path: Optional[str | Path],
     *,
-    round_decimals: Optional[int] = 2,
-    latex_output_path: Optional[str | Path] = None,
-    latex_caption: Optional[str] = None,
-    latex_label: Optional[str] = None,
+    perspective: str,
+    round_decimals: Optional[int],
+    latex_output_path: Optional[str | Path],
+    latex_caption: Optional[str],
+    latex_label: Optional[str],
 ) -> tuple[pd.DataFrame, str]:
-    """Build the manual-ROI metrics table for *all* approaches and both perspectives.
+    """Shared builder for the all-approaches manual-ROI metrics tables.
 
-    Unlike :func:`create_table_side_view_own_approach` /
-    :func:`create_table_manual_front_view_own_approach` (own approach only), this keeps the
-    manual-ROI recordings of every approach -- Nair et al., Yang et al. and the own approach
-    -- and reports both the side-view temple (``manual_rectangle``) and the front-view face
-    (``manual_rectangle_front_view``) recordings in one table, told apart by a
-    ``Perspective`` column.
+    ``perspective`` selects which manual recordings are kept and how they are labelled:
 
-    Columns: ``Approach`` (Nair et al. / Yang et al. / own approach), ``Camera`` (display
-    name ImageIR / VarioCam / Lepton), ``Participant`` (1..3), ``Experiment`` (before / after
-    sport), ``Perspective`` (side view / front view), ``ROI`` ("temple (manual detection)" /
-    "face (manual detection)") and then the metric columns. The MWIR (ImageIR) *side-view*
-    rows report the ``closest_halved`` metrics **when available** -- which is only the case
-    for the own approach's MWIR manual recordings (Nair et al. / Yang et al. have no halved
-    variant). Every other row -- all front-view rows, the Vario/Lepton rows, and the
-    Nair/Yang MWIR rows -- reports the regular ``closest`` metrics.
+    * ``"both"``  -- keep the side-view temple (``manual_rectangle``) and the front-view
+      face (``manual_rectangle_front_view``) recordings and add a ``Perspective`` column to
+      tell them apart (used by :func:`create_table_manual_all_approaches`).
+    * ``"side"``  -- keep only the side-view temple recordings (no ``Perspective`` column,
+      it would be constant).
+    * ``"front"`` -- keep only the front-view face recordings (no ``Perspective`` column).
 
-    Parameters and return value match the other table builders (see e.g.
-    :func:`create_table_best_roi_all_approaches`).
+    Columns: ``Approach``, ``Camera`` (display name), ``Participant``, ``Experiment``
+    (before / after sport), ``Perspective`` (only when ``perspective == "both"``), ``ROI``
+    ("temple (manual detection)" / "face (manual detection)") and then the metric columns.
+    The MWIR (ImageIR) *side-view* rows report the ``closest_halved`` metrics when available
+    (only the own approach's MWIR manual recordings have a halved variant); every other row
+    reports the regular ``closest`` metrics.
     """
+    if perspective not in ("both", "side", "front"):
+        raise ValueError(
+            f"perspective must be 'both', 'side' or 'front', got {perspective!r}"
+        )
+
     df_full = pd.read_csv(csv_path)
     if "plots_folder" not in df_full.columns:
         raise ValueError(f"'plots_folder' column not found in {csv_path}")
@@ -565,9 +583,19 @@ def create_table_manual_all_approaches(
         )
 
     pf_full = df_full["plots_folder"].astype(str)
-    df = df_full.loc[pf_full.str.contains("manual_rectangle", na=False)].copy()
+    is_manual_full = pf_full.str.contains("manual_rectangle", na=False)
+    is_front_full = pf_full.str.contains("manual_rectangle_front_view", na=False)
+    if perspective == "side":
+        keep = is_manual_full & ~is_front_full
+    elif perspective == "front":
+        keep = is_manual_full & is_front_full
+    else:
+        keep = is_manual_full
+    df = df_full.loc[keep].copy()
     if df.empty:
-        raise ValueError("No manual_rectangle rows found in the CSV.")
+        raise ValueError(
+            f"No manual_rectangle ({perspective}-view) rows found in the CSV."
+        )
 
     pf = df["plots_folder"].astype(str)
     camera = pf.apply(_detect_camera)
@@ -591,7 +619,8 @@ def create_table_manual_all_approaches(
         if p is None
         else ("before sport" if p[1] in (1, 2) else "after sport")
     )
-    table["Perspective"] = np.where(is_front, "front view", "side view")
+    if perspective == "both":
+        table["Perspective"] = np.where(is_front, "front view", "side view")
     table["ROI"] = np.where(
         is_front, "face (manual detection)", "temple (manual detection)"
     )
@@ -633,6 +662,108 @@ def create_table_manual_all_approaches(
     return _finalize_table(
         table,
         output_path=output_path,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
+def create_table_manual_all_approaches(
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Build the manual-ROI metrics table for *all* approaches and both perspectives.
+
+    Unlike :func:`create_table_side_view_own_approach` /
+    :func:`create_table_manual_front_view_own_approach` (own approach only), this keeps the
+    manual-ROI recordings of every approach -- Nair et al., Yang et al. and the own approach
+    -- and reports both the side-view temple (``manual_rectangle``) and the front-view face
+    (``manual_rectangle_front_view``) recordings in one table, told apart by a
+    ``Perspective`` column. Use :func:`create_table_side_view_all_approaches` /
+    :func:`create_table_front_view_all_approaches` to get the same content split into two
+    separate single-perspective tables instead.
+
+    Columns: ``Approach`` (Nair et al. / Yang et al. / own approach), ``Camera`` (display
+    name ImageIR / VarioCam / Lepton), ``Participant`` (1..3), ``Experiment`` (before / after
+    sport), ``Perspective`` (side view / front view), ``ROI`` ("temple (manual detection)" /
+    "face (manual detection)") and then the metric columns. The MWIR (ImageIR) *side-view*
+    rows report the ``closest_halved`` metrics **when available** -- which is only the case
+    for the own approach's MWIR manual recordings (Nair et al. / Yang et al. have no halved
+    variant). Every other row -- all front-view rows, the Vario/Lepton rows, and the
+    Nair/Yang MWIR rows -- reports the regular ``closest`` metrics.
+
+    Parameters and return value match the other table builders (see e.g.
+    :func:`create_table_best_roi_all_approaches`).
+    """
+    return _create_manual_all_approaches_table(
+        csv_path,
+        output_path,
+        perspective="both",
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
+def create_table_side_view_all_approaches(
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Build the side-view manual-ROI metrics table for *all* approaches.
+
+    Like :func:`create_table_manual_all_approaches` but keeps only the side-view temple
+    (``manual_rectangle``) recordings of every approach (Nair et al., Yang et al. and the
+    own approach). The constant ``Perspective`` column is omitted; the ``ROI`` column reads
+    "temple (manual detection)" throughout. As in the combined table the MWIR (ImageIR) rows
+    report the ``closest_halved`` metrics when available (only the own approach's MWIR manual
+    recordings have a halved variant). Parameters and return value match
+    :func:`create_table_manual_all_approaches`.
+    """
+    return _create_manual_all_approaches_table(
+        csv_path,
+        output_path,
+        perspective="side",
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
+def create_table_front_view_all_approaches(
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Build the front-view manual-ROI metrics table for *all* approaches.
+
+    Like :func:`create_table_manual_all_approaches` but keeps only the front-view face
+    (``manual_rectangle_front_view``) recordings of every approach. The constant
+    ``Perspective`` column is omitted; the ``ROI`` column reads "face (manual detection)"
+    throughout. Every camera (including MWIR/ImageIR) uses the regular ``closest`` metrics
+    here -- the ``closest_halved`` variant is never used for the front view. Parameters and
+    return value match :func:`create_table_manual_all_approaches`.
+    """
+    return _create_manual_all_approaches_table(
+        csv_path,
+        output_path,
+        perspective="front",
         round_decimals=round_decimals,
         latex_output_path=latex_output_path,
         latex_caption=latex_caption,
@@ -778,6 +909,24 @@ if __name__ == "__main__":
                 latex_output_path=DEFAULT_OUTPUT_TEX_MANUAL_ALL,
                 latex_caption="Manual-ROI (temple / face) results across all approaches.",
                 latex_label="tab:manual_all_approaches",
+            ),
+        ),
+        (
+            "side view all approaches",
+            lambda: create_table_side_view_all_approaches(
+                output_path=DEFAULT_OUTPUT_CSV_SIDE_ALL,
+                latex_output_path=DEFAULT_OUTPUT_TEX_SIDE_ALL,
+                latex_caption="Side-view (temple, manual) results across all approaches.",
+                latex_label="tab:side_view_all_approaches",
+            ),
+        ),
+        (
+            "front view all approaches",
+            lambda: create_table_front_view_all_approaches(
+                output_path=DEFAULT_OUTPUT_CSV_FRONT_ALL,
+                latex_output_path=DEFAULT_OUTPUT_TEX_FRONT_ALL,
+                latex_caption="Front-view (face, manual) results across all approaches.",
+                latex_label="tab:front_view_all_approaches",
             ),
         ),
         (
