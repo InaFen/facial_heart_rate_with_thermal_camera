@@ -99,6 +99,14 @@ ROI_VOCABULARY: Tuple[str, ...] = (
     "tracker",
 )
 
+# (approach, roi) combinations that are always dropped before ROI selection. The
+# whole-face ROI is not a meaningful region for the Nair et al. and Yang et al. approaches,
+# so it never competes for (nor appears as) a recording's best ROI for them.
+IGNORED_APPROACH_ROIS: Tuple[Tuple[str, str], ...] = (
+    ("nair_et_al", "whole_face"),
+    ("yang_et_al", "whole_face"),
+)
+
 # Trailing time-segment token, e.g. "_30_00-50_00s".
 _TIME_SEGMENT_RE = re.compile(r"_(\d+_\d+-\d+_\d+s)$")
 
@@ -323,10 +331,16 @@ def summarize_best_rois(
     group_order: List[str] = []
     roi_of: Dict[int, str] = {}
     excluded_manual = 0
+    excluded_ignored = 0
     for row in rows:
-        group_key, roi, _recording = split_plots_folder(row.get("plots_folder", ""))
+        plots_folder = row.get("plots_folder", "")
+        group_key, roi, _recording = split_plots_folder(plots_folder)
         if exclude_manual_rectangle and "manual_rectangle" in roi:
             excluded_manual += 1
+            continue
+        approach, _camera = _approach_camera(plots_folder)
+        if (approach, roi) in IGNORED_APPROACH_ROIS:
+            excluded_ignored += 1
             continue
         if group_key not in groups:
             group_order.append(group_key)
@@ -385,6 +399,7 @@ def summarize_best_rois(
         multi_win_counter=multi_win_counter,
         output_csv=output_csv,
         excluded_manual=excluded_manual,
+        excluded_ignored=excluded_ignored,
     )
     return output_csv
 
@@ -405,6 +420,7 @@ def _print_summary(
     multi_win_counter: "Counter[Tuple[str, str, str]]",
     output_csv: Path,
     excluded_manual: int = 0,
+    excluded_ignored: int = 0,
 ) -> None:
     """Print how many rows were reduced and which ROI won most often per approach/camera."""
     print(
@@ -414,6 +430,12 @@ def _print_summary(
     if excluded_manual:
         print(
             f"  excluded {excluded_manual} 'manual_rectangle' ROI row(s) before selection"
+        )
+    if excluded_ignored:
+        ignored_desc = ", ".join(f"{a}/{r}" for a, r in IGNORED_APPROACH_ROIS)
+        print(
+            f"  excluded {excluded_ignored} ignored approach/ROI row(s) before selection "
+            f"({ignored_desc})"
         )
 
     def render(counter: "Counter[Tuple[str, str, str]]", title: str) -> None:
