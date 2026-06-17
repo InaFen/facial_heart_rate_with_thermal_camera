@@ -13,14 +13,24 @@ that variant is the meaningful one for those recordings, while Vario and Lepton 
 regular ``*_closest_*`` metrics. The front-view table uses the regular ``*_closest_*``
 metrics for every camera (including MWIR).
 
+``create_table_manual_all_approaches`` builds a single combined table that, unlike the two
+own-approach builders above, covers the manual-ROI recordings of *every* approach (Nair et
+al., Yang et al. and the own approach) and reports both perspectives at once (a
+``Perspective`` column tells the side-view temple and front-view face recordings apart). As
+in the side-view table the MWIR side-view rows use the *halved* metrics where those exist
+(only the own approach's MWIR manual recordings have a halved variant); every other row --
+including the Nair et al./Yang et al. MWIR rows -- uses the regular ``*_closest_*`` metrics.
+
 ``create_table_best_roi_all_approaches`` builds a table with the same metric columns (always
-from the regular ``*_closest_*`` columns, except r² which is dropped because it is not one
-of the COMPOSITE_METRICS used to select the best ROI) for *every* recording across all
-approaches (Nair et al., Yang et al. and the own approach), reading the best-ROI summary CSV
+from the regular ``*_closest_*`` columns) for *every* recording across all approaches (Nair
+et al., Yang et al. and the own approach), reading the best-ROI summary CSV
 (``saved_results/all_npz_metrics_best_roi.csv``) and reporting the ROI selected there.
 Recordings whose selected ROI is the side-view ``manual_rectangle`` are dropped (those
 side-view temple experiments are reported separately in the own-approach tables); the
 front-view ``manual_rectangle_front_view`` recordings are kept.
+
+None of these tables include r² (it is unstable over the short comparison window and is not
+one of the metrics used to select the best ROI).
 """
 
 from __future__ import annotations
@@ -43,6 +53,12 @@ DEFAULT_OUTPUT_CSV_FRONT = (
 DEFAULT_OUTPUT_TEX_FRONT = (
     REPO_ROOT / "saved_results" / "table_manual_front_view_own_approach.tex"
 )
+DEFAULT_OUTPUT_CSV_MANUAL_ALL = (
+    REPO_ROOT / "saved_results" / "table_manual_all_approaches.csv"
+)
+DEFAULT_OUTPUT_TEX_MANUAL_ALL = (
+    REPO_ROOT / "saved_results" / "table_manual_all_approaches.tex"
+)
 DEFAULT_INPUT_BEST_ROI_CSV = (
     REPO_ROOT / "saved_results" / "all_npz_metrics_best_roi.csv"
 )
@@ -57,6 +73,8 @@ DEFAULT_OUTPUT_TEX_ALL = (
 # (i.e. mwir) uses the every-second-peak-dropped "closest_halved" columns instead.
 _CLOSEST_ONLY_CAMERAS = ("vario", "lepton")
 _CAMERA_ORDER = {"mwir": 0, "vario": 1, "lepton": 2}
+# Camera folder token -> display name shown in the tables.
+_CAMERA_DISPLAY = {"mwir": "ImageIR", "vario": "VarioCam", "lepton": "Lepton"}
 
 # Approach folder name -> display label and sort order ("own approach" == new_approach).
 _APPROACH_LABELS = {
@@ -66,9 +84,11 @@ _APPROACH_LABELS = {
 }
 _APPROACH_ORDER = {"nair_et_al": 0, "yang_et_al": 1, "new_approach": 2}
 
-# Output column -> (closest column, closest_halved column). Column order after
-# Camera & Experiment: the per-moment HR-agreement fraction first, then the error
-# metrics (metrics_*) and finally the Bland-Altman stats (ba_stats_*).
+# Output column -> (closest column, closest_halved column). Column order: the per-moment
+# HR-agreement fraction first, then the error metrics (metrics_*) and finally the
+# Bland-Altman stats (ba_stats_*). r² is intentionally omitted from every table (it is not
+# one of the COMPOSITE_METRICS used to pick the best ROI and is unstable over the short
+# comparison window).
 _COLUMN_SOURCES: dict[str, tuple[str, str]] = {
     "fraction where signal +- GT <= 5 bpm": (
         "hr_agreement_fraction",
@@ -76,11 +96,22 @@ _COLUMN_SOURCES: dict[str, tuple[str, str]] = {
     ),
     "rmse": ("metrics_closest_rmse", "metrics_closest_halved_rmse"),
     "mae": ("metrics_closest_mae", "metrics_closest_halved_mae"),
-    "r²": ("metrics_closest_r2", "metrics_closest_halved_r2"),
-    "BA: mean diff": ("ba_stats_closest_mean_diff", "ba_stats_closest_halved_mean_diff"),
-    "BA: higher LOA": ("ba_stats_closest_loa_high", "ba_stats_closest_halved_loa_high"),
-    "BA: lower LOA": ("ba_stats_closest_loa_low", "ba_stats_closest_halved_loa_low"),
-    "SD diff": ("ba_stats_closest_sd_diff", "ba_stats_closest_halved_sd_diff"),
+    "Bland-Altman mean difference": (
+        "ba_stats_closest_mean_diff",
+        "ba_stats_closest_halved_mean_diff",
+    ),
+    "Bland-Altman upper limit of agreement": (
+        "ba_stats_closest_loa_high",
+        "ba_stats_closest_halved_loa_high",
+    ),
+    "Bland-Altman lower limit of agreement": (
+        "ba_stats_closest_loa_low",
+        "ba_stats_closest_halved_loa_low",
+    ),
+    "Bland-Altman SD of differences": (
+        "ba_stats_closest_sd_diff",
+        "ba_stats_closest_halved_sd_diff",
+    ),
 }
 
 
@@ -371,8 +402,6 @@ def _create_own_approach_manual_table(
         lambda p: _experiment_label(p, view_label, region_label)
     )
     for out_col, (closest_col, halved_col) in _COLUMN_SOURCES.items():
-        if out_col == "r²":
-            continue
         table[out_col] = np.where(
             use_halved, df[halved_col].to_numpy(), df[closest_col].to_numpy()
         )
@@ -493,6 +522,124 @@ def create_table_manual_front_view_own_approach(
     )
 
 
+def create_table_manual_all_approaches(
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Build the manual-ROI metrics table for *all* approaches and both perspectives.
+
+    Unlike :func:`create_table_side_view_own_approach` /
+    :func:`create_table_manual_front_view_own_approach` (own approach only), this keeps the
+    manual-ROI recordings of every approach -- Nair et al., Yang et al. and the own approach
+    -- and reports both the side-view temple (``manual_rectangle``) and the front-view face
+    (``manual_rectangle_front_view``) recordings in one table, told apart by a
+    ``Perspective`` column.
+
+    Columns: ``Approach`` (Nair et al. / Yang et al. / own approach), ``Camera`` (display
+    name ImageIR / VarioCam / Lepton), ``Participant`` (1..3), ``Experiment`` (before / after
+    sport), ``Perspective`` (side view / front view), ``ROI`` ("temple (manual detection)" /
+    "face (manual detection)") and then the metric columns. The MWIR (ImageIR) *side-view*
+    rows report the ``closest_halved`` metrics **when available** -- which is only the case
+    for the own approach's MWIR manual recordings (Nair et al. / Yang et al. have no halved
+    variant). Every other row -- all front-view rows, the Vario/Lepton rows, and the
+    Nair/Yang MWIR rows -- reports the regular ``closest`` metrics.
+
+    Parameters and return value match the other table builders (see e.g.
+    :func:`create_table_best_roi_all_approaches`).
+    """
+    df_full = pd.read_csv(csv_path)
+    if "plots_folder" not in df_full.columns:
+        raise ValueError(f"'plots_folder' column not found in {csv_path}")
+
+    needed = [col for pair in _COLUMN_SOURCES.values() for col in pair]
+    missing = [col for col in needed if col not in df_full.columns]
+    if missing:
+        raise ValueError(
+            f"{csv_path} is missing expected metric columns: {missing}. "
+            "Re-run metric_pipeline.py to regenerate the aggregate CSV."
+        )
+
+    pf_full = df_full["plots_folder"].astype(str)
+    df = df_full.loc[pf_full.str.contains("manual_rectangle", na=False)].copy()
+    if df.empty:
+        raise ValueError("No manual_rectangle rows found in the CSV.")
+
+    pf = df["plots_folder"].astype(str)
+    camera = pf.apply(_detect_camera)
+    is_front = pf.str.contains("manual_rectangle_front_view", na=False).to_numpy()
+    # The "halved" variant (every second predicted peak dropped) is only computed for the
+    # own approach's MWIR manual recordings; Nair et al. / Yang et al. have no halved data.
+    # Use the halved metrics for MWIR side-view rows that actually have them (the own
+    # approach) and fall back to the regular closest metrics everywhere else (all front-view
+    # rows, the Vario/Lepton rows, and the Nair/Yang MWIR rows that lack a halved variant).
+    halved_source_cols = [halved for (_closest, halved) in _COLUMN_SOURCES.values()]
+    halved_available = df[halved_source_cols].notna().all(axis=1).to_numpy()
+    use_halved = (camera == "mwir").to_numpy() & ~is_front & halved_available
+    parsed = pf.apply(_parse_participant_experiment)
+
+    table = pd.DataFrame(index=df.index)
+    table["Approach"] = pf.apply(_approach_label)
+    table["Camera"] = camera.map(_CAMERA_DISPLAY).fillna(camera)
+    table["Participant"] = parsed.apply(lambda p: p[0] if p else pd.NA).astype("Int64")
+    table["Experiment"] = parsed.apply(
+        lambda p: None
+        if p is None
+        else ("before sport" if p[1] in (1, 2) else "after sport")
+    )
+    table["Perspective"] = np.where(is_front, "front view", "side view")
+    table["ROI"] = np.where(
+        is_front, "face (manual detection)", "temple (manual detection)"
+    )
+    for out_col, (closest_col, halved_col) in _COLUMN_SOURCES.items():
+        table[out_col] = np.where(
+            use_halved, df[halved_col].to_numpy(), df[closest_col].to_numpy()
+        )
+
+    # Stable ordering: approach, camera, perspective (side then front), participant, experiment.
+    table["_approach_order"] = pf.apply(
+        lambda p: _APPROACH_ORDER.get(_detect_approach(p), 99)
+    )
+    table["_camera_order"] = camera.map(_CAMERA_ORDER).fillna(99).to_numpy()
+    table["_perspective_order"] = np.where(is_front, 1, 0)
+    table["_participant"] = parsed.apply(lambda p: p[0] if p else 99)
+    table["_experiment"] = parsed.apply(lambda p: p[1] if p else 99)
+    table = (
+        table.sort_values(
+            [
+                "_approach_order",
+                "_camera_order",
+                "_perspective_order",
+                "_participant",
+                "_experiment",
+            ]
+        )
+        .drop(
+            columns=[
+                "_approach_order",
+                "_camera_order",
+                "_perspective_order",
+                "_participant",
+                "_experiment",
+            ]
+        )
+        .reset_index(drop=True)
+    )
+
+    return _finalize_table(
+        table,
+        output_path=output_path,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
 def create_table_best_roi_all_approaches(
     csv_path: str | Path = DEFAULT_INPUT_BEST_ROI_CSV,
     output_path: Optional[str | Path] = None,
@@ -570,11 +717,8 @@ def create_table_best_roi_all_approaches(
     #table["Experiment"] = pf.apply(_participant_sport_label)
     table["ROI"] = df["roi"].astype(str)
     # Always the regular closest columns (first element of each _COLUMN_SOURCES pair).
-    # r² is skipped here: it is not one of the COMPOSITE_METRICS used to rank / select the
-    # best ROI (see summarize_metrics.py), so it would be misleading in this best-ROI table.
+    # (r² is intentionally not part of _COLUMN_SOURCES, see its definition above.)
     for out_col, (closest_col, _halved_col) in _COLUMN_SOURCES.items():
-        if out_col == "r²":
-            continue
         table[out_col] = df[closest_col].to_numpy()
 
     # Stable, readable ordering: approach, camera, participant, experiment.
@@ -606,29 +750,50 @@ def create_table_best_roi_all_approaches(
 
 
 if __name__ == "__main__":
-    result, latex_table = create_table_side_view_own_approach(
-        output_path=DEFAULT_OUTPUT_CSV,
-        latex_output_path=DEFAULT_OUTPUT_TEX,
-        latex_caption="Side-view (temple, manual) results for the own approach.",
-        latex_label="tab:side_view_own_approach",
-    )
-    front_result, front_latex_table = create_table_manual_front_view_own_approach(
-        output_path=DEFAULT_OUTPUT_CSV_FRONT,
-        latex_output_path=DEFAULT_OUTPUT_TEX_FRONT,
-        latex_caption="Front-view (face, manual) results for the own approach.",
-        latex_label="tab:front_view_own_approach",
-    )
-    all_result, all_latex_table = create_table_best_roi_all_approaches(
-        output_path=DEFAULT_OUTPUT_CSV_ALL,
-        latex_output_path=DEFAULT_OUTPUT_TEX_ALL,
-        latex_caption="Best-ROI results per recording across all approaches.",
-        latex_label="tab:best_roi_all_approaches",
-    )
-    for title, res, tex in (
-        ("side view", result, latex_table),
-        ("front view", front_result, front_latex_table),
-        ("all approaches (best ROI)", all_result, all_latex_table),
-    ):
+    builders = [
+        (
+            "side view (own approach)",
+            lambda: create_table_side_view_own_approach(
+                output_path=DEFAULT_OUTPUT_CSV,
+                latex_output_path=DEFAULT_OUTPUT_TEX,
+                latex_caption="Side-view (temple, manual) results for the own approach.",
+                latex_label="tab:side_view_own_approach",
+            ),
+        ),
+        (
+            "front view (own approach)",
+            lambda: create_table_manual_front_view_own_approach(
+                output_path=DEFAULT_OUTPUT_CSV_FRONT,
+                latex_output_path=DEFAULT_OUTPUT_TEX_FRONT,
+                latex_caption="Front-view (face, manual) results for the own approach.",
+                latex_label="tab:front_view_own_approach",
+            ),
+        ),
+        (
+            "manual all approaches",
+            lambda: create_table_manual_all_approaches(
+                output_path=DEFAULT_OUTPUT_CSV_MANUAL_ALL,
+                latex_output_path=DEFAULT_OUTPUT_TEX_MANUAL_ALL,
+                latex_caption="Manual-ROI (temple / face) results across all approaches.",
+                latex_label="tab:manual_all_approaches",
+            ),
+        ),
+        (
+            "all approaches (best ROI)",
+            lambda: create_table_best_roi_all_approaches(
+                output_path=DEFAULT_OUTPUT_CSV_ALL,
+                latex_output_path=DEFAULT_OUTPUT_TEX_ALL,
+                latex_caption="Best-ROI results per recording across all approaches.",
+                latex_label="tab:best_roi_all_approaches",
+            ),
+        ),
+    ]
+    for title, builder in builders:
+        try:
+            res, tex = builder()
+        except Exception as exc:  # report and continue with the other tables
+            print(f"\n[create_table] {title}: SKIPPED ({type(exc).__name__}: {exc})")
+            continue
         print(f"\n[create_table] {title}: {len(res)} rows; per camera:")
         if "Camera" in res.columns:
             print(res["Camera"].value_counts().to_string())
