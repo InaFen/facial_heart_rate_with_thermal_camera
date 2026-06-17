@@ -397,7 +397,7 @@ def _create_own_approach_manual_table(
     )
 
     table = pd.DataFrame(index=df.index)
-    table["Camera"] = camera
+    table["Camera"] = camera.map(_CAMERA_DISPLAY).fillna(camera)
     table["Experiment"] = pf.apply(
         lambda p: _experiment_label(p, view_label, region_label)
     )
@@ -711,11 +711,13 @@ def create_table_best_roi_all_approaches(
         )
 
     pf = df["plots_folder"].astype(str)
+    camera = pf.apply(_detect_camera)
     table = pd.DataFrame(index=df.index)
     table["Approach"] = pf.apply(_approach_label)
-    table["Camera"] = pf.apply(_detect_camera)
+    table["Camera"] = camera.map(_CAMERA_DISPLAY).fillna(camera)
     #table["Experiment"] = pf.apply(_participant_sport_label)
-    table["ROI"] = df["roi"].astype(str)
+    # Make the ROI token readable: drop underscores (e.g. "left_forehead" -> "left forehead").
+    table["ROI"] = df["roi"].astype(str).str.replace("_", " ", regex=False)
     # Always the regular closest columns (first element of each _COLUMN_SOURCES pair).
     # (r² is intentionally not part of _COLUMN_SOURCES, see its definition above.)
     for out_col, (closest_col, _halved_col) in _COLUMN_SOURCES.items():
@@ -726,7 +728,7 @@ def create_table_best_roi_all_approaches(
     table["_approach_order"] = pf.apply(
         lambda p: _APPROACH_ORDER.get(_detect_approach(p), 99)
     )
-    table["_camera_order"] = table["Camera"].map(_CAMERA_ORDER).fillna(99)
+    table["_camera_order"] = camera.map(_CAMERA_ORDER).fillna(99)
     table["_participant"] = parsed.apply(lambda p: p[0] if p else 99)
     table["_experiment"] = parsed.apply(lambda p: p[1] if p else 99)
     table = (
