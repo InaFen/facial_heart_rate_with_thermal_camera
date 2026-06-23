@@ -471,7 +471,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument(
         "--exclude-manual-rectangle",
         action="store_true",
-        default=True,
+        default=False,
         help="Disregard ROIs whose name contains 'manual_rectangle' "
         "(covers both manual_rectangle and manual_rectangle_front_view).",
     )

@@ -48,9 +48,9 @@ GAUSSIAN_SIGMA = None
 SUBROI_GRID_ROWS = 8 # in pixels
 SUBROI_GRID_COLS = SUBROI_GRID_ROWS
 
-LOWCUT_BANDPASS = 0.92 # corresponds to 55 bpm, in Hz (0.92/60)
-HIGHCUT_BANDPASS = 0.7 # according to individual camera possibilities
-ORDER_BANDPASS = 4
+LOWCUT_BANDPASS = 0.05 # corresponds to 55 bpm, in Hz (0.92/60)
+HIGHCUT_BANDPASS = 4.0 # according to individual camera possibilities
+ORDER_BANDPASS = 2
 
 HR_BAND = (0.92, 3.0) # 55 bpm to 180 bpm, in Hz (0.92/60 to 3.0/60)
 
@@ -133,6 +133,7 @@ SUBROI_GRID_ROWS_BY_ROI = {
     "left_forehead": 5,
     "right_forehead": 5,
     "glabella": 3,
+    "nostrils": 1
 }
 _grid_by_roi_env = os.environ.get("NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI")
 if _grid_by_roi_env:
