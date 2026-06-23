@@ -846,7 +846,13 @@ def create_table_best_roi_all_approaches(
     table = pd.DataFrame(index=df.index)
     table["Approach"] = pf.apply(_approach_label)
     table["Camera"] = camera.map(_CAMERA_DISPLAY).fillna(camera)
-    #table["Experiment"] = pf.apply(_participant_sport_label)
+    parsed = pf.apply(_parse_participant_experiment)
+    table["Participant"] = parsed.apply(lambda p: p[0] if p else pd.NA).astype("Int64")
+    table["Experiment"] = parsed.apply(
+        lambda p: None
+        if p is None
+        else ("before sport" if p[1] in (1, 2) else "after sport")
+    )
     # Make the ROI token readable: drop underscores (e.g. "left_forehead" -> "left forehead").
     table["ROI"] = df["roi"].astype(str).str.replace("_", " ", regex=False)
     # Always the regular closest columns (first element of each _COLUMN_SOURCES pair).
