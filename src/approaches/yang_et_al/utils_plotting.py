@@ -271,10 +271,10 @@ def plot_principal_components_in_seperate_plots(principal_components, save_path=
 def plot_chosen_component(chosen_component, fps, save_path=None):
     fig = plt.figure(figsize=(10, 4))
     time_seconds = np.arange(chosen_component.shape[0]) / fps
-    plt.plot(time_seconds, chosen_component, label='Most Periodic PCA Component', color='blue')
-    plt.xlabel("Seconds")
-    plt.ylabel("Signal Value")
-    plt.title("Most Periodic PCA Component Over Time")
-    plt.legend()
+    plt.plot(time_seconds, chosen_component)#, label='Most Periodic PCA Component', color='blue')
+    plt.xlabel("Time (s)")
+    plt.ylabel("Amplitude (arbitrary unit)")
+    #plt.title("Most Periodic PCA Component Over Time")
+    #plt.legend()
     plt.tight_layout()
     _save_or_show_plot(fig, save_path, "chosen_component")

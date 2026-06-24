@@ -27,7 +27,13 @@ from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipe
 from src.approaches.new_approach.utils_pixels import maybe_split_single_roi_and_save_overlay
 
 CONFIGS_PATH = os.environ.get("YANG_CONFIG_PATH", "src/approaches/yang_et_al/configs_yang_et_al.yaml")
-PLOTS_SAVE_DIR = os.environ.get("YANG_PLOTS_SAVE_DIR", None)
+# Where plots are written. run_batch sets YANG_PLOTS_SAVE_DIR per run; when running
+# this script directly the env var is unset, so fall back to a default directory so
+# plots are ONLY saved (never shown via plt.show()), matching the batch behaviour.
+PLOTS_SAVE_DIR = os.environ.get(
+	"YANG_PLOTS_SAVE_DIR",
+	str(Path(project_root) / "saved_results" / "yang_et_al" / "plots"),
+)
 
 # Get configurations
 configs = Config.from_yaml(CONFIGS_PATH)
@@ -74,7 +80,8 @@ SUBROI_GRID_ROWS_BY_ROI = {
 	"right_forehead": 2,
 	"glabella": 2,
 	"manual_rectangle_front_view": 6,
-	"manual_rectangle": 2
+	"manual_rectangle": 2,
+	"roi_signal_water": 2
 }
 
 # IMPORTANT: Each ROI represents one building block in the graph
@@ -209,7 +216,7 @@ if random_selected_pca_component is not None:
 	random_selected_scale = float(np.std(random_selected_pca_component))
 	if random_selected_scale > 0:
 		random_selected_pca_component = random_selected_pca_component * (selected_scale / random_selected_scale)
-#plot_chosen_component(chosen_component=selected_pca_component, fps = configs.fps)
+plot_chosen_component(chosen_component=selected_pca_component, fps = configs.fps, save_path=PLOTS_SAVE_DIR)
 
 # Ground truth steps---------------------------------------------------------
 if configs.timespan_signal_to_look_at is not None:

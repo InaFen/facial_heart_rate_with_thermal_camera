@@ -45,11 +45,11 @@ GAUSSIAN_SIGMA = None
 # Sub-ROI grid: the ROI is divided into SUBROI_GRID_ROWS x SUBROI_GRID_COLS areas before temproal denoising
 # to make sure that the amount of elements per frame is constant over frames, without having to interpolate pixels which might be wrongful as ROI size changes over frames
 # (n = rows * cols sub-ROIs)
-SUBROI_GRID_ROWS = 8 # in pixels
+SUBROI_GRID_ROWS = 2 # in pixels
 SUBROI_GRID_COLS = SUBROI_GRID_ROWS
 
-LOWCUT_BANDPASS = 0.05 # corresponds to 55 bpm, in Hz (0.92/60)
-HIGHCUT_BANDPASS = 4.0 # according to individual camera possibilities
+LOWCUT_BANDPASS = 0.85 # corresponds to 55 bpm, in Hz (0.92/60)
+HIGHCUT_BANDPASS = 4.3 # according to individual camera possibilities
 ORDER_BANDPASS = 2
 
 HR_BAND = (0.92, 3.0) # 55 bpm to 180 bpm, in Hz (0.92/60 to 3.0/60)
@@ -392,6 +392,17 @@ def process_subroi_grid(
     )
     plt.tight_layout()
     fig_selected.savefig(grid_dir / "selected_subroi_signal.png", dpi=200, bbox_inches="tight")
+    plt.close(fig_selected)
+
+    # Plot selected sub-ROI
+    best_signal = filtered_subroi_means[:, best_idx]
+    t = np.arange(len(best_signal)) / fps
+    fig_selected = plt.figure(figsize=(10, 4))
+    plt.plot(t, best_signal)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Amplitude (arbitrary unit)")
+    plt.tight_layout()
+    fig_selected.savefig(grid_dir / "selected_subroi_signal_no_unit.png", dpi=200, bbox_inches="tight")
     plt.close(fig_selected)
 
     # Mark which sub-ROI was selected ----------------------------------------

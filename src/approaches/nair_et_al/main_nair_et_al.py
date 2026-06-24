@@ -72,7 +72,8 @@ SUBROI_GRID_ROWS_BY_ROI = {
     "right_forehead": 2,
     "glabella": 2,
     "manual_rectangle_front_view": 6,
-    "manual_rectangle": 2
+    "manual_rectangle": 2,
+    "roi_signal_water": 2
 }
 
 def save_figure(fig: plt.Figure, filename: str) -> None:
@@ -234,6 +235,16 @@ if configs.plot_steps or SAVE_ALL_PLOTS:
     plt.grid()
     plt.tight_layout()
     save_figure(fig, "03_optimal_component.png")
+
+    time = np.arange(len(optimal_vh_components)) / configs.fps
+
+    fig = plt.figure(figsize=(12, 6))
+    plt.plot(time, optimal_vh_components)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude (arbitrary unit)')
+    plt.grid()
+    plt.tight_layout()
+    save_figure(fig, "03_optimal_component_no_unit.png")
 
 # Short-Time-Fourier-Transform
 frequencies, times, short_fourier_ppg = stft(optimal_vh_components, fs=configs.fps, nperseg=STFT_WINDOW_SIZE,noverlap=STFT_OVERLAP)

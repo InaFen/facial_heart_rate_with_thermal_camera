@@ -1,44 +1,42 @@
 paths:
-  gray_frames: data/lepton/processed_lepton_data/05032026_before_after_sport_interpolated
-  video: data/recorded_videos/thermal_video_from_y16_frames/05032026_before_after_sport.mp4
-  video_tracked_face: data/recorded_videos/nair_et_al/output_tracked_video.mp4
-  video_thresholded_pixel: data/recorded_videos/nair_et_al/output_thresholded_video.mp4
-  video_facemesh: data/recorded_videos/nair_et_al/output_facemesh_video.mp4
-  pixels_log: data/saved_data/nair_et_al/roi_pixel_log.npy
-  video_thermal_with_roi_masks: data/recorded_videos/nair_et_al/output_video_with_roi_masks.mp4
-  roi_pixel_data: data/saved_data/nair_et_al/roi_pixel_data.npy
+  gray_frames: /data3/ina/Wasserhahn/05032026_Wasserhahn_interpolated
+  video: /data3/ina/Wasserhahn/05032026_Wasserhahn_interpolated.mp4
+  video_tracked_face: /data3/ina/Wasserhahn/water/output_tracked_video.mp4
+  video_thresholded_pixel: /data3/ina/Wasserhahn/water/output_thresholded_video.mp4
+  video_facemesh: /data3/ina/Wasserhahn/nair_et_al/output_facemesh_video.mp4
+  pixels_log: /data3/ina/Wasserhahn/water/roi_pixel_log.npy
+  video_thermal_with_roi_masks: /data3/ina/Wasserhahn/water/output_video_with_roi_masks.mp4
+  roi_pixel_data: /data3/ina/Wasserhahn/water/roi_pixel_data.npy
   ground_truth: data/ground_truth/opensignals/extracted_npy_files/05032026/opensignals_0007800F80FA_2026-03-05_17-17-42.npz
 processing:
   overwrite_existing_files: true
   plot_steps: true
   fps: 8.767701401175636 
-  bandpass_lowcut: 0.4
-  bandpass_highcut: 4.0 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
-  bandpass_order: 5
+  bandpass_lowcut: 0.85
+  bandpass_highcut: 4.3 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
+  bandpass_order: 2
   use_ema: true
   ema_alpha: 0.15
-  manual_roi_enabled: false
+  manual_roi_enabled: true
   manual_roi_name: manual_roi
   manual_roi_mode: polygon
-  manual_roi_mask_load_path: null
-  manual_roi_mask_save_path: data/saved_data/new_approach/manual_roi_mask.npy
   manual_roi_names:
-  - roi_signal_temple
+  - roi_signal_water
   manual_roi_modes:
   - polygon
   manual_roi_mask_load_paths:
-  - null
+  - data/saved_data/new_approach/roi_signal_water_nair.npy
   manual_roi_mask_save_paths:
-  - data/saved_data/new_approach/manual_roi_signal_temple.npy
-  manual_roi_selection_colormap: false
+  - data/saved_data/new_approach/roi_signal_water_nair.npy
+  manual_roi_selection_colormap: true
   # Which named ROIs to use from roi_landmarks_options (list of names).
   used_rois: [forehead]
   # A short name identifying the ROI selection (used for saved filenames)
-  roi_name: temp
+  roi_name: roi_signal_water
 timing:
   time_first_frame_signal: 10.5
   time_first_frame_ecg: 0.0
-  timespan_signal_to_look_at: [62.0, 92.0]
+  timespan_signal_to_look_at: [120.0, 140.0]
   notes:
     time_first_frame_signal_expected: null
     time_first_frame_ecg_expected: null
