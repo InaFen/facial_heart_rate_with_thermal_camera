@@ -160,8 +160,8 @@ def create_thermal_video(input_dir, output_file, fps=9, width=160, height=120):
 
 def main():
 
-    input_dir = "data/lepton/processed_lepton_data/22052026/Julian/Julian4_interpolated"
-    output = "data/recorded_videos/thermal_video_from_y16_frames/22052026/Julian/Julian4_interpolated.mp4"
+    input_dir = "/data3/ina/Wasserhahn/05032026_Wasserhahn_interpolated"
+    output = "/data3/ina/Wasserhahn/05032026_Wasserhahn_interpolated.mp4"
     fps =8.76 # based on findings in get_consistent_fps_for_gray_images.py
     width = 160
     height = 120
