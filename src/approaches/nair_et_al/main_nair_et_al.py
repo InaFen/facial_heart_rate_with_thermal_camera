@@ -19,6 +19,11 @@ sys.path.insert(0, project_root)
 
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 from src.approaches.new_approach.utils_pixels import maybe_split_single_roi_and_save_overlay
+from src.approaches.new_approach.utils_water_experiment import (
+	load_high_temp_bands,
+	shade_high_temp_bands,
+	get_water_timestamps_path,
+)
 from src.approaches.yang_et_al.utils_post_processing import apply_butterworth_bandpass_filter
 from src.approaches.yang_et_al.utils_ground_truth import (
 	load_ground_truth_signal,
@@ -53,6 +58,10 @@ STFT_WINDOW_SIZE = 64
 STFT_OVERLAP = 56
 SMOOTHNESS_PENALTY = 0.1 # used in curve extraction, higher values lead to smoother curve but less accurate, lower values lead to more accurate but less smooth curve
 NORMAL_HR_FREQ = 1.3 #Hz, 80 bpm # used for signal quality indices, only consider frequencies around normal heart rate frequency
+# Water experiment: when True, 03_optimal_component_no_unit.png is saved twice — once
+# plain and once with the high-temperature time spans from the new-approach water
+# experiment shaded a slight blue (03_optimal_component_no_unit_highlight.png).
+WATER_EXPERIMENT = True
 
 print("Hardcoded parameters in main_nair_et_al.py:")
 print(f"APPLY_DLIB_LANDMARK_DETECTION: {APPLY_DLIB_LANDMARK_DETECTION}")
@@ -236,15 +245,37 @@ if configs.plot_steps or SAVE_ALL_PLOTS:
     plt.tight_layout()
     save_figure(fig, "03_optimal_component.png")
 
+# 03_optimal_component_no_unit.png in the same (grid-less) format as the Yang et al.
+# chosen_component plot. Created whenever plots are saved OR the water experiment is
+# active (the water experiment additionally saves a highlighted copy below).
+if configs.plot_steps or SAVE_ALL_PLOTS or WATER_EXPERIMENT:
     time = np.arange(len(optimal_vh_components)) / configs.fps
 
-    fig = plt.figure(figsize=(12, 6))
+    fig = plt.figure(figsize=(10, 4))
     plt.plot(time, optimal_vh_components)
     plt.xlabel('Time (s)')
     plt.ylabel('Amplitude (arbitrary unit)')
-    plt.grid()
     plt.tight_layout()
     save_figure(fig, "03_optimal_component_no_unit.png")
+
+    # Water experiment: identical plot, but with the high-temperature time spans saved
+    # by the new-approach water experiment shaded a slight blue, so the Nair et al.
+    # component can be compared against the same periods.
+    if WATER_EXPERIMENT:
+        water_bands = load_high_temp_bands(fps=configs.fps)
+        if not water_bands:
+            print(
+                "[nair] WATER_EXPERIMENT is True but no high-temperature bands were found at "
+                f"{get_water_timestamps_path()} (run the new-approach water experiment first)."
+            )
+        fig = plt.figure(figsize=(10, 4))
+        ax = plt.gca()
+        ax.plot(time, optimal_vh_components)
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel('Amplitude (arbitrary unit)')
+        shade_high_temp_bands(ax, water_bands)
+        fig.tight_layout()
+        save_figure(fig, "03_optimal_component_no_unit_highlight.png")
 
 # Short-Time-Fourier-Transform
 frequencies, times, short_fourier_ppg = stft(optimal_vh_components, fs=configs.fps, nperseg=STFT_WINDOW_SIZE,noverlap=STFT_OVERLAP)

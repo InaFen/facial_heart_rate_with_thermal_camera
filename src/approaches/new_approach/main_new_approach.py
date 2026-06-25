@@ -28,6 +28,11 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     load_gray_frame,
 )
 from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi, save_subroi_overlay_with_highlight, compute_subroi_location_info
+from src.approaches.new_approach.utils_water_experiment import (
+    compute_high_temp_bands,
+    save_water_timestamps,
+    shade_high_temp_bands,
+)
 from src.approaches.yang_et_al.utils_ground_truth import (
 	load_ground_truth_signal,
 	get_ground_truth_segment
@@ -82,6 +87,15 @@ else:
     _SELECT_WEIGHT_BAND_POWER = 1.0
     _SELECT_WEIGHT_PEAK_CLARITY = 0.0
     _SELECT_MIN_PEAK_CLARITY = None
+
+# Steps that should be added for water experiment 
+WATER_EXPERIMENT = True
+# Water experiment: raw-signal temperature threshold (in the recording's native unit,
+# centi-Kelvin for the thermal cameras, e.g. 29150 == 291.50 K). When WATER_EXPERIMENT is
+# True, every frame whose SELECTED sub-ROI RAW mean signal is >= this value has its
+# timestamp saved and is highlighted with a slight blue background on
+# selected_subroi_signal_no_unit.png.
+WATER_EXPERIMENT_RAW_THRESHOLD = 29175
 
 # --- run_batch overrides ---------------------------------------------------
 # When launched via scripts/run_batch.py, the spatial Gaussian + temporal
@@ -259,6 +273,10 @@ def process_subroi_grid(
     ]
 
     cmap = plt.get_cmap("tab10")
+    # Keep the RAW-stage sub-ROI means around for the water experiment: the loop variable
+    # subroi_means below is overwritten by the later Gaussian-smoothed stage, but the water
+    # experiment needs the unprocessed (raw) temperature signal of the selected sub-ROI.
+    raw_subroi_means = None
     for prefix, frame_values_list, label in stages:
         # Whole-ROI mean signal over time (mean of all pixels per frame).
         mean_signal = np.array(
@@ -277,6 +295,9 @@ def process_subroi_grid(
 
         # Compute subROI means ----------------------------------------------------------------
         subroi_means = compute_subroi_means(frame_values_list, coords_per_frame, len(frame_values_list), n_cells, SUBROI_GRID_ROWS, SUBROI_GRID_COLS)
+        # Remember the raw (unprocessed) sub-ROI means for the water experiment below.
+        if prefix == "01_raw":
+            raw_subroi_means = subroi_means
 
         # Sub-ROI mean signals, each sub-ROI in its own subplot
         plot_subroi_means(
@@ -405,6 +426,69 @@ def process_subroi_grid(
     fig_selected.savefig(grid_dir / "selected_subroi_signal_no_unit.png", dpi=200, bbox_inches="tight")
     plt.close(fig_selected)
 
+    # Water experiment ------------------------------------------------------------
+    # From the RAW signal of the selected sub-ROI, record every timestamp whose value is
+    # >= WATER_EXPERIMENT_RAW_THRESHOLD and save a highlighted copy of
+    # selected_subroi_signal_no_unit.png with those timestamps shaded a slight blue.
+    # The payload is also returned so the caller can write the single reusable
+    # timestamps file (shared with the Yang/Nair pipelines) from the winning grid.
+    water_payload = None
+    if WATER_EXPERIMENT:
+        raw_selected_signal = (
+            np.asarray(raw_subroi_means[:, best_idx], dtype=float)
+            if raw_subroi_means is not None
+            else np.full(len(best_signal), np.nan)
+        )
+        # NaN-safe threshold mask (frames without a value never count as high).
+        high_temp_mask = np.isfinite(raw_selected_signal) & (
+            raw_selected_signal >= WATER_EXPERIMENT_RAW_THRESHOLD
+        )
+        high_temp_frame_indices = np.nonzero(high_temp_mask)[0]
+        high_temp_timestamps = (high_temp_frame_indices / fps).astype(float)
+        # Pre-merged [start_s, end_s] spans (independent of fps) so the Yang/Nair
+        # pipelines can shade the exact same periods without re-deriving anything.
+        high_temp_bands = compute_high_temp_bands(high_temp_frame_indices, fps)
+
+        # Save the high-temperature timestamps (seconds from segment start) together with
+        # the merged bands, frame indices and the raw values that triggered them.
+        water_payload = {
+            "raw_threshold": float(WATER_EXPERIMENT_RAW_THRESHOLD),
+            "selected_subroi_index": int(best_idx),
+            "grid": f"{SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS}",
+            "fps": float(fps),
+            "num_frames_total": int(raw_selected_signal.shape[0]),
+            "num_frames_high": int(high_temp_frame_indices.size),
+            "high_temperature_frame_indices": high_temp_frame_indices.tolist(),
+            "high_temperature_timestamps_s": high_temp_timestamps.tolist(),
+            "high_temperature_bands_s": high_temp_bands,
+            "high_temperature_raw_values": [
+                float(raw_selected_signal[i]) for i in high_temp_frame_indices
+            ],
+        }
+        with open(
+            grid_dir / "water_experiment_high_temp_timestamps.json", "w", encoding="utf-8"
+        ) as jf:
+            json.dump(water_payload, jf, ensure_ascii=False, indent=2)
+        print(
+            f"  [grid {SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS}] water experiment: "
+            f"{high_temp_frame_indices.size}/{raw_selected_signal.shape[0]} frame(s) "
+            f">= {WATER_EXPERIMENT_RAW_THRESHOLD} (raw signal of selected sub-ROI)"
+        )
+
+        # Save a highlighted copy of selected_subroi_signal_no_unit.png with a slight blue
+        # background over every high-temperature time span (merged consecutive frames).
+        fig_selected = plt.figure(figsize=(10, 4))
+        ax_selected = plt.gca()
+        ax_selected.plot(t, best_signal)
+        ax_selected.set_xlabel("Time (s)")
+        ax_selected.set_ylabel("Amplitude (arbitrary unit)")
+        shade_high_temp_bands(ax_selected, high_temp_bands)
+        fig_selected.tight_layout()
+        fig_selected.savefig(
+            grid_dir / "selected_subroi_signal_no_unit_highlighted.png", dpi=200, bbox_inches="tight"
+        )
+        plt.close(fig_selected)
+
     # Mark which sub-ROI was selected ----------------------------------------
     # 1) Save a face overlay (sub-ROI grid) with the chosen sub-ROI highlighted,
     #    so it is visually clear which sub-ROI produced the final signal.
@@ -445,6 +529,7 @@ def process_subroi_grid(
         "combined": float(subroi_scores["combined"][best_idx]),
         "peak_clarity": float(subroi_scores["peak_clarity"][best_idx]),
         "grid_dir": grid_dir,
+        "water_payload": water_payload,
     }
 
 
@@ -622,6 +707,14 @@ for roi_name in roi_names:
         f"{best_grid['grid_rows']}x{best_grid['grid_cols']} by SQI={best_grid['sqi']:.3f} "
         f"(sub-ROI {best_grid['best_idx']}). Candidates: {_grid_summary}"
     )
+
+    # Water experiment: write the single reusable timestamps file from the WINNING grid
+    # so the Yang/Nair pipelines highlight the same periods on their component plots.
+    if WATER_EXPERIMENT and best_grid.get("water_payload"):
+        _water_payload = dict(best_grid["water_payload"])
+        _water_payload["roi_name"] = roi_name
+        _shared_water_path = save_water_timestamps(_water_payload)
+        print(f"[{roi_name}] Saved reusable water-experiment timestamps to: {_shared_water_path}")
 
     # Mirror the winning grid's selection artifacts into the ROI-level folder so
     # the top-level ROI directory always shows the final chosen sub-ROI.

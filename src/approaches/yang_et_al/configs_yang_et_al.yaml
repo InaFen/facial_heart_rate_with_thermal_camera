@@ -12,8 +12,8 @@ processing:
   overwrite_existing_files: true
   plot_steps: false
   fps: 8.767701401175636 
-  bandpass_lowcut: 0.667
-  bandpass_highcut: 1.667 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
+  bandpass_lowcut: 0.85
+  bandpass_highcut: 4.3 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
   bandpass_order: 2
   use_ema: true
   ema_alpha: 0.15
@@ -36,7 +36,7 @@ processing:
 timing:
   time_first_frame_signal: 10.5
   time_first_frame_ecg: 0.0
-  timespan_signal_to_look_at: [120.0, 140.0]
+  timespan_signal_to_look_at: [122.0, 140.0]
   notes:
     time_first_frame_signal_expected: null
     time_first_frame_ecg_expected: null

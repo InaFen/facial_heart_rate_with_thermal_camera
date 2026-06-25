@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from src.approaches.yang_et_al.utils_post_processing import transform_flatten_signal_to_original_shape
+from src.approaches.new_approach.utils_water_experiment import shade_high_temp_bands
 
 def _save_or_show_plot(fig, save_path=None, plot_name="plot"):
     """Helper function to save plot to file or display it.
@@ -268,13 +269,16 @@ def plot_principal_components_in_seperate_plots(principal_components, save_path=
         plt.tight_layout()
     _save_or_show_plot(fig, save_path, "principal_components")
 
-def plot_chosen_component(chosen_component, fps, save_path=None):
+def plot_chosen_component(chosen_component, fps, save_path=None, highlight_bands=None, plot_name="chosen_component"):
     fig = plt.figure(figsize=(10, 4))
+    ax = plt.gca()
     time_seconds = np.arange(chosen_component.shape[0]) / fps
-    plt.plot(time_seconds, chosen_component)#, label='Most Periodic PCA Component', color='blue')
-    plt.xlabel("Time (s)")
-    plt.ylabel("Amplitude (arbitrary unit)")
+    ax.plot(time_seconds, chosen_component)#, label='Most Periodic PCA Component', color='blue')
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude (arbitrary unit)")
     #plt.title("Most Periodic PCA Component Over Time")
     #plt.legend()
+    # Water experiment: optionally shade the high-temperature time spans a slight blue.
+    shade_high_temp_bands(ax, highlight_bands)
     plt.tight_layout()
-    _save_or_show_plot(fig, save_path, "chosen_component")
+    _save_or_show_plot(fig, save_path, plot_name)

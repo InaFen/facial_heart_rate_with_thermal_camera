@@ -25,6 +25,10 @@ from src.approaches.yang_et_al.utils_random_baseline import run_random_baseline
 from src.approaches.new_approach.classes.user_input import Config
 from src.approaches.new_approach.pipelines.get_roi_data import get_roi_data_pipeline
 from src.approaches.new_approach.utils_pixels import maybe_split_single_roi_and_save_overlay
+from src.approaches.new_approach.utils_water_experiment import (
+	load_high_temp_bands,
+	get_water_timestamps_path,
+)
 
 CONFIGS_PATH = os.environ.get("YANG_CONFIG_PATH", "src/approaches/yang_et_al/configs_yang_et_al.yaml")
 # Where plots are written. run_batch sets YANG_PLOTS_SAVE_DIR per run; when running
@@ -40,6 +44,10 @@ configs = Config.from_yaml(CONFIGS_PATH)
 
 RUN_RANDOM_PARALLEL = False
 RANDOM_SEED = 42
+# Water experiment: when True, the chosen PCA component is saved twice — once plain
+# (chosen_component.png) and once with the high-temperature time spans from the
+# new-approach water experiment shaded a slight blue (chosen_component_highlighted.png).
+WATER_EXPERIMENT = True
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -216,7 +224,23 @@ if random_selected_pca_component is not None:
 	random_selected_scale = float(np.std(random_selected_pca_component))
 	if random_selected_scale > 0:
 		random_selected_pca_component = random_selected_pca_component * (selected_scale / random_selected_scale)
-plot_chosen_component(chosen_component=selected_pca_component, fps = configs.fps, save_path=PLOTS_SAVE_DIR)
+plot_chosen_component(chosen_component=selected_pca_component, fps=configs.fps, save_path=PLOTS_SAVE_DIR)
+if WATER_EXPERIMENT:
+	# Reuse the high-temperature time spans saved by the new-approach water experiment
+	# so the chosen component is highlighted over the exact same periods.
+	water_bands = load_high_temp_bands(fps=configs.fps)
+	if not water_bands:
+		print(
+			"[yang] WATER_EXPERIMENT is True but no high-temperature bands were found at "
+			f"{get_water_timestamps_path()} (run the new-approach water experiment first)."
+		)
+	plot_chosen_component(
+		chosen_component=selected_pca_component,
+		fps=configs.fps,
+		save_path=PLOTS_SAVE_DIR,
+		highlight_bands=water_bands,
+		plot_name="chosen_component_highlighted",
+	)
 
 # Ground truth steps---------------------------------------------------------
 if configs.timespan_signal_to_look_at is not None:
