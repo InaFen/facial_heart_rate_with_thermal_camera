@@ -378,7 +378,7 @@ def _create_own_approach_manual_table(
     if "plots_folder" not in df_full.columns:
         raise ValueError(f"'plots_folder' column not found in {csv_path}")
 
-    needed = [col for pair in _COLUMN_SOURCES.values() for col in pair]
+    needed = [col for pair in _COLUMN_SOURCES.values() for col in pair] + ["gt_hr_mean"]
     missing = [col for col in needed if col not in df_full.columns]
     if missing:
         raise ValueError(
@@ -416,6 +416,7 @@ def _create_own_approach_manual_table(
     table["Experiment"] = pf.apply(
         lambda p: _experiment_label(p, view_label, region_label)
     )
+    table["ground truth mean HR (bpm)"] = df["gt_hr_mean"].to_numpy()
     for out_col, (closest_col, halved_col) in _COLUMN_SOURCES.items():
         table[out_col] = np.where(
             use_halved, df[halved_col].to_numpy(), df[closest_col].to_numpy()
@@ -574,7 +575,7 @@ def _create_manual_all_approaches_table(
     if "plots_folder" not in df_full.columns:
         raise ValueError(f"'plots_folder' column not found in {csv_path}")
 
-    needed = [col for pair in _COLUMN_SOURCES.values() for col in pair]
+    needed = [col for pair in _COLUMN_SOURCES.values() for col in pair] + ["gt_hr_mean"]
     missing = [col for col in needed if col not in df_full.columns]
     if missing:
         raise ValueError(
@@ -607,11 +608,17 @@ def _create_manual_all_approaches_table(
     # rows, the Vario/Lepton rows, and the Nair/Yang MWIR rows that lack a halved variant).
     halved_source_cols = [halved for (_closest, halved) in _COLUMN_SOURCES.values()]
     halved_available = df[halved_source_cols].notna().all(axis=1).to_numpy()
-    use_halved = (camera == "mwir").to_numpy() & ~is_front & halved_available
+    use_halved = (camera == "mwir").to_numpy() & ~is_front & halved_available & (pf.str.contains("new_approach", na=False).to_numpy())
     parsed = pf.apply(_parse_participant_experiment)
 
     table = pd.DataFrame(index=df.index)
-    table["Approach"] = pf.apply(_approach_label)
+    base_approach = pf.apply(_approach_label)
+
+    table["Approach"] = np.where(
+    use_halved,
+    "own approach (using every second detected HR peak)",
+    base_approach
+    )
     table["Camera"] = camera.map(_CAMERA_DISPLAY).fillna(camera)
     table["Participant"] = parsed.apply(lambda p: p[0] if p else pd.NA).astype("Int64")
     table["Experiment"] = parsed.apply(
@@ -619,6 +626,7 @@ def _create_manual_all_approaches_table(
         if p is None
         else ("before sport" if p[1] in (1, 2) else "after sport")
     )
+    table["ground truth mean HR (bpm)"] = df["gt_hr_mean"].to_numpy()
     if perspective == "both":
         table["Perspective"] = np.where(is_front, "front view", "side view")
     table["ROI"] = np.where(
@@ -823,7 +831,7 @@ def create_table_best_roi_all_approaches(
             )
 
     closest_cols = [closest for (closest, _halved) in _COLUMN_SOURCES.values()]
-    missing = [col for col in closest_cols if col not in df.columns]
+    missing = [col for col in closest_cols + ["gt_hr_mean"] if col not in df.columns]
     if missing:
         raise ValueError(
             f"{csv_path} is missing expected metric columns: {missing}. "
@@ -853,6 +861,7 @@ def create_table_best_roi_all_approaches(
         if p is None
         else ("before sport" if p[1] in (1, 2) else "after sport")
     )
+    table["ground truth mean HR (bpm)"] = df["gt_hr_mean"].to_numpy()
     # Make the ROI token readable: drop underscores (e.g. "left_forehead" -> "left forehead").
     table["ROI"] = df["roi"].astype(str).str.replace("_", " ", regex=False)
     # Always the regular closest columns (first element of each _COLUMN_SOURCES pair).
