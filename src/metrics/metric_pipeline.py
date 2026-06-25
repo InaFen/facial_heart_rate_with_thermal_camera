@@ -108,6 +108,8 @@ RELAXED_GT_FIND_PEAKS_SETTINGS: dict[str, dict[str, float | None]] = {
 # the new_approach mwir manual_rectangle recordings only.
 DROP_EVERY_SECOND_PEAK_RULES: tuple[dict[str, str], ...] = (
     {"path_fragment": "new_approach/results/mwir", "roi": "manual_rectangle"},
+    #{"path_fragment": "yang_et_al/results/mwir", "roi": "manual_rectangle"},
+    #{"path_fragment": "nair_et_al/results/mwir", "roi": "manual_rectangle"},
 )
 
 # Two heart-rate estimates "agree" at a moment when their instantaneous HR differs by
@@ -2586,8 +2588,8 @@ if __name__ == "__main__":
     # accepts short ("new"/"yang"/"nair") or full ("new_approach"/...) names; set
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
-    APPROACHES_TO_RUN = ("nair_et_al", "yang_et_al") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
+    CAMERAS_TO_RUN = "mwir" #("mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
