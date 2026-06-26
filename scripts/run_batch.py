@@ -106,6 +106,8 @@ NEW_APPROACH_SUBROI_GRID_ROWS_BY_ROI = {
 	"glabella": 3,
 	"manual_rectangle": 2,
 	"manual_rectangle_front_view": 8,
+	"manual_rectangle_temp": 1,
+	"manual_rectangle_forehead": 2,
 }
 
 
@@ -746,22 +748,23 @@ def main() -> int:
 	# ===== CONFIGURATION (edit these variables) =====
 	# The batch runs for every combination of pipeline x camera x ROI config below.
 	# Put a single entry in a list to run just one (previous behaviour).
-	pipelines = ["new"]              # any of "yang", "nair", "new"
-	cameras = ["mwir"]#, "vario", "lepton"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
+	pipelines = ["own", "nair", "yang"]              # any of "yang", "nair", "new"
+	cameras = ["lepton", "vario", "mwir"]#, "vario", "lepton"]               # any of "lepton", "vario", "mwir" (None = pipeline default)
 	# Restrict the batch to specific individual(s): any of "ina", "julian", "paulo".
 	# None (or []) processes every individual. Matched case-insensitively against each
 	# CSV row's `person` column, e.g. individuals = ["paulo"] or ["ina", "julian"].
-	individuals = ["ina"]  # None or list of individual names to include (matched against CSV `person` column)
+	individuals = ["ina", "julian", "paulo"]  # None or list of individual names to include (matched against CSV `person` column)
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
 		#{"roi_name": "tracker", "used_rois": ["forehead"]},
 		#{"roi_name": "dlib", "used_rois": ["forehead"]},
 		#{"roi_name": "forehead", "used_rois": ["forehead"]},
 		#{"roi_name": "glabella", "used_rois": ["glabella"]},
-		{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
+		#{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
 		#{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
 		#{"roi_name": "whole_face", "used_rois": ["whole_face"]},
 		#{"roi_name": "manual_rectangle", "used_rois": ["forehead"]}, # side view
+		{"roi_name": "manual_rectangle_forehead", "used_rois": ["forehead"]}, # side view
 		#{"roi_name": "manual_rectangle_front_view", "used_rois": ["forehead"]},
 	]
 	limit_rows = None  # e.g., 5 (None = process all rows)
