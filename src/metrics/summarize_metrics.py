@@ -25,6 +25,18 @@ preserved and four bookkeeping columns are prepended:
     selection_score     the winner's score (always "lower is better"; for the
                         ``composite`` criterion this is the mean rank across sub-metrics)
 
+Additionally one ranked CSV per approach is written (Nair et al., Yang et al., own
+approach): ``saved_results/all_npz_metrics_best_roi_ranked_<approach>.csv``. Each holds
+that approach's best-ROI recordings ordered best -> worst by the *same* ``composite``
+criterion that picked each recording's ROI (row 1 is the approach's best recording), with
+two extra leading columns:
+
+    recording_rank          1 = best recording within the approach, 2 = second best, ...
+    recording_rank_score    the mean competition rank across the composite sub-metrics
+
+By default the side-view ``manual_rectangle`` (temple) recordings are excluded from the
+ranking, leaving the 18 front-view/face recordings per approach.
+
 How is the "best" ROI decided?
 ------------------------------
 The ``closest`` metrics compare the predicted instantaneous heart rate against the
@@ -66,6 +78,7 @@ Usage
     python -m src.metrics.summarize_metrics             # always uses the composite criterion
     python -m src.metrics.summarize_metrics --verbose   # also print the per-recording ranking
     python -m src.metrics.summarize_metrics --exclude-manual-rectangle  # drop manual_rectangle ROIs
+    python -m src.metrics.summarize_metrics --include-side-view-in-ranking  # rank all recordings/approach
 """
 
 from __future__ import annotations
@@ -84,6 +97,21 @@ from typing import Dict, List, Optional, Tuple
 
 DEFAULT_INPUT_CSV = Path("saved_results/all_npz_metrics.csv")
 DEFAULT_OUTPUT_CSV = Path("saved_results/all_npz_metrics_best_roi.csv")
+
+# Per-approach ranked recordings: the best-ROI CSV is split by approach and each
+# approach's recordings are ordered best -> worst (one CSV per approach). The filename is
+# templated with the approach folder token (e.g. ..._ranked_nair_et_al.csv).
+DEFAULT_RANKED_OUTPUT_DIR = Path("saved_results")
+RANKED_OUTPUT_TEMPLATE = "all_npz_metrics_best_roi_ranked_{approach}.csv"
+
+# Known approaches (folder token -> display label) and their deterministic output order,
+# used when writing one ranked CSV per approach.
+APPROACH_LABELS: Dict[str, str] = {
+    "nair_et_al": "Nair et al.",
+    "yang_et_al": "Yang et al.",
+    "new_approach": "own approach",
+}
+APPROACH_ORDER: Tuple[str, ...] = ("nair_et_al", "yang_et_al", "new_approach")
 
 # Known ROI tokens, longest/compound first so e.g. "left_forehead" is not shortened to
 # "forehead". The leaf of a plots_folder looks like "<recording>_<roi>_<time-segment>".
@@ -135,6 +163,14 @@ HELPER_FIELDNAMES: Tuple[str, ...] = (
     "num_rois_in_group",
     "selection_metric",
     "selection_score",
+)
+
+# Columns prepended to every per-approach ranked output row (see
+# rank_recordings_per_approach): the recording's 1-based rank within its approach and the
+# composite score that produced it.
+RANKING_HELPER_FIELDNAMES: Tuple[str, ...] = (
+    "recording_rank",
+    "recording_rank_score",
 )
 
 
@@ -264,13 +300,14 @@ def group_scores(group_rows: List[Dict[str, str]], metric: str) -> List[Optional
     return [selection_score(row, metric) for row in group_rows]
 
 
-def select_best_index(group_rows: List[Dict[str, str]], metric: str) -> Tuple[int, Optional[float]]:
-    """Index of the winning ROI row in ``group_rows`` and its reported score.
+def _ranking_order(
+    group_rows: List[Dict[str, str]], scores: List[Optional[float]]
+) -> List[int]:
+    """Return the indices of ``group_rows`` ordered best -> worst by ``scores``.
 
-    Ties are broken deterministically by mae, then rmse, then ``plots_folder`` so the
-    result is reproducible.
+    Ties (equal ``scores``) are broken deterministically by mae, then rmse, then
+    ``plots_folder`` so the order is reproducible; ``None`` scores sort last (worst).
     """
-    scores = group_scores(group_rows, metric)
 
     def key(i: int) -> tuple:
         return (
@@ -280,7 +317,17 @@ def select_best_index(group_rows: List[Dict[str, str]], metric: str) -> Tuple[in
             group_rows[i].get("plots_folder", ""),
         )
 
-    best = min(range(len(group_rows)), key=key)
+    return sorted(range(len(group_rows)), key=key)
+
+
+def select_best_index(group_rows: List[Dict[str, str]], metric: str) -> Tuple[int, Optional[float]]:
+    """Index of the winning ROI row in ``group_rows`` and its reported score.
+
+    Ties are broken deterministically by mae, then rmse, then ``plots_folder`` so the
+    result is reproducible.
+    """
+    scores = group_scores(group_rows, metric)
+    best = _ranking_order(group_rows, scores)[0]
     return best, scores[best]
 
 
@@ -412,6 +459,121 @@ def _approach_camera(plots_folder: str) -> Tuple[str, str]:
     return approach, camera
 
 
+def rank_recordings_per_approach(
+    input_csv: str | Path = DEFAULT_OUTPUT_CSV,
+    output_dir: str | Path = DEFAULT_RANKED_OUTPUT_DIR,
+    metric: str = SELECTION_METRIC,
+    exclude_side_view_manual_rectangle: bool = True,
+    verbose: bool = False,
+) -> List[Path]:
+    """Rank the best-ROI recordings within each approach; write one CSV per approach.
+
+    Reads the best-ROI summary CSV (one row per recording, produced by
+    :func:`summarize_best_rois`) and, separately for each approach (Nair et al., Yang et
+    al., own approach), orders that approach's recordings from best to worst using the
+    *same* ``composite`` criterion that picked each recording's best ROI: every recording
+    is ranked on each of ``COMPOSITE_METRICS`` against the other recordings of the same
+    approach, the ranks are averaged, and the lowest mean rank is placed first. Two columns
+    are prepended to the (otherwise unchanged) rows:
+
+        recording_rank          1 = best recording within the approach, 2 = second best, ...
+        recording_rank_score    the mean competition rank across COMPOSITE_METRICS (always
+                                "lower is better"). Ties are broken by mae, then rmse, then
+                                plots_folder so the order is reproducible.
+
+    When ``exclude_side_view_manual_rectangle`` is True (default) the side-view temple
+    recordings (``roi == "manual_rectangle"``) are dropped before ranking (they are
+    reported separately), leaving the 18 front-view/face recordings per approach; the
+    front-view ``manual_rectangle_front_view`` recordings are kept.
+
+    Returns the list of written CSV paths (one per approach that had any recordings).
+    Raises ``ValueError`` for an unknown ``metric`` and ``FileNotFoundError`` if the input
+    CSV is missing.
+    """
+    if metric not in AVAILABLE_METRICS:
+        raise ValueError(f"metric must be one of {AVAILABLE_METRICS}, got {metric!r}")
+    input_csv = Path(input_csv)
+    output_dir = Path(output_dir)
+    if not input_csv.exists():
+        raise FileNotFoundError(f"Best-ROI CSV not found: {input_csv}")
+
+    with open(input_csv, newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file)
+        original_fieldnames = list(reader.fieldnames or [])
+        rows = [row for row in reader]
+
+    if "plots_folder" not in original_fieldnames:
+        raise ValueError(
+            "Best-ROI CSV has no 'plots_folder' column - cannot group by approach."
+        )
+
+    # Bucket recordings by approach (preserving first-appearance order within each), after
+    # optionally dropping the side-view temple recordings.
+    per_approach: "defaultdict[str, List[Dict[str, str]]]" = defaultdict(list)
+    excluded_side_view = 0
+    for row in rows:
+        if (
+            exclude_side_view_manual_rectangle
+            and row.get("roi", "") == "manual_rectangle"
+        ):
+            excluded_side_view += 1
+            continue
+        approach, _camera = _approach_camera(row.get("plots_folder", ""))
+        per_approach[approach].append(row)
+
+    fieldnames = list(RANKING_HELPER_FIELDNAMES) + original_fieldnames
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Known approaches first (deterministic), then any unexpected extras.
+    ordered_approaches = [a for a in APPROACH_ORDER if a in per_approach]
+    ordered_approaches += [a for a in per_approach if a not in APPROACH_ORDER]
+
+    written: List[Path] = []
+    for approach in ordered_approaches:
+        approach_rows = per_approach[approach]
+        scores = group_scores(approach_rows, metric)
+        order = _ranking_order(approach_rows, scores)
+
+        output_csv = output_dir / RANKED_OUTPUT_TEMPLATE.format(approach=approach)
+        with open(output_csv, "w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(
+                csv_file, fieldnames=fieldnames, extrasaction="ignore", restval=""
+            )
+            writer.writeheader()
+            for rank, idx in enumerate(order, start=1):
+                out_row: Dict[str, object] = {
+                    "recording_rank": rank,
+                    "recording_rank_score": (
+                        "" if scores[idx] is None else round(scores[idx], 6)
+                    ),
+                }
+                out_row.update(approach_rows[idx])
+                writer.writerow(out_row)
+        written.append(output_csv)
+
+        label = APPROACH_LABELS.get(approach, approach)
+        print(
+            f"[summarize_metrics] ranked {len(approach_rows)} {label} recording(s) "
+            f"(by '{metric}') -> {output_csv}"
+        )
+        if verbose:
+            for rank, idx in enumerate(order, start=1):
+                leaf = (
+                    approach_rows[idx].get("plots_folder", "").rstrip("/").split("/")[-1]
+                )
+                roi = approach_rows[idx].get("roi", "?")
+                score = scores[idx]
+                shown = "n/a" if score is None else round(score, 3)
+                print(f"    {rank:2d}. {leaf} | roi={roi} | mean rank={shown}")
+
+    if excluded_side_view:
+        print(
+            f"  excluded {excluded_side_view} side-view 'manual_rectangle' recording(s) "
+            "before ranking"
+        )
+    return written
+
+
 def _print_summary(
     input_rows: int,
     groups: int,
@@ -475,6 +637,19 @@ def main(argv: Optional[List[str]] = None) -> None:
         help="Disregard ROIs whose name contains 'manual_rectangle' "
         "(covers both manual_rectangle and manual_rectangle_front_view).",
     )
+    parser.add_argument(
+        "--rank-output-dir",
+        type=Path,
+        default=DEFAULT_RANKED_OUTPUT_DIR,
+        help="Directory for the per-approach ranked recording CSVs.",
+    )
+    parser.add_argument(
+        "--include-side-view-in-ranking",
+        action="store_true",
+        default=False,
+        help="Keep the side-view 'manual_rectangle' recordings when ranking each "
+        "approach (by default they are dropped, leaving the 18 face recordings/approach).",
+    )
     args = parser.parse_args(argv)
     # The selection criterion is intentionally hard-coded (see SELECTION_METRIC); it is
     # not exposed as a CLI option.
@@ -483,6 +658,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         output_csv=args.output,
         verbose=args.verbose,
         exclude_manual_rectangle=args.exclude_manual_rectangle,
+    )
+    # Then rank each approach's best-ROI recordings (one CSV per approach), reading the
+    # best-ROI CSV just written so both steps use the same composite criterion.
+    rank_recordings_per_approach(
+        input_csv=args.output,
+        output_dir=args.rank_output_dir,
+        exclude_side_view_manual_rectangle=not args.include_side_view_in_ranking,
+        verbose=args.verbose,
     )
 
 
