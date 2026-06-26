@@ -121,6 +121,7 @@ ROI_VOCABULARY: Tuple[str, ...] = (
     "whole_face",
     "manual_rectangle_front_view",
     "manual_rectangle",
+    "manual_rectangle_forehead"
     "forehead",
     "glabella",
     "dlib",
@@ -146,7 +147,7 @@ SELECTION_METRIC = "composite"
 AVAILABLE_METRICS: Tuple[str, ...] = (
     "mae",
     "rmse",
-    "r2",
+    #"r2",
     "abs_bias",
     "sd_diff",
     "loa_width",
