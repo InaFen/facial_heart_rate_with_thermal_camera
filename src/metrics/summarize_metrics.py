@@ -121,7 +121,7 @@ ROI_VOCABULARY: Tuple[str, ...] = (
     "whole_face",
     "manual_rectangle_front_view",
     "manual_rectangle",
-    "manual_rectangle_forehead"
+    "manual_rectangle_forehead",
     "forehead",
     "glabella",
     "dlib",
