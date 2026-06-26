@@ -38,12 +38,21 @@ one of the metrics used to select the best ROI).
 
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+try:  # normal package import (python -m src.metrics.create_table)
+    from src.metrics.summarize_metrics import group_scores
+except ModuleNotFoundError:  # allow running this file directly
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from src.metrics.summarize_metrics import group_scores
 
 # Repository root: src/metrics/create_table.py -> parents[2] == project root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -73,6 +82,18 @@ DEFAULT_OUTPUT_CSV_FRONT_ALL = (
 )
 DEFAULT_OUTPUT_TEX_FRONT_ALL = (
     REPO_ROOT / "saved_results" / "table_front_view_all_approaches.tex"
+)
+DEFAULT_OUTPUT_CSV_SIDE_TEMPLE = (
+    REPO_ROOT / "saved_results" / "table_side_view_temple_all_approaches.csv"
+)
+DEFAULT_OUTPUT_TEX_SIDE_TEMPLE = (
+    REPO_ROOT / "saved_results" / "table_side_view_temple_all_approaches.tex"
+)
+DEFAULT_OUTPUT_CSV_SIDE_BEST = (
+    REPO_ROOT / "saved_results" / "table_side_view_best_all_approaches.csv"
+)
+DEFAULT_OUTPUT_TEX_SIDE_BEST = (
+    REPO_ROOT / "saved_results" / "table_side_view_best_all_approaches.tex"
 )
 DEFAULT_INPUT_BEST_ROI_CSV = (
     REPO_ROOT / "saved_results" / "all_npz_metrics_best_roi.csv"
@@ -227,6 +248,53 @@ def _participant_sport_label(plots_folder: str) -> Optional[str]:
     participant, experiment = parsed
     phase = "before" if experiment in (1, 2) else "after"
     return f"Participant {participant}, experiment {experiment}, {phase} sport"
+
+
+# Trailing time-segment token of a plots_folder leaf, e.g. "_30_00-50_00s".
+_TIME_SEGMENT_RE = re.compile(r"_\d+_\d+-\d+_\d+s$")
+
+
+def _manual_roi_kind(plots_folder: str) -> Optional[str]:
+    """Classify a manual_rectangle plots_folder leaf precisely.
+
+    Returns ``"temple"`` for the plain ``manual_rectangle`` ROI, ``"forehead_bg"`` for the
+    forehead & background ``manual_rectangle_forehead`` ROI and ``"front_view"`` for
+    ``manual_rectangle_front_view``. Every other ROI -- including ``manual_rectangle_temp``
+    -- yields ``None``. Detection is exact (it matches the ROI token right before the
+    trailing time segment), so ``manual_rectangle_forehead`` is never mistaken for the
+    temple ``manual_rectangle``.
+    """
+    leaf = str(plots_folder).replace("\\", "/").rstrip("/").split("/")[-1]
+    match = _TIME_SEGMENT_RE.search(leaf)
+    base = leaf[: match.start()] if match else leaf
+    if base.endswith("_manual_rectangle_front_view"):
+        return "front_view"
+    if base.endswith("_manual_rectangle_forehead"):
+        return "forehead_bg"
+    if base.endswith("_manual_rectangle"):
+        return "temple"
+    return None
+
+
+def _recording_key(plots_folder: str) -> tuple[str, str, str]:
+    """Return an ``(approach, camera, recording_stem)`` key shared by a recording's ROIs.
+
+    The ROI token is stripped from the leaf so the temple (``manual_rectangle``) and the
+    forehead & background (``manual_rectangle_forehead``) rows of the *same* side-view
+    recording map to the same key and therefore compete against each other.
+    """
+    leaf = str(plots_folder).replace("\\", "/").rstrip("/").split("/")[-1]
+    match = _TIME_SEGMENT_RE.search(leaf)
+    base = leaf[: match.start()] if match else leaf
+    for roi in (
+        "manual_rectangle_front_view",
+        "manual_rectangle_forehead",
+        "manual_rectangle",
+    ):
+        if base.endswith("_" + roi):
+            base = base[: -(len(roi) + 1)]
+            break
+    return _detect_approach(plots_folder), _detect_camera(plots_folder), base
 
 
 # LaTeX escaping for table cells/headers. The per-character map escapes the LaTeX
@@ -388,9 +456,14 @@ def _create_own_approach_manual_table(
 
     pf_full = df_full["plots_folder"].astype(str)
     is_front_view = pf_full.str.contains("manual_rectangle_front_view", na=False)
+    # The new forehead & background ROI (manual_rectangle_forehead) is reported by the
+    # dedicated side-view tables, so keep it out of the temple side-view / face front-view
+    # own-approach tables here.
+    is_forehead_bg = pf_full.str.contains("manual_rectangle_forehead", na=False)
     keep = (
         pf_full.str.contains("new_approach", na=False)
         & pf_full.str.contains("manual_rectangle", na=False)
+        & ~is_forehead_bg
         & (is_front_view if front_view else ~is_front_view)
     )
     df = df_full.loc[keep].copy()
@@ -584,7 +657,13 @@ def _create_manual_all_approaches_table(
         )
 
     pf_full = df_full["plots_folder"].astype(str)
-    is_manual_full = pf_full.str.contains("manual_rectangle", na=False)
+    # The new forehead & background ROI (manual_rectangle_forehead) is reported by the
+    # dedicated side-view tables; exclude it here so it does not leak into the temple
+    # side-view / combined manual tables.
+    is_forehead_full = pf_full.str.contains("manual_rectangle_forehead", na=False)
+    is_manual_full = (
+        pf_full.str.contains("manual_rectangle", na=False) & ~is_forehead_full
+    )
     is_front_full = pf_full.str.contains("manual_rectangle_front_view", na=False)
     if perspective == "side":
         keep = is_manual_full & ~is_front_full
@@ -779,6 +858,267 @@ def create_table_front_view_all_approaches(
     )
 
 
+# --- Side-view "best variant" tables ---------------------------------------------------
+# These two tables (temple-only and best-of-side-view) pick, per recording, between a
+# candidate ROI's regular metrics and its every-second-peak ("halved") metrics using the
+# composite criterion from summarize_metrics (the same notion of "better" used to choose the
+# best ROI). The chosen variant decides both the reported metric columns and whether the
+# Approach cell is annotated "(using only every second detected HR peak)".
+
+# Canonical "closest" score column -> (regular, halved) source columns. group_scores reads
+# the *closest* names, so a halved candidate is scored by copying its halved columns into
+# these canonical names.
+_VARIANT_SCORE_SOURCES: dict[str, tuple[str, str]] = {
+    "metrics_closest_mae": ("metrics_closest_mae", "metrics_closest_halved_mae"),
+    "metrics_closest_rmse": ("metrics_closest_rmse", "metrics_closest_halved_rmse"),
+    "ba_stats_closest_mean_diff": (
+        "ba_stats_closest_mean_diff",
+        "ba_stats_closest_halved_mean_diff",
+    ),
+    "ba_stats_closest_sd_diff": (
+        "ba_stats_closest_sd_diff",
+        "ba_stats_closest_halved_sd_diff",
+    ),
+    "hr_agreement_fraction": ("hr_agreement_fraction", "hr_agreement_fraction_halved"),
+}
+
+
+def _variant_has_data(row: pd.Series, halved: bool) -> bool:
+    """True when the regular/halved closest metrics exist for ``row`` (gauged by MAE)."""
+    column = "metrics_closest_halved_mae" if halved else "metrics_closest_mae"
+    return bool(pd.notna(row.get(column)))
+
+
+def _variant_score_row(row: pd.Series, halved: bool) -> dict:
+    """Canonical 'closest' score dict (regular or halved) fed to group_scores."""
+    source = 1 if halved else 0
+    scored: dict[str, object] = {
+        canonical: row.get(columns[source])
+        for canonical, columns in _VARIANT_SCORE_SOURCES.items()
+    }
+    scored["plots_folder"] = row.get("plots_folder", "")  # group_scores tie-break key
+    return scored
+
+
+def _select_best_side_view_variant(
+    group: pd.DataFrame, *, include_forehead: bool
+) -> Optional[tuple[pd.Series, bool]]:
+    """Return the best ``(row, halved)`` candidate for one side-view recording group.
+
+    Candidates are the regular and every-second-peak ("halved") variants of the temple
+    (and, when ``include_forehead``, the forehead & background) rows that actually have
+    metric data. The winner minimises the composite criterion (mean competition rank across
+    COMPOSITE_METRICS, the same "better" notion used to pick the best ROI); ties prefer the
+    regular variant, then temple over forehead & background, then the lower MAE. Returns
+    ``None`` when no candidate has data.
+    """
+    candidates: list[tuple[pd.Series, bool]] = []
+    for _index, row in group.iterrows():
+        kind = row["_roi_kind"]
+        if kind == "temple" or (include_forehead and kind == "forehead_bg"):
+            for halved in (False, True):
+                if _variant_has_data(row, halved):
+                    candidates.append((row, halved))
+    if not candidates:
+        return None
+
+    scores = group_scores(
+        [_variant_score_row(row, halved) for row, halved in candidates], "composite"
+    )
+
+    def _tie_key(i: int) -> tuple:
+        row, halved = candidates[i]
+        mae_column = "metrics_closest_halved_mae" if halved else "metrics_closest_mae"
+        mae_value = row.get(mae_column)
+        return (
+            scores[i] if scores[i] is not None else math.inf,
+            1 if halved else 0,  # prefer the regular variant on ties
+            0 if row["_roi_kind"] == "temple" else 1,  # then temple over forehead & bg
+            float(mae_value) if pd.notna(mae_value) else math.inf,
+        )
+
+    best = min(range(len(candidates)), key=_tie_key)
+    return candidates[best][0], candidates[best][1]
+
+
+def _create_side_view_best_table(
+    csv_path: str | Path,
+    output_path: Optional[str | Path],
+    *,
+    include_forehead: bool,
+    round_decimals: Optional[int],
+    latex_output_path: Optional[str | Path],
+    latex_caption: Optional[str],
+    latex_label: Optional[str],
+) -> tuple[pd.DataFrame, str]:
+    """Shared builder for the two side-view all-approaches tables.
+
+    For every side-view recording (Nair et al., Yang et al. and the own approach) the temple
+    ``manual_rectangle`` ROI -- and, when ``include_forehead``, also the forehead & background
+    ``manual_rectangle_forehead`` ROI -- competes in BOTH its regular and its every-second-peak
+    ("halved") variant, and the variant scoring best on the composite criterion (mean
+    competition rank across mae, rmse, |bias|, SD of differences, LoA width and the
+    HR-agreement fraction -- the same "better" notion used to pick the best ROI) is reported.
+    The winning row uses the matching ``closest`` / ``closest_halved`` metric columns; when a
+    halved variant wins, its ``Approach`` cell is annotated
+    ``"... (using only every second detected HR peak)"``.
+
+    ``include_forehead=False`` -> temple only (the ``ROI`` column is the constant "temple
+    (manual detection)"); ``include_forehead=True`` -> the best of temple / forehead &
+    background, with the winning ROI shown as "temple (manual detection)" /
+    "forehead & background (manual detection)". The side-view ``manual_rectangle_temp`` and the
+    front-view ``manual_rectangle_front_view`` recordings are never considered here.
+    """
+    df_full = pd.read_csv(csv_path)
+    if "plots_folder" not in df_full.columns:
+        raise ValueError(f"'plots_folder' column not found in {csv_path}")
+
+    needed = [col for pair in _COLUMN_SOURCES.values() for col in pair] + ["gt_hr_mean"]
+    missing = [col for col in needed if col not in df_full.columns]
+    if missing:
+        raise ValueError(
+            f"{csv_path} is missing expected metric columns: {missing}. "
+            "Re-run metric_pipeline.py to regenerate the aggregate CSV."
+        )
+
+    roi_kind = df_full["plots_folder"].astype(str).apply(_manual_roi_kind)
+    wanted = ["temple", "forehead_bg"] if include_forehead else ["temple"]
+    df = df_full.loc[roi_kind.isin(wanted)].copy()
+    if df.empty:
+        kinds = "temple / forehead & background" if include_forehead else "temple"
+        raise ValueError(f"No side-view ({kinds}) manual_rectangle rows found in {csv_path}.")
+    df["_roi_kind"] = df["plots_folder"].astype(str).apply(_manual_roi_kind)
+    df["_rec_key"] = df["plots_folder"].astype(str).apply(_recording_key)
+
+    # Per recording (temple + forehead & background share a _rec_key), pick the best
+    # (row, halved) candidate by the composite criterion.
+    winners: list[tuple[pd.Series, bool]] = []
+    for _rec_key, group in df.groupby("_rec_key", sort=False):
+        picked = _select_best_side_view_variant(group, include_forehead=include_forehead)
+        if picked is not None:
+            winners.append(picked)
+    if not winners:
+        raise ValueError(f"No side-view recording in {csv_path} had usable metrics to rank.")
+
+    records: list[dict[str, object]] = []
+    for row, halved in winners:
+        pf = str(row["plots_folder"])
+        camera_token = _detect_camera(pf)
+        parsed = _parse_participant_experiment(pf)
+        experiment_num = parsed[1] if parsed else None
+        base_label = _approach_label(pf)
+        record: dict[str, object] = {
+            "Approach": (
+                f"{base_label} (using only every second detected HR peak)"
+                if halved
+                else base_label
+            ),
+            "Camera": _CAMERA_DISPLAY.get(camera_token, camera_token),
+            "Participant": parsed[0] if parsed else pd.NA,
+            "Experiment": (
+                None
+                if experiment_num is None
+                else ("before sport" if experiment_num in (1, 2) else "after sport")
+            ),
+            "ground truth mean HR (bpm)": row.get("gt_hr_mean"),
+            "ROI": (
+                "temple (manual detection)"
+                if row["_roi_kind"] == "temple"
+                else "forehead & background (manual detection)"
+            ),
+            "_approach_order": _APPROACH_ORDER.get(_detect_approach(pf), 99),
+            "_camera_order": _CAMERA_ORDER.get(camera_token, 99),
+            "_participant": parsed[0] if parsed else 99,
+            "_experiment": experiment_num if experiment_num is not None else 99,
+        }
+        for out_col, (closest_col, halved_col) in _COLUMN_SOURCES.items():
+            record[out_col] = row.get(halved_col if halved else closest_col)
+        records.append(record)
+
+    table = pd.DataFrame.from_records(records)
+    table = table.sort_values(
+        ["_approach_order", "_camera_order", "_participant", "_experiment"]
+    ).reset_index(drop=True)
+    final_columns = [
+        "Approach",
+        "Camera",
+        "Participant",
+        "Experiment",
+        "ground truth mean HR (bpm)",
+        "ROI",
+    ] + list(_COLUMN_SOURCES.keys())
+    table = table[final_columns]
+    table["Participant"] = table["Participant"].astype("Int64")
+
+    return _finalize_table(
+        table,
+        output_path=output_path,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
+def create_table_side_view_temple_all_approaches(
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Side-view temple (manual_rectangle) metrics table across all approaches.
+
+    One row per side-view recording (Nair et al., Yang et al. and the own approach): for each
+    recording the regular and the every-second-peak ("halved") temple variant compete and the
+    one scoring better on the composite criterion is reported (when the halved variant wins,
+    the ``Approach`` cell reads "... (using only every second detected HR peak)"). The forehead
+    & background ROI is NOT considered here -- use
+    :func:`create_table_side_view_best_all_approaches` for that. Parameters and return value
+    match the other table builders.
+    """
+    return _create_side_view_best_table(
+        csv_path,
+        output_path,
+        include_forehead=False,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
+def create_table_side_view_best_all_approaches(
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Best side-view result per recording across all approaches.
+
+    Like :func:`create_table_side_view_temple_all_approaches`, but for each side-view recording
+    the best of up to FOUR candidates is reported: the temple (``manual_rectangle``) and the
+    forehead & background (``manual_rectangle_forehead``) ROI, each in its regular and its
+    every-second-peak ("halved") variant. The winning ROI is shown in the ``ROI`` column
+    ("temple (manual detection)" / "forehead & background (manual detection)") and a halved win
+    annotates the ``Approach`` cell. Parameters and return value match the other table builders.
+    """
+    return _create_side_view_best_table(
+        csv_path,
+        output_path,
+        include_forehead=True,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
 def create_table_best_roi_all_approaches(
     csv_path: str | Path = DEFAULT_INPUT_BEST_ROI_CSV,
     output_path: Optional[str | Path] = None,
@@ -843,7 +1183,7 @@ def create_table_best_roi_all_approaches(
     # Drop the side-view temple recordings (roi == "manual_rectangle"); they are reported
     # separately in the own-approach side-view table. Exact match keeps the front-view
     # "manual_rectangle_front_view" recordings (a different ROI token).
-    df = df.loc[df["roi"].astype(str) != "manual_rectangle"].copy()
+    df = df.loc[~df["roi"].astype(str).isin(["manual_rectangle", "manual_rectangle_forehead"])].copy()
     if df.empty:
         raise ValueError(
             f"No rows left in {csv_path} after dropping side-view 'manual_rectangle' rows."
@@ -1003,12 +1343,29 @@ def create_table_ranked_recordings(
 if __name__ == "__main__":
     builders = [
         (
-            "side view (own approach)",
-            lambda: create_table_side_view_own_approach(
-                output_path=DEFAULT_OUTPUT_CSV,
-                latex_output_path=DEFAULT_OUTPUT_TEX,
-                latex_caption="Side-view (temple, manual) results for the own approach.",
-                latex_label="tab:side_view_own_approach",
+            "side view temple (all approaches)",
+            lambda: create_table_side_view_temple_all_approaches(
+                output_path=DEFAULT_OUTPUT_CSV_SIDE_TEMPLE,
+                latex_output_path=DEFAULT_OUTPUT_TEX_SIDE_TEMPLE,
+                latex_caption=(
+                    "Side-view temple (manual) results across all approaches; per "
+                    "recording the regular or every-second-peak variant is shown, "
+                    "whichever scores better."
+                ),
+                latex_label="tab:side_view_temple_all_approaches",
+            ),
+        ),
+        (
+            "side view best (all approaches)",
+            lambda: create_table_side_view_best_all_approaches(
+                output_path=DEFAULT_OUTPUT_CSV_SIDE_BEST,
+                latex_output_path=DEFAULT_OUTPUT_TEX_SIDE_BEST,
+                latex_caption=(
+                    "Best side-view result per recording across all approaches "
+                    "(temple or forehead & background, regular or every-second-peak "
+                    "variant, whichever scores best)."
+                ),
+                latex_label="tab:side_view_best_all_approaches",
             ),
         ),
         (
@@ -1027,15 +1384,6 @@ if __name__ == "__main__":
                 latex_output_path=DEFAULT_OUTPUT_TEX_MANUAL_ALL,
                 latex_caption="Manual-ROI (temple / face) results across all approaches.",
                 latex_label="tab:manual_all_approaches",
-            ),
-        ),
-        (
-            "side view all approaches",
-            lambda: create_table_side_view_all_approaches(
-                output_path=DEFAULT_OUTPUT_CSV_SIDE_ALL,
-                latex_output_path=DEFAULT_OUTPUT_TEX_SIDE_ALL,
-                latex_caption="Side-view (temple, manual) results across all approaches.",
-                latex_label="tab:side_view_all_approaches",
             ),
         ),
         (
