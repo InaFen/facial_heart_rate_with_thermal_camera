@@ -263,6 +263,41 @@ def _camera_subfolder_of(path: Path, results_dir: Path) -> str:
     return relative.parts[0].lower() if len(relative.parts) >= 2 else ""
 
 
+def _normalize_individual_filter(
+    individuals: tuple[str, ...] | str | None,
+) -> set[str] | None:
+    """Return a lowercase set of individual name fragments to keep, or ``None`` for all.
+
+    Accepts a single string, an iterable, or ``None``. Each entry is matched as a
+    case-insensitive substring against the npz filename (so "Ina" selects every
+    ``Ina_*`` / ``ina*`` recording across cameras, while a precise stem like
+    "Ina_20_4_3" targets a single recording). Empty / ``None`` entries are dropped;
+    if nothing usable remains the result is ``None`` (meaning no filtering).
+    """
+    if individuals is None:
+        return None
+    if isinstance(individuals, str):
+        individuals = (individuals,)
+    filtered = {
+        str(individual).strip().lower()
+        for individual in individuals
+        if individual is not None and str(individual).strip()
+    }
+    return filtered or None
+
+
+def _matches_individual_filter(path: Path, individual_filter: set[str] | None) -> bool:
+    """Return ``True`` if ``path``'s filename matches the individual filter.
+
+    ``individual_filter`` is a set of lowercase substrings; a file matches when its
+    (lowercased) filename contains ANY of them. ``None`` matches every file.
+    """
+    if individual_filter is None:
+        return True
+    name = path.name.lower()
+    return any(fragment in name for fragment in individual_filter)
+
+
 def detect_ground_truth_peaks(
     gt_segment: np.ndarray,
     fs: float,
@@ -2369,6 +2404,7 @@ def batch_evaluate_folder(
     overwrite_csv: bool = False,
     existing_entry_mode: str = "overwrite",
     gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
+    individuals: tuple[str, ...] | str | None = None,
 ) -> Dict[str, object]:
     """Run evaluate_instantaneous_hr_against_ground_truth for all archive files in `folder`.
 
@@ -2376,6 +2412,10 @@ def batch_evaluate_folder(
     CSV: "skip" only processes files not yet in the CSV, while "overwrite" recomputes
     them and replaces their existing row. Set ``overwrite_csv=True`` to wipe the whole
     CSV before starting (then every file is processed fresh).
+
+    ``individuals`` optionally restricts the run to one (or more) specific individuals,
+    matched as a case-insensitive substring of the npz filename (e.g. "Ina" for every
+    Ina recording, or "Ina_20_4_3" for a single one); ``None`` evaluates everyone.
 
     For each found file, a subfolder named after the file stem is created (if not existing)
     and figures are saved inside that folder (the called function already saves into
@@ -2402,6 +2442,16 @@ def batch_evaluate_folder(
 
     results: dict[str, object] = {}
     files = sorted(folder.glob(pattern))
+    # Optional individual filter: keep only files whose name matches one of the
+    # requested individuals (case-insensitive substring of the npz filename).
+    individual_filter = _normalize_individual_filter(individuals)
+    if individual_filter is not None:
+        before = len(files)
+        files = [f for f in files if _matches_individual_filter(f, individual_filter)]
+        print(
+            f"[metric_pipeline] Batch: restricting to individual(s) {sorted(individual_filter)}: "
+            f"{len(files)} of {before} file(s) match."
+        )
     # Skip or overwrite files that already have a row in the aggregate CSV.
     files = _select_files_by_existing_entries(
         files,
@@ -2443,6 +2493,7 @@ def batch_evaluate_folder_structure(
     root: str | Path,
     approaches: tuple[str, ...] = ("nair_et_al", "yang_et_al", "new_approach"),
     cameras: tuple[str, ...] | str | None = None,
+    individuals: tuple[str, ...] | str | None = None,
     results_subdir: str = "results",
     pattern: str = "*.npz",
     flip_ground_truth: bool = False,
@@ -2462,6 +2513,11 @@ def batch_evaluate_folder_structure(
     run to specific camera subfolders (the first path component under ``results``,
     e.g. ("mwir", "vario")); ``None`` evaluates every camera. Both mirror
     run_batch.py's ``pipelines`` / ``cameras`` configuration.
+
+    ``individuals`` optionally restricts the run to one (or more) specific individuals,
+    matched as a case-insensitive substring of the npz filename (e.g. "Ina" for every
+    Ina recording across cameras, or "Ina_20_4_3" for a single one); ``None``
+    evaluates everyone.
 
     ``existing_entry_mode`` controls npz files that already have a row in the
     aggregate CSV: "skip" only computes metrics for files not yet in the CSV, while
@@ -2490,6 +2546,9 @@ def batch_evaluate_folder_structure(
     # Optional camera filter: the immediate subfolder of each approach's results dir
     # (e.g. "mwir"/"vario"/"lepton"), matched case-insensitively. None = all cameras.
     camera_filter = _normalize_camera_filter(cameras)
+    # Optional individual filter: a case-insensitive substring of the npz filename
+    # (e.g. "Ina" -> all Ina recordings, "Ina_20_4_3" -> one). None = all individuals.
+    individual_filter = _normalize_individual_filter(individuals)
 
     if csv_output_path is None:
         csv_output_path = root / "all_npz_metrics.csv"
@@ -2505,6 +2564,8 @@ def batch_evaluate_folder_structure(
     print(f"[metric_pipeline] Structure batch: approach(es): {list(approaches)}")
     if camera_filter is not None:
         print(f"[metric_pipeline] Structure batch: restricting to camera(s): {sorted(camera_filter)}")
+    if individual_filter is not None:
+        print(f"[metric_pipeline] Structure batch: restricting to individual(s): {sorted(individual_filter)}")
 
     # Collect all npz files across the approach/results trees first (so the summary
     # print is meaningful and missing folders are reported clearly).
@@ -2517,6 +2578,8 @@ def batch_evaluate_folder_structure(
         found = sorted(results_dir.rglob(pattern))
         if camera_filter is not None:
             found = [f for f in found if _camera_subfolder_of(f, results_dir) in camera_filter]
+        if individual_filter is not None:
+            found = [f for f in found if _matches_individual_filter(f, individual_filter)]
         print(f"[metric_pipeline] Structure batch: {approach}: found {len(found)} '{pattern}' file(s) under {results_dir}")
         npz_files.extend(found)
 
@@ -2591,6 +2654,12 @@ if __name__ == "__main__":
     APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
     CAMERAS_TO_RUN = "mwir" #("mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
+    # Optionally restrict the run to ONE specific individual (or a few). Matched as a
+    # case-insensitive substring of the npz filename, so "Ina" runs every Ina recording
+    # across cameras while "Ina_20_4_3" targets a single recording. Accepts a string, a
+    # tuple of strings, or None for everyone. Applies to both RUN_MODEs.
+    INDIVIDUALS_TO_RUN = "Julian"  # e.g. "Ina" or ("Ina", "Julian") or "Ina_20_4_3"
+
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
     HARD_CODED_FLIP = False
@@ -2606,6 +2675,7 @@ if __name__ == "__main__":
                 root=HARD_CODED_ROOT,
                 approaches=APPROACHES_TO_RUN,
                 cameras=CAMERAS_TO_RUN,
+                individuals=INDIVIDUALS_TO_RUN,
                 pattern=HARD_CODED_PATTERN,
                 flip_ground_truth=HARD_CODED_FLIP,
                 tolerance_ms=HARD_CODED_TOLERANCE_MS,
@@ -2633,6 +2703,7 @@ if __name__ == "__main__":
                     plot_steps=HARD_CODED_PLOT_STEPS,
                     plot_bland_altman=HARD_CODED_PLOT_BA,
                     gt_peak_method=GT_PEAK_METHOD,
+                    individuals=INDIVIDUALS_TO_RUN,
                 )
             elif HARD_CODED_PATH.is_file():
                 evaluate_instantaneous_hr_against_ground_truth(
