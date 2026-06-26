@@ -82,6 +82,7 @@ SUBROI_GRID_ROWS_BY_ROI = {
     "glabella": 2,
     "manual_rectangle_front_view": 6,
     "manual_rectangle": 2,
+    "manual_rectangle_forehead": 2,
     "roi_signal_water": 2
 }
 
