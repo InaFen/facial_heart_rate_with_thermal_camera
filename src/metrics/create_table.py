@@ -897,6 +897,109 @@ def create_table_best_roi_all_approaches(
     )
 
 
+def create_table_ranked_recordings(
+    approach: str,
+    csv_path: Optional[str | Path] = None,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Build the ranked-recordings table for a single approach.
+
+    Reads the per-approach ranked CSV written by
+    ``summarize_metrics.rank_recordings_per_approach`` (default
+    ``saved_results/all_npz_metrics_best_roi_ranked_<approach>.csv``) -- one row per
+    recording, already ordered best -> worst by the same ``composite`` criterion that picked
+    each recording's best ROI -- and renders it while **keeping that ranking order** (it is
+    deliberately *not* re-sorted by camera/participant/experiment like the other tables).
+
+    A leading ``Rank`` column (1 = the approach's best recording) is added; the remaining
+    descriptive columns mirror :func:`create_table_best_roi_all_approaches` minus the (here
+    constant) ``Approach`` column: ``Camera`` (ImageIR / VarioCam / Lepton), ``Participant``
+    (1..3), ``Experiment`` (experiment number + before / after sport, so each row is uniquely
+    identifiable even though the order follows the rank), ``ground truth mean HR (bpm)`` and
+    ``ROI`` (the ROI selected for that recording), followed by the regular ``closest`` metric
+    columns (the ``closest_halved`` variant is never used here, and r² is omitted, exactly as
+    in the best-ROI table).
+
+    ``approach`` must be one of ``"nair_et_al"``, ``"yang_et_al"`` or ``"new_approach"``.
+    When ``csv_path`` is ``None`` it defaults to the approach's ranked CSV in
+    ``saved_results``. Parameters and return value otherwise match
+    :func:`create_table_best_roi_all_approaches`.
+    """
+    if approach not in _APPROACH_LABELS:
+        raise ValueError(
+            f"approach must be one of {tuple(_APPROACH_LABELS)}, got {approach!r}"
+        )
+    if csv_path is None:
+        csv_path = (
+            REPO_ROOT
+            / "saved_results"
+            / f"all_npz_metrics_best_roi_ranked_{approach}.csv"
+        )
+
+    df = pd.read_csv(csv_path)
+    for required in ("plots_folder", "roi", "recording_rank"):
+        if required not in df.columns:
+            raise ValueError(
+                f"'{required}' column not found in {csv_path}. "
+                "Run summarize_metrics.py to (re)generate the ranked CSVs."
+            )
+
+    closest_cols = [closest for (closest, _halved) in _COLUMN_SOURCES.values()]
+    missing = [col for col in closest_cols + ["gt_hr_mean"] if col not in df.columns]
+    if missing:
+        raise ValueError(
+            f"{csv_path} is missing expected metric columns: {missing}. "
+            "Re-run metric_pipeline.py / summarize_metrics.py to regenerate it."
+        )
+    if df.empty:
+        raise ValueError(f"No rows found in {csv_path}.")
+
+    # Keep the ranking order: order by the recording_rank written into the CSV (1 = best)
+    # rather than the camera/participant/experiment ordering used by the other tables.
+    df = df.copy()
+    df["_rank"] = pd.to_numeric(df["recording_rank"], errors="coerce")
+    df = df.sort_values("_rank", kind="stable").reset_index(drop=True)
+
+    pf = df["plots_folder"].astype(str)
+    camera = pf.apply(_detect_camera)
+    parsed = pf.apply(_parse_participant_experiment)
+
+    table = pd.DataFrame(index=df.index)
+    table["Rank"] = df["_rank"].astype("Int64")
+    table["Camera"] = camera.map(_CAMERA_DISPLAY).fillna(camera)
+    table["Participant"] = parsed.apply(lambda p: p[0] if p else pd.NA).astype("Int64")
+    table["Experiment"] = parsed.apply(
+        lambda p: None
+        if p is None
+        else (
+            f"experiment {p[1]}, "
+            + ("before sport" if p[1] in (1, 2) else "after sport")
+        )
+    )
+    table["ground truth mean HR (bpm)"] = df["gt_hr_mean"].to_numpy()
+    # Make the ROI token readable: drop underscores (e.g. "left_forehead" -> "left forehead").
+    table["ROI"] = df["roi"].astype(str).str.replace("_", " ", regex=False)
+    # Always the regular closest columns (first element of each _COLUMN_SOURCES pair);
+    # r² is intentionally not part of _COLUMN_SOURCES (see its definition above).
+    for out_col, (closest_col, _halved_col) in _COLUMN_SOURCES.items():
+        table[out_col] = df[closest_col].to_numpy()
+
+    # NB: deliberately no re-sorting -- the table already follows the best -> worst ranking.
+    return _finalize_table(
+        table,
+        output_path=output_path,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
 if __name__ == "__main__":
     builders = [
         (
@@ -953,6 +1056,32 @@ if __name__ == "__main__":
                 latex_label="tab:best_roi_all_approaches",
             ),
         ),
+    ]
+    # Per-approach ranked-recordings tables (one CSV/.tex per approach). Unlike the tables
+    # above these keep the best -> worst ranking order from the ranked CSVs instead of being
+    # re-sorted by camera/participant/experiment. The default-argument binding
+    # (``_approach=_approach``) captures each approach in its own lambda.
+    builders += [
+        (
+            f"ranked recordings ({_APPROACH_LABELS[_approach]})",
+            (
+                lambda _approach=_approach: create_table_ranked_recordings(
+                    _approach,
+                    output_path=REPO_ROOT
+                    / "saved_results"
+                    / f"table_ranked_recordings_{_approach}.csv",
+                    latex_output_path=REPO_ROOT
+                    / "saved_results"
+                    / f"table_ranked_recordings_{_approach}.tex",
+                    latex_caption=(
+                        f"{_APPROACH_LABELS[_approach]} recordings (best ROI per recording) "
+                        "ranked best to worst by the composite criterion."
+                    ),
+                    latex_label=f"tab:ranked_recordings_{_approach}",
+                )
+            ),
+        )
+        for _approach in ("nair_et_al", "yang_et_al", "new_approach")
     ]
     for title, builder in builders:
         try:
