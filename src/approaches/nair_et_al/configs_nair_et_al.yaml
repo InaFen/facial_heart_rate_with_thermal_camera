@@ -12,9 +12,9 @@ processing:
   overwrite_existing_files: true
   plot_steps: true
   fps: 8.767701401175636 
-  bandpass_lowcut: 0.85
-  bandpass_highcut: 4.3 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
-  bandpass_order: 2
+  bandpass_lowcut: 0.4
+  bandpass_highcut: 4.0 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
+  bandpass_order: 5
   use_ema: true
   ema_alpha: 0.15
   manual_roi_enabled: true
@@ -25,9 +25,9 @@ processing:
   manual_roi_modes:
   - polygon
   manual_roi_mask_load_paths:
-  - data/saved_data/new_approach/roi_signal_water.npy
+  - data/saved_data/new_approach/roi_signal_water_nair.npy
   manual_roi_mask_save_paths:
-  - data/saved_data/new_approach/roi_signal_water.npy
+  - data/saved_data/new_approach/roi_signal_water_nair.npy
   manual_roi_selection_colormap: true
   # Which named ROIs to use from roi_landmarks_options (list of names).
   used_rois: [forehead]
