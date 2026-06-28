@@ -13,7 +13,7 @@ processing:
   plot_steps: true
   fps: 8.767701401175636 
   bandpass_lowcut: 0.85
-  bandpass_highcut: 4.3 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
+  bandpass_highcut: 10.0 # 5.0 in paper not achievable with fps (Nyquist frequency is 4.383850700587818 Hz)
   bandpass_order: 2
   use_ema: true
   ema_alpha: 0.15
@@ -32,7 +32,7 @@ processing:
   # Which named ROIs to use from roi_landmarks_options (list of names).
   used_rois: [forehead]
   # A short name identifying the ROI selection (used for saved filenames)
-  roi_name: roi_signal_water
+  roi_name: roi_signal_water_whole_frame
 timing:
   time_first_frame_signal: 10.5
   time_first_frame_ecg: 0.0
