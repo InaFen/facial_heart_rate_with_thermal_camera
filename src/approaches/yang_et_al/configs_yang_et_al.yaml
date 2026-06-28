@@ -25,7 +25,7 @@ processing:
   manual_roi_modes:
   - polygon
   manual_roi_mask_load_paths:
-  - null
+  - data/saved_data/new_approach/roi_signal_water.npy
   manual_roi_mask_save_paths:
   - data/saved_data/new_approach/roi_signal_water.npy
   manual_roi_selection_colormap: true
@@ -36,7 +36,7 @@ processing:
 timing:
   time_first_frame_signal: 10.5
   time_first_frame_ecg: 0.0
-  timespan_signal_to_look_at: [120.0, 140.0]
+  timespan_signal_to_look_at: [122.0, 140.0]
   notes:
     time_first_frame_signal_expected: null
     time_first_frame_ecg_expected: null
