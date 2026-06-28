@@ -1485,6 +1485,175 @@ def create_table_roi_signal_consistency(
         latex_label=latex_label,
     )
 
+
+# ── Add these default path constants alongside the other DEFAULT_OUTPUT_* constants ──
+DEFAULT_OUTPUT_CSV_SIDE_ALL_ROIS = (
+    REPO_ROOT / "saved_results" / "table_side_view_all_rois_all_approaches.csv"
+)
+DEFAULT_OUTPUT_TEX_SIDE_ALL_ROIS = (
+    REPO_ROOT / "saved_results" / "table_side_view_all_rois_all_approaches.tex"
+)
+
+# Side-view ROI kind -> display name and sort order.
+_ROI_KIND_DISPLAY = {
+    "temple": "temple (manual detection)",
+    "forehead_bg": "forehead & background (manual detection)",
+    "temp": "temp (manual detection)",
+}
+_ROI_KIND_ORDER = {"temple": 0, "forehead_bg": 1, "temp": 2}
+
+
+def _side_view_roi_kind(plots_folder: str) -> Optional[str]:
+    """Classify a side-view manual ROI plots_folder leaf.
+
+    Returns ``"temple"``, ``"forehead_bg"`` or ``"temp"`` for the three side-view manual
+    ROI types (``manual_rectangle``, ``manual_rectangle_forehead`` and
+    ``manual_rectangle_temp``). Returns ``None`` for front-view or non-manual ROIs.
+    """
+    leaf = str(plots_folder).replace("\\", "/").rstrip("/").split("/")[-1]
+    match = _TIME_SEGMENT_RE.search(leaf)
+    base = leaf[: match.start()] if match else leaf
+    if base.endswith("_manual_rectangle_front_view"):
+        return None
+    if base.endswith("_manual_rectangle_forehead"):
+        return "forehead_bg"
+    if base.endswith("_manual_rectangle_temp"):
+        return "temp"
+    if base.endswith("_manual_rectangle"):
+        return "temple"
+    return None
+
+
+def create_table_side_view_all_rois_all_approaches(
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Build a side-view table showing **every** manual ROI per recording across all approaches.
+
+    Unlike :func:`create_table_side_view_best_all_approaches` (which picks the single best
+    ROI and variant per recording), this table shows **all** side-view manual ROIs for each
+    recording as separate rows: the temple (``manual_rectangle``), the forehead &
+    background (``manual_rectangle_forehead``) and the temp (``manual_rectangle_temp``)
+    ROI.  The MWIR (ImageIR) rows report the ``closest_halved`` metrics **when available**
+    (only the own approach's MWIR manual recordings have a halved variant) and the
+    ``Approach`` cell is annotated accordingly; every other row reports the regular
+    ``closest`` metrics.
+
+    Columns: ``Approach``, ``Camera`` (ImageIR / VarioCam / Lepton), ``Participant``
+    (1..3), ``Experiment`` (before / after sport), ``ground truth mean HR (bpm)``,
+    ``ROI`` (temple / forehead & background / temp, each "manual detection") and then the
+    metric columns from :data:`_COLUMN_SOURCES`.  Parameters and return value match the
+    other table builders (see e.g. :func:`create_table_best_roi_all_approaches`).
+    """
+    df_full = pd.read_csv(csv_path)
+    if "plots_folder" not in df_full.columns:
+        raise ValueError(f"'plots_folder' column not found in {csv_path}")
+
+    needed = [col for pair in _COLUMN_SOURCES.values() for col in pair] + ["gt_hr_mean"]
+    missing = [col for col in needed if col not in df_full.columns]
+    if missing:
+        raise ValueError(
+            f"{csv_path} is missing expected metric columns: {missing}. "
+            "Re-run metric_pipeline.py to regenerate the aggregate CSV."
+        )
+
+    roi_kind_series = df_full["plots_folder"].astype(str).apply(_side_view_roi_kind)
+    mask = roi_kind_series.notna()
+    df = df_full.loc[mask].copy().reset_index(drop=True)
+    if df.empty:
+        raise ValueError(
+            "No side-view manual ROI (temple / forehead & background / temp) "
+            f"rows found in {csv_path}."
+        )
+
+    roi_kinds = roi_kind_series.loc[mask].values
+
+    pf = df["plots_folder"].astype(str)
+    camera = pf.apply(_detect_camera)
+    approach = pf.apply(_detect_approach)
+    parsed = pf.apply(_parse_participant_experiment)
+
+    # Halved metrics for MWIR side-view rows when available (own approach only).
+    halved_source_cols = [halved for (_closest, halved) in _COLUMN_SOURCES.values()]
+    halved_available = df[halved_source_cols].notna().all(axis=1).to_numpy()
+    use_halved = (
+        (camera.values == "mwir")
+        & halved_available
+        & (pf.str.contains("new_approach", na=False).to_numpy())
+    )
+
+    records: list[dict[str, object]] = []
+    for i in range(len(df)):
+        row = df.iloc[i]
+        p = parsed.iloc[i]
+        cam_token = camera.iloc[i]
+        app_token = approach.iloc[i]
+        roi_k = roi_kinds[i]
+        halved = bool(use_halved[i])
+
+        base_label = _APPROACH_LABELS.get(app_token, app_token)
+        record: dict[str, object] = {
+            "Approach": (
+                f"{base_label} (using only every second detected HR peak)"
+                if halved
+                else base_label
+            ),
+            "Camera": _CAMERA_DISPLAY.get(cam_token, cam_token),
+            "Participant": p[0] if p else pd.NA,
+            "Experiment": (
+                None
+                if p is None
+                else ("before sport" if p[1] in (1, 2) else "after sport")
+            ),
+            "ground truth mean HR (bpm)": row.get("gt_hr_mean"),
+            "ROI": _ROI_KIND_DISPLAY.get(roi_k, roi_k),
+            "_approach_order": _APPROACH_ORDER.get(app_token, 99),
+            "_camera_order": _CAMERA_ORDER.get(cam_token, 99),
+            "_roi_order": _ROI_KIND_ORDER.get(roi_k, 99),
+            "_participant": p[0] if p else 99,
+            "_experiment": p[1] if p else 99,
+        }
+        for out_col, (closest_col, halved_col) in _COLUMN_SOURCES.items():
+            record[out_col] = row.get(halved_col if halved else closest_col)
+        records.append(record)
+
+    table = pd.DataFrame.from_records(records)
+    table = table.sort_values(
+        [
+            "_approach_order",
+            "_camera_order",
+            "_participant",
+            "_experiment",
+            "_roi_order",
+        ]
+    ).reset_index(drop=True)
+
+    final_columns = [
+        "Approach",
+        "Camera",
+        "Participant",
+        "Experiment",
+        "ground truth mean HR (bpm)",
+        "ROI",
+    ] + list(_COLUMN_SOURCES.keys())
+    table = table[final_columns]
+    table["Participant"] = table["Participant"].astype("Int64")
+
+    return _finalize_table(
+        table,
+        output_path=output_path,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
+
 if __name__ == "__main__":
     builders = [
         (
@@ -1559,6 +1728,18 @@ if __name__ == "__main__":
                     "across all ROIs (mean, median, RMSE, range)."
                 ),
                 latex_label="tab:roi_signal_mean",
+            ),
+        ),
+        (
+            "side view all ROIs (all approaches)",
+            lambda: create_table_side_view_all_rois_all_approaches(
+                output_path=DEFAULT_OUTPUT_CSV_SIDE_ALL_ROIS,
+                latex_output_path=DEFAULT_OUTPUT_TEX_SIDE_ALL_ROIS,
+                latex_caption=(
+                    "All side-view manual ROIs (temple, forehead & background, temp) "
+                    "per recording across all approaches."
+                ),
+                latex_label="tab:side_view_all_rois_all_approaches",
             ),
         ),
     ]
