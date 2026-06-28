@@ -1340,6 +1340,151 @@ def create_table_ranked_recordings(
     )
 
 
+# ── Add these default path constants alongside the other DEFAULT_OUTPUT_* constants ──
+DEFAULT_OUTPUT_CSV_ROI_CONSISTENCY = (
+    REPO_ROOT / "saved_results" / "table_roi_signal_consistency.csv"
+)
+DEFAULT_OUTPUT_TEX_ROI_CONSISTENCY = (
+    REPO_ROOT / "saved_results" / "table_roi_signal_consistency.tex"
+)
+
+
+def create_table_roi_signal_consistency(
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    output_path: Optional[str | Path] = None,
+    *,
+    round_decimals: Optional[int] = 2,
+    latex_output_path: Optional[str | Path] = None,
+    latex_caption: Optional[str] = None,
+    latex_label: Optional[str] = None,
+) -> tuple[pd.DataFrame, str]:
+    """Build the ROI-consistency table: per-recording spread of the signal-HR bias across ROIs.
+
+    Reads the aggregate metrics CSV and, for every recording (identified by approach, camera,
+    participant and experiment number), collects the ``signal_hr_mean_abs_diff_to_gt_mean``
+    values across all of that recording's ROIs. The mean, median, RMSE and range of those
+    per-ROI values are reported, yielding one row per recording.
+
+    Columns: ``Approach``, ``Camera`` (ImageIR / VarioCam / Lepton), ``Participant``
+    (1..3), ``Experiment`` (before / after sport), ``Perspective`` (side view / front
+    view), ``ground truth mean HR (bpm)``, ``Mean abs. signal-GT HR diff across ROIs
+    (bpm)``, ``Median abs. signal-GT HR diff across ROIs (bpm)``, ``RMSE abs. signal-GT
+    HR diff across ROIs (bpm)`` and ``Range abs. signal-GT HR diff across ROIs (bpm)``.
+
+    The perspective (side view / front view) is inferred from the recording's path: if any
+    ROI path contains ``"front_view"`` the recording is labelled "front view", otherwise
+    "side view". Parameters and return value match the other table builders (see e.g.
+    :func:`create_table_best_roi_all_approaches`).
+    """
+    df_full = pd.read_csv(csv_path)
+    if "plots_folder" not in df_full.columns:
+        raise ValueError(f"'plots_folder' column not found in {csv_path}")
+
+    target_col = "signal_hr_mean_abs_diff_to_gt_mean"
+    required = [target_col, "gt_hr_mean"]
+    missing = [c for c in required if c not in df_full.columns]
+    if missing:
+        raise ValueError(
+            f"{csv_path} is missing expected columns: {missing}. "
+            "Re-run metric_pipeline.py to regenerate the aggregate CSV."
+        )
+
+    pf_full = df_full["plots_folder"].astype(str)
+    camera_full = pf_full.apply(_detect_camera)
+    approach_full = pf_full.apply(_detect_approach)
+    parsed_full = pf_full.apply(_parse_participant_experiment)
+
+    # Keep only rows whose recording can be identified.
+    valid = parsed_full.apply(lambda p: p is not None)
+    df = df_full.loc[valid].copy()
+    df["_approach"] = approach_full.loc[valid].values
+    df["_camera"] = camera_full.loc[valid].values
+    df["_participant"] = parsed_full.loc[valid].apply(lambda p: p[0]).values
+    df["_exp_num"] = parsed_full.loc[valid].apply(lambda p: p[1]).values
+
+    records: list[dict[str, object]] = []
+    for (app, cam, part, exp), group in df.groupby(
+        ["_approach", "_camera", "_participant", "_exp_num"], sort=False
+    ):
+        values = group[target_col].dropna().to_numpy(dtype=float)
+        if len(values) == 0:
+            continue
+
+        pf_group = group["plots_folder"].astype(str)
+        front = pf_group.str.contains("front_view", na=False).any()
+        gt_vals = group["gt_hr_mean"].dropna()
+        gt_hr = gt_vals.iloc[0] if len(gt_vals) > 0 else pd.NA
+
+        records.append(
+            {
+                "Approach": _APPROACH_LABELS.get(app, app),
+                "Camera": _CAMERA_DISPLAY.get(cam, cam),
+                "Participant": int(part),
+                "Experiment": "before sport"
+                if int(exp) in (1, 2)
+                else "after sport",
+                "Perspective": "front view" if front else "side view",
+                "ground truth mean HR (bpm)": gt_hr,
+                "Mean abs. signal-GT HR diff across ROIs (bpm)": float(
+                    np.mean(values)
+                ),
+                "Median abs. signal-GT HR diff across ROIs (bpm)": float(
+                    np.median(values)
+                ),
+                "RMSE abs. signal-GT HR diff across ROIs (bpm)": float(
+                    np.sqrt(np.mean(values ** 2))
+                ),
+                "Range abs. signal-GT HR diff across ROIs (bpm)": float(
+                    np.max(values) - np.min(values)
+                ),
+                "Max abs. signal-GT HR diff across ROIs (bpm)": float(np.max(values)),
+                "Min abs. signal-GT HR diff across ROIs (bpm)": float(np.min(values)),
+            }
+        )
+
+    if not records:
+        raise ValueError(
+            f"No recordings with valid '{target_col}' data found in {csv_path}."
+        )
+
+    table = pd.DataFrame.from_records(records)
+
+    # Stable, readable ordering: approach, camera, participant, experiment.
+    _approach_rev = {v: k for k, v in _APPROACH_LABELS.items()}
+    _camera_rev = {v: k for k, v in _CAMERA_DISPLAY.items()}
+    table["_approach_order"] = (
+        table["Approach"].map(_approach_rev).map(_APPROACH_ORDER).fillna(99)
+    )
+    table["_camera_order"] = (
+        table["Camera"].map(_camera_rev).map(_CAMERA_ORDER).fillna(99)
+    )
+    table["_participant"] = table["Participant"]
+    table["_experiment"] = table["Experiment"].map({"before sport": 0, "after sport": 1})
+    table = (
+        table.sort_values(
+            ["_approach_order", "_camera_order", "_participant", "_experiment"]
+        )
+        .drop(
+            columns=[
+                "_approach_order",
+                "_camera_order",
+                "_participant",
+                "_experiment",
+            ]
+        )
+        .reset_index(drop=True)
+    )
+    table["Participant"] = table["Participant"].astype("Int64")
+
+    return _finalize_table(
+        table,
+        output_path=output_path,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path,
+        latex_caption=latex_caption,
+        latex_label=latex_label,
+    )
+
 if __name__ == "__main__":
     builders = [
         (
@@ -1402,6 +1547,18 @@ if __name__ == "__main__":
                 latex_output_path=DEFAULT_OUTPUT_TEX_ALL,
                 latex_caption="Best-ROI results per recording across all approaches.",
                 latex_label="tab:best_roi_all_approaches",
+            ),
+        ),
+        (
+            "ROI signal consistency (all approaches)",
+            lambda: create_table_roi_signal_consistency(
+                output_path=DEFAULT_OUTPUT_CSV_ROI_CONSISTENCY,
+                latex_output_path=DEFAULT_OUTPUT_TEX_ROI_CONSISTENCY,
+                latex_caption=(
+                    "Per-recording spread of the absolute signal-HR difference "
+                    "across all ROIs (mean, median, RMSE, range)."
+                ),
+                latex_label="tab:roi_signal_mean",
             ),
         ),
     ]
