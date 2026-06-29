@@ -105,12 +105,21 @@ except ModuleNotFoundError:  # allow running this file directly
     )
     from src.metrics.summarize_metrics import IGNORED_APPROACH_ROIS, group_scores
 
+# Override the approach sort order imported from create_table.py: own approach on top,
+# then Yang et al., then Nair et al.  Every other function in this module uses
+# _APPROACH_ORDER for the "_approach_order" sort key, so changing it here is sufficient.
+_APPROACH_ORDER: dict[str, int] = {
+    "new_approach": 0,
+    "yang_et_al":   1,
+    "nair_et_al":   2,
+}
+
 # ======================================================================================
 # CONFIG -- edit these hard-coded values, then run the module to (re)generate the table.
 # ======================================================================================
 CONFIG: dict[str, object] = {
     # Which approaches to include: any subset of {"own", "nair", "yang"} or ["all"].
-    "APPROACHES": ["all"],
+    "APPROACHES": ["own"],
     # Also consider the every-second-peak ("halved") values (True/False).
     "HALVED": True,
     # Which ROI perspective to consider: "side" or "front".
@@ -119,12 +128,12 @@ CONFIG: dict[str, object] = {
     "MANUAL": True,
     # Optional explicit ROI allow-list (e.g. ["forehead", "glabella"]). [] = all that pass
     # the VIEW / MANUAL filters.
-    "ROIS": [],
+    "ROIS": ["manual_rectangle_temp"],
     # "peaks" (HR-peak agreement / error / Bland-Altman metrics) or "mean" (across-ROIs
     # spread of the per-ROI mean signal-HR bias).
     "MODUS": "peaks",
     # peaks only: False = best ROI per recording; True = all ROIs per recording, ranked.
-    "RANK": True,
+    "RANK": False,
 }
 
 DEFAULT_INPUT_CSV = REPO_ROOT / "saved_results" / "all_npz_metrics.csv"
@@ -156,11 +165,11 @@ _ROI_VOCABULARY = (
 )
 
 # ROIs that are always ignored, regardless of configuration.
-_IGNORED_ROIS = frozenset({"forehead_no_ema", "manual_rectangle_temp"})
+_IGNORED_ROIS = frozenset({"forehead_no_ema"})#, "manual_rectangle_temp"})
 
 # The three side-view manual ROIs; every other recognised ROI is treated as front view.
 _SIDE_VIEW_ROIS = frozenset(
-    {"manual_rectangle", "manual_rectangle_forehead"})#, "manual_rectangle_temp"}
+    {"manual_rectangle", "manual_rectangle_forehead", "manual_rectangle_temp"})
 
 
 # Display name overrides for ROI tokens in all tables. When a token is absent the
@@ -169,6 +178,7 @@ _SIDE_VIEW_ROIS = frozenset(
 _ROI_DISPLAY: dict[str, str] = {
     "manual_rectangle": "temple (static box)",
     "manual_rectangle_forehead": "forehead & background (static box)",
+    "manual_rectangle_temp": "forehead & background (static box)",
     "manual_rectangle_front_view": "face (static box)",
     "forehead": "forehead (tracked)",
     "left_forehead": "left forehead (tracked)",
@@ -178,6 +188,73 @@ _ROI_DISPLAY: dict[str, str] = {
     "dlib": "face (original Nair et al. tracker)",
     "tracker": "face (original Yang et al. tracker)",
 }
+
+
+# Display-name overrides for every possible output column.  Keys are the internal
+# column names used during table assembly; values are what appears in the CSV header and
+# the LaTeX table.  Columns absent from this dict are passed through unchanged.
+# Edit these entries to rename a column without touching any other code.
+_COLUMN_DISPLAY: dict[str, str] = {
+    # ---- descriptive / identifier columns ----
+    "Approach":                        "Approach",
+    "Camera":                          "Camera",
+    "Participant":                     "ID",
+    "Experiment":                      "Experiment",
+    "Perspective":                     "Perspective",
+    "ground truth mean HR (bpm)":      "Reference mean HR (bpm)",
+    "ROI":                             "ROI",
+    "Rank":                            "Rank",
+    "Halved":                          "Every 2nd peak used only",
+    # ---- peaks modus metric columns (from _COLUMN_SOURCES) ----
+    "fraction where signal +- GT <= 5 bpm": "Within-5-BPM accuracy (%)",
+    "rmse":                            "RMSE",
+    "mae":                             "MAE",
+    "Bland-Altman mean difference":    "Mean diff",
+    "Bland-Altman upper limit of agreement": "Upper LOA",
+    "Bland-Altman lower limit of agreement": "Lower LOA",
+    "Bland-Altman SD of differences":  "SD diff",
+    # ---- mean modus metric columns (regular) ----
+    "Mean abs. signal-GT HR diff across ROIs (bpm)":   "Mean abs. signal-GT HR diff across ROIs (bpm)",
+    "Median abs. signal-GT HR diff across ROIs (bpm)": "Median abs. signal-GT HR diff across ROIs (bpm)",
+    "RMSE abs. signal-GT HR diff across ROIs (bpm)":   "RMSE abs. signal-GT HR diff across ROIs (bpm)",
+    "Range abs. signal-GT HR diff across ROIs (bpm)":  "Range abs. signal-GT HR diff across ROIs (bpm)",
+    "Max abs. signal-GT HR diff across ROIs (bpm)":    "Max abs. signal-GT HR diff across ROIs (bpm)",
+    "Min abs. signal-GT HR diff across ROIs (bpm)":    "Min abs. signal-GT HR diff across ROIs (bpm)",
+    # ---- mean modus metric columns (halved) ----
+    "Mean abs. signal-GT HR diff across ROIs, halved (bpm)":   "Mean abs. signal-GT HR diff across ROIs, halved (bpm)",
+    "Median abs. signal-GT HR diff across ROIs, halved (bpm)": "Median abs. signal-GT HR diff across ROIs, halved (bpm)",
+    "RMSE abs. signal-GT HR diff across ROIs, halved (bpm)":   "RMSE abs. signal-GT HR diff across ROIs, halved (bpm)",
+    "Range abs. signal-GT HR diff across ROIs, halved (bpm)":  "Range abs. signal-GT HR diff across ROIs, halved (bpm)",
+    "Max abs. signal-GT HR diff across ROIs, halved (bpm)":    "Max abs. signal-GT HR diff across ROIs, halved (bpm)",
+    "Min abs. signal-GT HR diff across ROIs, halved (bpm)":    "Min abs. signal-GT HR diff across ROIs, halved (bpm)",
+}
+
+
+# mean_range modus: HR bounds that define the "resting" recording group.
+_MEAN_RANGE_HR_LOW: float = 55.0
+_MEAN_RANGE_HR_HIGH: float = 85.0
+
+
+def _mean_range_resting_mask(table: pd.DataFrame) -> "pd.Series[bool]":
+    """Return a boolean mask selecting the 'resting' recording group.
+
+    A row belongs to the resting group when **all** three conditions hold:
+
+    * Ground-truth mean HR (the column after ``_COLUMN_DISPLAY`` renaming) falls in
+      [``_MEAN_RANGE_HR_LOW``, ``_MEAN_RANGE_HR_HIGH``].
+    * ``Camera`` is not Lepton.
+    * ``Perspective`` equals ``"front view"``.
+
+    All other rows are placed in the *other* group.
+    """
+    gt_col = _COLUMN_DISPLAY.get("ground truth mean HR (bpm)", "ground truth mean HR (bpm)")
+    lepton_display = _CAMERA_DISPLAY.get("lepton", "Lepton")
+    hr = pd.to_numeric(table[gt_col], errors="coerce")
+    return (
+        hr.between(_MEAN_RANGE_HR_LOW, _MEAN_RANGE_HR_HIGH)
+        & (table["Camera"] != lepton_display)
+        & (table["Perspective"] == "front view")
+    )
 
 
 # mean-modus output column names (regular + the appended halved block).
@@ -618,6 +695,10 @@ def create_configurable_table(
             )
         table = _build_peaks_table(df, halved=halved, rank=rank)
 
+    # Rename columns according to _COLUMN_DISPLAY (only entries that differ from their
+    # current name have any effect; columns absent from the dict are left unchanged).
+    table = table.rename(columns=_COLUMN_DISPLAY)
+
     return _finalize_table(
         table,
         output_path=output_path,
@@ -626,6 +707,81 @@ def create_configurable_table(
         latex_caption=latex_caption,
         latex_label=latex_label,
     )
+
+
+# --------------------------------------------------------------------------------------
+# mean_range modus: two mean tables split by resting / other partition
+# --------------------------------------------------------------------------------------
+def create_mean_range_tables(
+    *,
+    approaches: Sequence[str] | str = None,  # type: ignore[assignment]
+    halved: Optional[bool] = None,
+    view: Optional[str] = None,
+    manual: Optional[bool] = None,
+    rois: Optional[Sequence[str]] = None,
+    csv_path: str | Path = DEFAULT_INPUT_CSV,
+    round_decimals: Optional[int] = 2,
+    output_path_resting: Optional[str | Path] = None,
+    output_path_other: Optional[str | Path] = None,
+    latex_output_path_resting: Optional[str | Path] = None,
+    latex_output_path_other: Optional[str | Path] = None,
+    latex_caption_resting: Optional[str] = None,
+    latex_caption_other: Optional[str] = None,
+    latex_label_resting: Optional[str] = None,
+    latex_label_other: Optional[str] = None,
+) -> tuple[tuple[pd.DataFrame, str], tuple[pd.DataFrame, str]]:
+    """Build two mean-modus tables split by the resting / other partition.
+
+    All filtering and table-assembly steps are identical to
+    :func:`create_configurable_table` with ``modus="mean"``.  The fully assembled
+    table is then partitioned into:
+
+    * **Resting group** -- recordings where *all* of the following hold:
+      ground-truth mean HR \u2208 [:data:`_MEAN_RANGE_HR_LOW`,
+      :data:`_MEAN_RANGE_HR_HIGH`] bpm, camera \u2260 Lepton, and
+      ``Perspective == "front view"`` (use ``VIEW="front"`` in :data:`CONFIG`).
+    * **Other group** -- every remaining recording.
+
+    Returns ``((table_resting, latex_resting), (table_other, latex_other))``.
+    """
+    # Build the complete mean table (no file output yet; rounding applied here).
+    full_table, _ = create_configurable_table(
+        approaches=approaches,
+        halved=halved,
+        view=view,
+        manual=manual,
+        rois=rois,
+        modus="mean",
+        rank=False,
+        csv_path=csv_path,
+        output_path=None,
+        round_decimals=round_decimals,
+        latex_output_path=None,
+    )
+
+    mask = _mean_range_resting_mask(full_table)
+    table_resting = full_table[mask].reset_index(drop=True)
+    table_other = full_table[~mask].reset_index(drop=True)
+
+    # Pass round_decimals so the LaTeX float_format matches the original table.
+    # Re-rounding already-rounded values is a no-op.
+    result_resting = _finalize_table(
+        table_resting,
+        output_path=output_path_resting,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path_resting,
+        latex_caption=latex_caption_resting,
+        latex_label=latex_label_resting,
+    )
+    result_other = _finalize_table(
+        table_other,
+        output_path=output_path_other,
+        round_decimals=round_decimals,
+        latex_output_path=latex_output_path_other,
+        latex_caption=latex_caption_other,
+        latex_label=latex_label_other,
+    )
+    return result_resting, result_other
 
 
 # --------------------------------------------------------------------------------------
@@ -661,7 +817,7 @@ def _config_caption(config: dict[str, object] = CONFIG) -> str:
         "all approaches" if "all" in normalised else ", ".join(normalised) + " approach(es)"
     )
     view_text = f"{config['VIEW']}-view"
-    if config["MODUS"] == "mean":
+    if config["MODUS"] in ("mean", "mean_range"):
         body = (
             f"Across-ROIs spread of the per-ROI mean signal-HR bias for the {view_text} "
             f"ROIs, {approach_text}"
@@ -680,33 +836,58 @@ def _config_caption(config: dict[str, object] = CONFIG) -> str:
 
 if __name__ == "__main__":
     slug = _config_slug()
-    output_csv = DEFAULT_OUTPUT_DIR / f"{slug}.csv"
-    output_tex = DEFAULT_OUTPUT_DIR / f"{slug}.tex"
 
-    table, latex_table = create_configurable_table(
-        output_path=output_csv,
-        latex_output_path=output_tex,
-        latex_caption=_config_caption(),
-        latex_label=f"tab:{slug}",
-    )
+    def _print_summary(tbl: pd.DataFrame, ltx: str, header: str = "") -> None:
+        """Print a table summary block to stdout."""
+        if header:
+            print(f"\n-- {header} ({len(tbl)} rows) --")
+        else:
+            print(f"[create_tables_for_paper] {len(tbl)} rows; per camera:")
+        if "Camera" in tbl.columns:
+            print(tbl["Camera"].value_counts().to_string())
+        if "Halved" in tbl.columns:
+            print(
+                "[create_tables_for_paper] halved rows: "
+                f"{int((tbl['Halved'] == 'yes').sum())} of {len(tbl)}"
+            )
+        with pd.option_context(
+            "display.max_columns", None,
+            "display.width", 260,
+            "display.float_format", lambda v: f"{v:.2f}",
+        ):
+            print(tbl.to_string(index=False))
+        print("\n[create_tables_for_paper] LaTeX table:\n")
+        print(ltx)
 
     print(f"\n[create_tables_for_paper] config: {CONFIG}")
-    print(f"[create_tables_for_paper] {len(table)} rows; per camera:")
-    if "Camera" in table.columns:
-        print(table["Camera"].value_counts().to_string())
-    if "Halved" in table.columns:
-        print(
-            "[create_tables_for_paper] halved rows: "
-            f"{int((table['Halved'] == 'yes').sum())} of {len(table)}"
+
+    if str(CONFIG.get("MODUS", "")).lower() == "mean_range":
+        caption_base = _config_caption().rstrip(".")
+        (table_r, latex_r), (table_o, latex_o) = create_mean_range_tables(
+            output_path_resting=DEFAULT_OUTPUT_DIR / f"{slug}_resting.csv",
+            output_path_other=DEFAULT_OUTPUT_DIR / f"{slug}_other.csv",
+            latex_output_path_resting=DEFAULT_OUTPUT_DIR / f"{slug}_resting.tex",
+            latex_output_path_other=DEFAULT_OUTPUT_DIR / f"{slug}_other.tex",
+            latex_caption_resting=(
+                caption_base
+                + f" (resting: HR {_MEAN_RANGE_HR_LOW:.0f}"
+                f"--{_MEAN_RANGE_HR_HIGH:.0f}\\,bpm, non-Lepton, front view)."
+            ),
+            latex_caption_other=caption_base + " (other recordings).",
+            latex_label_resting=f"tab:{slug}_resting",
+            latex_label_other=f"tab:{slug}_other",
         )
-    with pd.option_context(
-        "display.max_columns",
-        None,
-        "display.width",
-        260,
-        "display.float_format",
-        lambda v: f"{v:.2f}",
-    ):
-        print(table.to_string(index=False))
-    print("\n[create_tables_for_paper] LaTeX table:\n")
-    print(latex_table)
+        _print_summary(
+            table_r, latex_r,
+            f"resting: HR {_MEAN_RANGE_HR_LOW:.0f}\u2013{_MEAN_RANGE_HR_HIGH:.0f} bpm, "
+            "non-Lepton, front view",
+        )
+        _print_summary(table_o, latex_o, "other recordings")
+    else:
+        table, latex_table = create_configurable_table(
+            output_path=DEFAULT_OUTPUT_DIR / f"{slug}.csv",
+            latex_output_path=DEFAULT_OUTPUT_DIR / f"{slug}.tex",
+            latex_caption=_config_caption(),
+            latex_label=f"tab:{slug}",
+        )
+        _print_summary(table, latex_table)
