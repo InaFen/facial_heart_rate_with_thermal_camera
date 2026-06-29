@@ -505,9 +505,9 @@ def _save_hr_agreement_plot(
     gt_ihr: np.ndarray,
     max_bpm_diff: float = HR_AGREEMENT_MAX_BPM_DIFF,
     pred_color: str = "C1",
-    pred_signal_label: str = "Predicted (resampled)",
-    pred_peaks_label: str = "Pred peaks",
-    pred_ihr_label: str = "Pred IHR",
+    pred_signal_label: str = "Predicted signal",
+    pred_peaks_label: str = "Predicted peaks",
+    pred_ihr_label: str = "Predicted HR",
     panel1_title: str = "Predicted signal",
     suptitle_note: str = "",
 ) -> str:
@@ -531,57 +531,111 @@ def _save_hr_agreement_plot(
     comparable_seconds = float(hr_agreement["comparable_seconds"])
 
     fig, axes = plt.subplots(3, 1, figsize=(14, 13), sharex=True)
-    fig.suptitle(
-        f"HR agreement within +/-{thr:.0f} bpm{suptitle_note} "
-        f"(green = agreement; total {agreement_seconds:.1f} s "
-        f"of {comparable_seconds:.1f} comparable s)",
-        fontsize=15,
-    )
+    #fig.suptitle(
+    #    f"HR agreement within +/-{thr:.0f} bpm{suptitle_note} "
+    #    f"(green = agreement; total {agreement_seconds:.1f} s "
+    #    f"of {comparable_seconds:.1f} comparable s)",
+    #    fontsize=15,
+    #)
+
+    # Background-highlight legend patches – defined once, reused in all three panels.
+    bg_handles = [
+        Patch(facecolor="#b6e8b6", edgecolor="none", label=f"<= {thr:.0f} bpm difference between Pred & GT"),
+        Patch(facecolor="#e0e0e0", edgecolor="none", label=f"> {thr:.0f} bpm difference between Pred & GT"),
+    ]
+    _spacer = Patch(facecolor="none", edgecolor="none", label="")
+
+    def _add_bg_legend(ax: "plt.Axes") -> None:
+        """Append bg_handles to ax's legend, always on the second line (ncol=2).
+
+        Line handles fill row 1; if there is an odd number the row is padded with an
+        invisible spacer so the two coloring patches always start together on row 2.
+        """
+        lh, ll = ax.get_legend_handles_labels()
+        if len(lh) % 2 == 1:
+            lh = lh + [_spacer]
+            ll = ll + [""]
+        ax.legend(
+            lh + bg_handles,
+            ll + [h.get_label() for h in bg_handles],
+            loc="upper right",
+            ncol=2,
+        )
 
     # 1) Predicted signal with detected peaks
     _shade_agreement_background(axes[0], time_grid, agreement_mask)
+    axes[0].grid(True, which='major', color='0.85', linewidth=0.8)
     axes[0].plot(time_grid, pred_signal, color=pred_color, alpha=0.85, label=pred_signal_label)
     if pred_peaks.size > 0:
-        axes[0].scatter(pred_peak_times, pred_signal[pred_peaks], s=22, color=pred_color, edgecolors="black", linewidths=0.4, label=pred_peaks_label)
-    axes[0].set_title(panel1_title)
-    axes[0].set_ylabel("Amplitude")
-    axes[0].legend(loc="best")
-    axes[0].grid(alpha=0.2)
+        axes[0].scatter(pred_peak_times, pred_signal[pred_peaks], s=22, color=pred_color, edgecolors="black", linewidths=0.4)#, label=pred_peaks_label)
+    axes[0].set_ylabel("Amplitude (arbitrary units)")
+    _add_bg_legend(axes[0])
 
     # 2) Ground-truth ECG with detected peaks
     _shade_agreement_background(axes[1], time_grid, agreement_mask)
+    axes[1].grid(True, which='major', color='0.85', linewidth=0.8)
     axes[1].plot(time_grid, gt_segment, color="C0", alpha=0.85, label="Ground truth (ECG)")
     if gt_peaks.size > 0:
-        axes[1].scatter(gt_peak_times, gt_segment[gt_peaks], s=22, color="C0", edgecolors="black", linewidths=0.4, label="GT peaks")
-    axes[1].set_title("Ground-truth ECG")
-    axes[1].set_ylabel("Amplitude")
-    axes[1].legend(loc="best")
-    axes[1].grid(alpha=0.2)
+        axes[1].scatter(gt_peak_times, gt_segment[gt_peaks], s=22, color="C0", edgecolors="black", linewidths=0.4)#, label="GT peaks")
+    axes[1].set_ylabel("Amplitude (arbitrary units)")
+    _add_bg_legend(axes[1])
 
     # 3) Compared instantaneous heart rates
     _shade_agreement_background(axes[2], time_grid, agreement_mask)
-    axes[2].plot(gt_ihr_times, gt_ihr, color="C0", alpha=0.8, marker="o", label="GT IHR")
+    axes[2].grid(True, which='major', color='0.85', linewidth=0.8)
+    axes[2].plot(gt_ihr_times, gt_ihr, color="C0", alpha=0.8, marker="o", label="Ground truth HR")
     axes[2].plot(pred_ihr_times, pred_ihr, color=pred_color, alpha=0.8, marker="o", label=pred_ihr_label)
-    axes[2].set_title(f"Instantaneous HR (green where |Pred - GT| <= {thr:.0f} bpm)")
+    #axes[2].set_title(f"Instantaneous HR (green where |Pred - GT| <= {thr:.0f} bpm)")
     axes[2].set_xlabel("Time (s)")
     axes[2].set_ylabel("HR (bpm)")
-    line_handles, line_labels = axes[2].get_legend_handles_labels()
-    bg_handles = [
-        Patch(facecolor="#b6e8b6", edgecolor="none", label=f"<= {thr:.0f} bpm difference"),
-        Patch(facecolor="#e0e0e0", edgecolor="none", label=f"> {thr:.0f} bpm / HR undefined"),
-    ]
-    axes[2].legend(
-        line_handles + bg_handles,
-        line_labels + [h.get_label() for h in bg_handles],
-        loc="best",
-        ncol=2,
-    )
+    _add_bg_legend(axes[2])
     axes[2].grid(alpha=0.2)
 
     plt.tight_layout()
+    output_path = Path(output_path)
     print(f"[metric_pipeline] Saving HR-agreement plot to: {output_path}")
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+    # ------------------------------------------------------------------
+    # Individual panel saves – each is a standalone figure that includes
+    # the same background shading and bg_handles legend entries.
+    # ------------------------------------------------------------------
+    def _draw_signal(ax_i: "plt.Axes") -> None:
+        ax_i.plot(time_grid, pred_signal, color=pred_color, alpha=0.85, label=pred_signal_label)
+        if pred_peaks.size > 0:
+            ax_i.scatter(pred_peak_times, pred_signal[pred_peaks], s=22, color=pred_color,
+                         edgecolors="black", linewidths=0.4)
+
+    def _draw_gt(ax_i: "plt.Axes") -> None:
+        ax_i.plot(time_grid, gt_segment, color="C0", alpha=0.85, label="Ground truth (ECG)")
+        if gt_peaks.size > 0:
+            ax_i.scatter(gt_peak_times, gt_segment[gt_peaks], s=22, color="C0",
+                         edgecolors="black", linewidths=0.4)
+
+    def _draw_ihr(ax_i: "plt.Axes") -> None:
+        ax_i.plot(gt_ihr_times, gt_ihr, color="C0", alpha=0.8, marker="o", label="Ground truth HR")
+        ax_i.plot(pred_ihr_times, pred_ihr, color=pred_color, alpha=0.8, marker="o", label=pred_ihr_label)
+        ax_i.set_xlabel("Time (s)")
+        ax_i.grid(alpha=0.2)
+
+    for suffix, draw_fn, ylabel in [
+        ("signal", _draw_signal, "Amplitude (arbitrary units)"),
+        ("gt",     _draw_gt,     "Amplitude (arbitrary units)"),
+        ("ihr",    _draw_ihr,    "HR (bpm)"),
+    ]:
+        fig_i, ax_i = plt.subplots(1, 1, figsize=(14, 5))
+        _shade_agreement_background(ax_i, time_grid, agreement_mask)
+        ax_i.grid(True, which="major", color="0.85", linewidth=0.8)
+        draw_fn(ax_i)
+        ax_i.set_ylabel(ylabel)
+        _add_bg_legend(ax_i)
+        ind_path = output_path.parent / f"{output_path.stem}_{suffix}{output_path.suffix}"
+        plt.tight_layout()
+        print(f"[metric_pipeline] Saving individual panel to: {ind_path}")
+        plt.savefig(ind_path, dpi=150, bbox_inches="tight")
+        plt.close(fig_i)
+
     return str(output_path)
 
 
@@ -2025,8 +2079,8 @@ def evaluate_instantaneous_hr_against_ground_truth(
         axes[2].grid(alpha=0.2)
 
         # 4) IHR plot with closest matching in both directions
-        axes[3].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.45, marker="o")
-        axes[3].plot(pred_ihr_times, pred_ihr, label="Pred IHR", color="C1", alpha=0.45, marker="o")
+        axes[3].plot(gt_ihr_times, gt_ihr, label="Ground truth HR", color="C0", alpha=0.45, marker="o")
+        axes[3].plot(pred_ihr_times, pred_ihr, label="Predicted HR", color="C1", alpha=0.45, marker="o")
         gt_to_pred_gt_times = closest_matches["gt_to_pred_gt_times"]
         gt_to_pred_pred_times = closest_matches["gt_to_pred_pred_times"]
         gt_to_pred_gt_values = closest_matches["gt_to_pred_gt_values"]
@@ -2048,7 +2102,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
             for x_pred, y_pred, x_gt, y_gt in zip(pred_to_gt_pred_times, pred_to_gt_pred_values, pred_to_gt_gt_times, pred_to_gt_gt_values):
                 axes[3].plot([x_pred, x_gt], [y_pred, y_gt], color="tab:purple", alpha=0.25, linewidth=0.7)
 
-        axes[3].set_title("IHR with closest matching in both directions")
+        #axes[3].set_title("IHR with closest matching in both directions")
         axes[3].set_xlabel("Time (s)")
         axes[3].set_ylabel("HR (bpm)")
         axes[3].legend(loc="best", ncol=2)
@@ -2083,11 +2137,11 @@ def evaluate_instantaneous_hr_against_ground_truth(
             axes[4].legend(loc="best")
             axes[4].grid(alpha=0.2)
 
-            axes[5].plot(gt_ihr_times, gt_ihr, label="GT IHR", color="C0", alpha=0.5, marker="o")
+            axes[5].plot(gt_ihr_times, gt_ihr, label="Ground truth HR", color="C0", alpha=0.5, marker="o")
             axes[5].plot(
                 pred_ihr_times_halved,
                 pred_ihr_halved,
-                label="Pred IHR (every 2nd peak dropped)",
+                label="Predicted HR (every 2nd peak dropped)",
                 color="C3",
                 alpha=0.75,
                 marker="o",
@@ -2118,12 +2172,12 @@ def evaluate_instantaneous_hr_against_ground_truth(
                     halved_closest["gt_to_pred_pred_times"],
                     halved_closest["gt_to_pred_pred_values"],
                 ):
-                    axes[5].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.3, linewidth=0.8)
-            axes[5].set_title("IHR (closest matching) with every second predicted peak dropped")
+                    axes[5].plot([x_gt, x_pred], [y_gt, y_pred], color="gray", alpha=0.3, linewidth=0.0)
+            #axes[5].set_title("IHR (closest matching) with every second predicted peak dropped")
             axes[5].set_xlabel("Time (s)")
             axes[5].set_ylabel("HR (bpm)")
             axes[5].legend(loc="best", ncol=2)
-            axes[5].grid(alpha=0.2)
+            #axes[5].grid(alpha=0.2)
 
         plt.tight_layout()
         combined_plot_path = output_folder / "01_combined_evaluation.png"
@@ -2657,14 +2711,14 @@ if __name__ == "__main__":
     # accepts short ("new"/"yang"/"nair") or full ("new_approach"/...) names; set
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
-    APPROACHES_TO_RUN = ("nair_et_al", "yang_et_al", "new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = ("lepton", "vario", "mwir") #("mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
+    CAMERAS_TO_RUN = ("mwir") #("mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Optionally restrict the run to ONE specific individual (or a few). Matched as a
     # case-insensitive substring of the npz filename, so "Ina" runs every Ina recording
     # across cameras while "Ina_20_4_3" targets a single recording. Accepts a string, a
     # tuple of strings, or None for everyone. Applies to both RUN_MODEs.
-    INDIVIDUALS_TO_RUN = None  # e.g. "Ina" or ("Ina", "Julian") or "Ina_20_4_3"
+    INDIVIDUALS_TO_RUN = "Ina"  # e.g. "Ina" or ("Ina", "Julian") or "Ina_20_4_3"
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN

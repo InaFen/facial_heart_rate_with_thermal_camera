@@ -2,6 +2,8 @@ from matplotlib import pyplot as plt
 
 def save_single_plot(ax, path):
     fig_single, ax_single = plt.subplots(figsize=(14, 5))
+    ax_single.grid(True, which='major', color='0.85', linewidth=0.8)
+
 
     # copy all artists from original axis
     for line in ax.get_lines():
@@ -27,7 +29,8 @@ def save_single_plot(ax, path):
 
     ax_single.set_xlabel(ax.get_xlabel())
     ax_single.set_ylabel(ax.get_ylabel())
-    ax_single.grid(alpha=0.2)
+    #ax_single.grid(alpha=0.2)
+
 
     handles, labels = ax.get_legend_handles_labels()
     if labels:
