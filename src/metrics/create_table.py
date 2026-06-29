@@ -126,7 +126,7 @@ _APPROACH_ORDER = {"nair_et_al": 0, "yang_et_al": 1, "new_approach": 2}
 # one of the COMPOSITE_METRICS used to pick the best ROI and is unstable over the short
 # comparison window).
 _COLUMN_SOURCES: dict[str, tuple[str, str]] = {
-    "fraction where signal +- GT <= 5 bpm": (
+    "within-5-BPM accuracy": (
         "hr_agreement_fraction",
         "hr_agreement_fraction_halved",
     ),
