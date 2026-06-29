@@ -122,9 +122,9 @@ CONFIG: dict[str, object] = {
     "ROIS": [],
     # "peaks" (HR-peak agreement / error / Bland-Altman metrics) or "mean" (across-ROIs
     # spread of the per-ROI mean signal-HR bias).
-    "MODUS": "mean",
+    "MODUS": "peaks",
     # peaks only: False = best ROI per recording; True = all ROIs per recording, ranked.
-    "RANK": False,
+    "RANK": True,
 }
 
 DEFAULT_INPUT_CSV = REPO_ROOT / "saved_results" / "all_npz_metrics.csv"
@@ -156,11 +156,28 @@ _ROI_VOCABULARY = (
 )
 
 # ROIs that are always ignored, regardless of configuration.
-_IGNORED_ROIS = frozenset({"forehead_no_ema"})
+_IGNORED_ROIS = frozenset({"forehead_no_ema", "manual_rectangle_temp"})
 
 # The three side-view manual ROIs; every other recognised ROI is treated as front view.
 _SIDE_VIEW_ROIS = frozenset(
     {"manual_rectangle", "manual_rectangle_forehead"})#, "manual_rectangle_temp"}
+
+
+# Display name overrides for ROI tokens in all tables. When a token is absent the
+# underscore-replaced original (e.g. "left forehead") is used as a fallback.
+# Edit these entries to change how a particular ROI label appears in the output.
+_ROI_DISPLAY: dict[str, str] = {
+    "manual_rectangle": "temple (static box)",
+    "manual_rectangle_forehead": "forehead & background (static box)",
+    "manual_rectangle_front_view": "face (static box)",
+    "forehead": "forehead (tracked)",
+    "left_forehead": "left forehead (tracked)",
+    "right_forehead": "right forehead (tracked)",
+    "glabella": "glabella (tracked)",
+    "whole_face": "whole face (tracked)",
+    "dlib": "face (original Nair et al. tracker)",
+    "tracker": "face (original Yang et al. tracker)",
+}
 
 
 # mean-modus output column names (regular + the appended halved block).
@@ -369,7 +386,7 @@ def _peaks_record(
             else ("before sport" if experiment in (1, 2) else "after sport")
         ),
         "ground truth mean HR (bpm)": row.get("gt_hr_mean"),
-        "ROI": str(row["_roi"]).replace("_", " "),
+        "ROI": _ROI_DISPLAY.get(str(row["_roi"]), str(row["_roi"]).replace("_", " ")),
         "Halved": "yes" if halved else "no",
         "_approach_order": _APPROACH_ORDER.get(_detect_approach(pf), 99),
         "_camera_order": _CAMERA_ORDER.get(camera, 99),
