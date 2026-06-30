@@ -34,7 +34,13 @@ Configuration knobs (see :data:`CONFIG`)
                 ``True``  -> ``peaks`` only: every candidate ROI of each recording is listed,
                 ordered best -> worst by the composite criterion *within that recording*,
                 with a ``Rank`` column; halved variants (when ``HALVED``) are added as extra
-                ranked rows.
+                ranked rows.  Superseded by ``RANK_OPTION`` when that is non-``None``.
+``RANK_OPTION`` ``None``               -> honours ``RANK`` (see above).
+                ``"inside_rois"``      -> like ``RANK=True``: all ROIs of each recording
+                ranked by the composite criterion within that recording.
+                ``"inside_approach"``  -> all ROIs of a given approach ranked globally
+                (across every recording of that approach); the ``Rank`` column counts from
+                1 over the whole approach.
 
 The ``forehead_no_ema`` ROI is **always** ignored.
 
@@ -119,21 +125,26 @@ _APPROACH_ORDER: dict[str, int] = {
 # ======================================================================================
 CONFIG: dict[str, object] = {
     # Which approaches to include: any subset of {"own", "nair", "yang"} or ["all"].
-    "APPROACHES": ["own"],
+    "APPROACHES": ["yang", "nair", "own "],
     # Also consider the every-second-peak ("halved") values (True/False).
     "HALVED": True,
     # Which ROI perspective to consider: "side" or "front".
-    "VIEW": "side",
+    "VIEW": "front",
     # Whether ROIs whose token contains "manual" are considered (True/False).
     "MANUAL": True,
     # Optional explicit ROI allow-list (e.g. ["forehead", "glabella"]). [] = all that pass
     # the VIEW / MANUAL filters.
-    "ROIS": ["manual_rectangle_temp"],
+    "ROIS": [],
     # "peaks" (HR-peak agreement / error / Bland-Altman metrics) or "mean" (across-ROIs
     # spread of the per-ROI mean signal-HR bias).
+    # mean_range modus
     "MODUS": "peaks",
     # peaks only: False = best ROI per recording; True = all ROIs per recording, ranked.
-    "RANK": False,
+    "RANK": True,
+    # Overrides RANK when non-None. "inside_rois" = rank within each recording (like
+    # RANK=True); "inside_approach" = rank all ROIs of an approach globally across all
+    # recordings of that approach.
+    "RANK_OPTION": "inside_approach",
 }
 
 DEFAULT_INPUT_CSV = REPO_ROOT / "saved_results" / "all_npz_metrics.csv"
@@ -253,7 +264,6 @@ def _mean_range_resting_mask(table: pd.DataFrame) -> "pd.Series[bool]":
     return (
         hr.between(_MEAN_RANGE_HR_LOW, _MEAN_RANGE_HR_HIGH)
         & (table["Camera"] != lepton_display)
-        & (table["Perspective"] == "front view")
     )
 
 
@@ -478,29 +488,55 @@ def _peaks_record(
     return record
 
 
-def _build_peaks_table(df: pd.DataFrame, *, halved: bool, rank: bool) -> pd.DataFrame:
-    """Assemble the peaks-modus table (best ROI per recording, or all ROIs ranked)."""
+def _build_peaks_table(
+    df: pd.DataFrame, *, halved: bool, rank_option: Optional[str]
+) -> pd.DataFrame:
+    """Assemble the peaks-modus table.
+
+    rank_option:
+      ``None``               → one row per recording (its best ROI).
+      ``"inside_rois"``      → all ROIs ranked within each recording.
+      ``"inside_approach"``  → all ROIs ranked globally within each approach.
+    """
     records: list[dict[str, object]] = []
-    for _key, group in df.groupby("_rec_key", sort=False):
-        candidates = _variant_candidates(group, halved=halved)
-        if not candidates:
-            continue
-        order, _scores = _score_and_order(candidates)
-        if rank:
-            for rank_number, idx in enumerate(order, start=1):
-                row, is_halved = candidates[idx]
-                records.append(_peaks_record(row, is_halved, rank=rank_number))
-        else:
-            row, is_halved = candidates[order[0]]
-            records.append(_peaks_record(row, is_halved))
+
+    if rank_option == "inside_approach":
+        # Rank all candidates of an approach together across every recording.
+        for _approach_token, approach_df in df.groupby("_approach", sort=False):
+            all_candidates: list[tuple[pd.Series, bool]] = []
+            for _key, group in approach_df.groupby("_rec_key", sort=False):
+                all_candidates.extend(_variant_candidates(group, halved=halved))
+            if not all_candidates:
+                continue
+            order, _scores = _score_and_order(all_candidates)
+            for global_rank, idx in enumerate(order, start=1):
+                row, is_halved = all_candidates[idx]
+                records.append(_peaks_record(row, is_halved, rank=global_rank))
+    else:
+        for _key, group in df.groupby("_rec_key", sort=False):
+            candidates = _variant_candidates(group, halved=halved)
+            if not candidates:
+                continue
+            order, _scores = _score_and_order(candidates)
+            if rank_option == "inside_rois":
+                for rank_number, idx in enumerate(order, start=1):
+                    row, is_halved = candidates[idx]
+                    records.append(_peaks_record(row, is_halved, rank=rank_number))
+            else:
+                row, is_halved = candidates[order[0]]
+                records.append(_peaks_record(row, is_halved))
 
     if not records:
         raise ValueError("No recording had usable peak metrics to report.")
 
+    show_rank = rank_option in ("inside_rois", "inside_approach")
     table = pd.DataFrame.from_records(records)
-    sort_cols = ["_approach_order", "_camera_order", "_participant", "_experiment"]
-    if rank:
-        sort_cols.append("_rank")
+    if rank_option == "inside_approach":
+        sort_cols = ["_approach_order", "_rank"]
+    elif rank_option == "inside_rois":
+        sort_cols = ["_approach_order", "_camera_order", "_participant", "_experiment", "_rank"]
+    else:
+        sort_cols = ["_approach_order", "_camera_order", "_participant", "_experiment"]
     table = table.sort_values(sort_cols, kind="stable").reset_index(drop=True)
 
     columns = [
@@ -511,7 +547,7 @@ def _build_peaks_table(df: pd.DataFrame, *, halved: bool, rank: bool) -> pd.Data
         "ground truth mean HR (bpm)",
         "ROI",
     ]
-    if rank:
+    if show_rank:
         columns.append("Rank")
     if halved:
         columns.append("Halved")
@@ -519,7 +555,7 @@ def _build_peaks_table(df: pd.DataFrame, *, halved: bool, rank: bool) -> pd.Data
 
     table = table[columns]
     table["Participant"] = table["Participant"].astype("Int64")
-    if rank:
+    if show_rank:
         table["Rank"] = table["Rank"].astype("Int64")
     return table
 
@@ -636,6 +672,7 @@ def create_configurable_table(
     rois: Optional[Sequence[str]] = None,
     modus: Optional[str] = None,
     rank: Optional[bool] = None,
+    rank_option: Optional[str] = None,
     csv_path: str | Path = DEFAULT_INPUT_CSV,
     output_path: Optional[str | Path] = None,
     round_decimals: Optional[int] = 2,
@@ -656,7 +693,25 @@ def create_configurable_table(
     manual = bool(CONFIG["MANUAL"]) if manual is None else manual
     rois = list(CONFIG["ROIS"]) if rois is None else list(rois)  # type: ignore[arg-type]
     modus = str(CONFIG["MODUS"]) if modus is None else modus
-    rank = bool(CONFIG["RANK"]) if rank is None else rank
+
+    # Resolve effective rank_option (kwarg > CONFIG["RANK_OPTION"] > CONFIG["RANK"]).
+    if rank_option is None:
+        cfg_rank_option = CONFIG.get("RANK_OPTION")
+        if cfg_rank_option is not None and str(cfg_rank_option).strip():
+            rank_option = str(cfg_rank_option).strip().lower()
+        else:
+            # Legacy RANK bool fallback.
+            _rank = bool(CONFIG["RANK"]) if rank is None else rank
+            rank_option = "inside_rois" if _rank else None
+    elif isinstance(rank_option, bool):
+        rank_option = "inside_rois" if rank_option else None
+    if rank_option is not None:
+        rank_option = rank_option.strip().lower()
+        if rank_option not in ("inside_rois", "inside_approach"):
+            raise ValueError(
+                f"RANK_OPTION must be None, 'inside_rois' or 'inside_approach', "
+                f"got {rank_option!r}."
+            )
 
     view = view.strip().lower()
     modus = modus.strip().lower()
@@ -664,8 +719,8 @@ def create_configurable_table(
         raise ValueError(f"VIEW must be 'side' or 'front', got {view!r}.")
     if modus not in ("peaks", "mean"):
         raise ValueError(f"MODUS must be 'peaks' or 'mean', got {modus!r}.")
-    if rank and modus == "mean":
-        raise ValueError("RANK=True is only supported for MODUS='peaks'.")
+    if rank_option and modus == "mean":
+        raise ValueError("RANK_OPTION is only supported for MODUS='peaks'.")
 
     approach_tokens = _selected_approach_tokens(approaches)
     df = _load_and_filter(
@@ -693,7 +748,7 @@ def create_configurable_table(
                 f"{csv_path} is missing expected metric columns for peaks modus: "
                 f"{missing}. Re-run metric_pipeline.py to regenerate the aggregate CSV."
             )
-        table = _build_peaks_table(df, halved=halved, rank=rank)
+        table = _build_peaks_table(df, halved=halved, rank_option=rank_option)
 
     # Rename columns according to _COLUMN_DISPLAY (only entries that differ from their
     # current name have any effect; columns absent from the dict are left unchanged).
@@ -802,7 +857,10 @@ def _config_slug(config: dict[str, object] = CONFIG) -> str:
         parts.append("rois-" + "-".join(str(r) for r in rois))
     if config["HALVED"]:
         parts.append("halved")
-    if config["RANK"]:
+    rank_option_cfg = str(config.get("RANK_OPTION") or "").strip().lower()
+    if rank_option_cfg == "inside_approach":
+        parts.append("ranked_global")
+    elif rank_option_cfg == "inside_rois" or (not rank_option_cfg and config.get("RANK")):
         parts.append("ranked")
     return "table_paper_" + "_".join(parts)
 
@@ -817,12 +875,21 @@ def _config_caption(config: dict[str, object] = CONFIG) -> str:
         "all approaches" if "all" in normalised else ", ".join(normalised) + " approach(es)"
     )
     view_text = f"{config['VIEW']}-view"
+    rank_option_cfg = str(config.get("RANK_OPTION") or "").strip().lower()
+    _rank_active = rank_option_cfg in ("inside_rois", "inside_approach") or (
+        not rank_option_cfg and bool(config.get("RANK"))
+    )
     if config["MODUS"] in ("mean", "mean_range"):
         body = (
             f"Across-ROIs spread of the per-ROI mean signal-HR bias for the {view_text} "
             f"ROIs, {approach_text}"
         )
-    elif config["RANK"]:
+    elif rank_option_cfg == "inside_approach":
+        body = (
+            f"All {view_text} ROIs ranked globally within each approach by the composite "
+            f"criterion, {approach_text}"
+        )
+    elif _rank_active:
         body = (
             f"All {view_text} ROIs per recording ranked best to worst by the composite "
             f"criterion, {approach_text}"
