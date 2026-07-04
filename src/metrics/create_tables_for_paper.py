@@ -72,7 +72,7 @@ import numpy as np
 import pandas as pd
 
 try:  # normal package import (python -m src.metrics.create_tables_for_paper)
-    from src.metrics.create_table import (
+    from src.metrics.create_tables_helpers import (
         REPO_ROOT,
         _APPROACH_LABELS,
         _APPROACH_ORDER,
@@ -88,12 +88,17 @@ try:  # normal package import (python -m src.metrics.create_tables_for_paper)
         _variant_has_data,
         _variant_score_row,
     )
-    from src.metrics.summarize_metrics import IGNORED_APPROACH_ROIS, group_scores
+    from src.metrics.summarize_metrics import (
+        COMPOSITE_METRICS,
+        IGNORED_APPROACH_ROIS,
+        group_scores,
+        selection_score,
+    )
 except ModuleNotFoundError:  # allow running this file directly
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from src.metrics.create_table import (
+    from src.metrics.create_tables_helpers import (
         REPO_ROOT,
         _APPROACH_LABELS,
         _APPROACH_ORDER,
@@ -109,7 +114,12 @@ except ModuleNotFoundError:  # allow running this file directly
         _variant_has_data,
         _variant_score_row,
     )
-    from src.metrics.summarize_metrics import IGNORED_APPROACH_ROIS, group_scores
+    from src.metrics.summarize_metrics import (
+        COMPOSITE_METRICS,
+        IGNORED_APPROACH_ROIS,
+        group_scores,
+        selection_score,
+    )
 
 # Override the approach sort order imported from create_table.py: own approach on top,
 # then Yang et al., then Nair et al.  Every other function in this module uses
@@ -125,9 +135,9 @@ _APPROACH_ORDER: dict[str, int] = {
 # ======================================================================================
 CONFIG: dict[str, object] = {
     # Which approaches to include: any subset of {"own", "nair", "yang"} or ["all"].
-    "APPROACHES": ["yang"],#, "nair", "own "],
+    "APPROACHES": ["all"],#, "nair", "own "],
     # Also consider the every-second-peak ("halved") values (True/False).
-    "HALVED": False,
+    "HALVED": True,
     # Which ROI perspective to consider: "side" or "front".
     "VIEW": "front",
     # Whether ROIs whose token contains "manual" are considered (True/False).
@@ -138,13 +148,19 @@ CONFIG: dict[str, object] = {
     # "peaks" (HR-peak agreement / error / Bland-Altman metrics) or "mean" (across-ROIs
     # spread of the per-ROI mean signal-HR bias).
     # mean_range modus
-    "MODUS": "mean_range",
+    "MODUS": "peaks",
     # peaks only: False = best ROI per recording; True = all ROIs per recording, ranked.
-    "RANK": False,
+    "RANK": True,
     # Overrides RANK when non-None. "inside_rois" = rank within each recording (like
     # RANK=True); "inside_approach" = rank all ROIs of an approach globally across all
     # recordings of that approach.
-    "RANK_OPTION": None #"inside_approach",
+    "RANK_OPTION": "inside_rois", #"inside_approach",
+    # peaks only: extra weight for "within-5-BPM accuracy" (hr_agreement_fraction) in
+    # the composite ROI-selection criterion.  ``None`` = equal weight for all 6
+    # sub-metrics (default).  A float in (0, 1) gives that fraction of the total weight
+    # to hr_agreement_fraction; the remaining (1 - weight) is split equally among the
+    # other 5 sub-metrics.  E.g. 0.3 means accuracy counts 30 %, each other metric 14 %.
+    "ACCURACY_WEIGHT": None#0.6,
 }
 
 DEFAULT_INPUT_CSV = REPO_ROOT / "saved_results" / "all_npz_metrics.csv"
@@ -430,17 +446,72 @@ def _variant_candidates(
     return candidates
 
 
+def _weighted_composite_scores(
+    group_rows: list[dict],
+    *,
+    accuracy_weight: float,
+) -> list[Optional[float]]:
+    """Weighted composite score where ``hr_agreement_fraction`` gets ``accuracy_weight``.
+
+    The remaining ``(1 - accuracy_weight)`` is distributed equally among the other
+    sub-metrics in :data:`~src.metrics.summarize_metrics.COMPOSITE_METRICS`.  Returns a
+    list of "lower is better" scores (the same convention as
+    :func:`~src.metrics.summarize_metrics.group_scores`).
+    """
+    other_metrics = [m for m in COMPOSITE_METRICS if m != "hr_agreement_fraction"]
+    n_other = len(other_metrics)  # 5 when COMPOSITE_METRICS has 6 entries
+    w_acc = float(accuracy_weight)
+    w_other = (1.0 - w_acc) / n_other if n_other else 0.0
+
+    def _avg_ranks(vals: list[Optional[float]]) -> list[float]:
+        n = len(vals)
+        order = sorted(
+            range(n),
+            key=lambda i: (vals[i] is None, vals[i] if vals[i] is not None else 0.0),
+        )
+        ranks = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j + 1 < n and vals[order[j + 1]] == vals[order[i]]:
+                j += 1
+            avg = ((i + 1) + (j + 1)) / 2.0
+            for k in range(i, j + 1):
+                ranks[order[k]] = avg
+            i = j + 1
+        return ranks
+
+    acc_ranks = _avg_ranks([selection_score(r, "hr_agreement_fraction") for r in group_rows])
+    other_rank_lists = [
+        _avg_ranks([selection_score(r, m) for r in group_rows])
+        for m in other_metrics
+    ]
+    n = len(group_rows)
+    return [
+        w_acc * acc_ranks[i]
+        + sum(w_other * other_rank_lists[mi][i] for mi in range(n_other))
+        for i in range(n)
+    ]
+
+
 def _score_and_order(
-    candidates: list[tuple[pd.Series, bool]]
+    candidates: list[tuple[pd.Series, bool]],
+    *,
+    accuracy_weight: Optional[float] = None,
 ) -> tuple[list[int], list[Optional[float]]]:
     """Order candidate indices best -> worst by the composite criterion.
 
-    Ties prefer the regular variant, then the lower MAE, then the ``plots_folder`` (so the
-    order is deterministic). Returns ``(order, scores)`` where ``order[0]`` is the winner.
+    When ``accuracy_weight`` is given the within-5-BPM accuracy sub-metric receives that
+    fraction of the total composite weight; the remaining weight is split equally among
+    the other sub-metrics.  Ties prefer the regular variant, then the lower MAE, then the
+    ``plots_folder`` (so the order is deterministic).  Returns ``(order, scores)`` where
+    ``order[0]`` is the winner.
     """
-    scores = group_scores(
-        [_variant_score_row(row, halved) for row, halved in candidates], "composite"
-    )
+    score_rows = [_variant_score_row(row, halved) for row, halved in candidates]
+    if accuracy_weight is not None:
+        scores = _weighted_composite_scores(score_rows, accuracy_weight=accuracy_weight)
+    else:
+        scores = group_scores(score_rows, "composite")
 
     def _key(i: int) -> tuple:
         row, halved = candidates[i]
@@ -491,7 +562,11 @@ def _peaks_record(
 
 
 def _build_peaks_table(
-    df: pd.DataFrame, *, halved: bool, rank_option: Optional[str]
+    df: pd.DataFrame,
+    *,
+    halved: bool,
+    rank_option: Optional[str],
+    accuracy_weight: Optional[float] = None,
 ) -> pd.DataFrame:
     """Assemble the peaks-modus table.
 
@@ -499,6 +574,11 @@ def _build_peaks_table(
       ``None``               → one row per recording (its best ROI).
       ``"inside_rois"``      → all ROIs ranked within each recording.
       ``"inside_approach"``  → all ROIs ranked globally within each approach.
+
+    accuracy_weight:
+      When not ``None``, the within-5-BPM accuracy sub-metric is given this fraction of
+      the total composite weight; the remaining weight is distributed equally among the
+      other sub-metrics.  ``None`` uses the standard equal-weight composite.
     """
     records: list[dict[str, object]] = []
 
@@ -510,7 +590,7 @@ def _build_peaks_table(
                 all_candidates.extend(_variant_candidates(group, halved=halved))
             if not all_candidates:
                 continue
-            order, _scores = _score_and_order(all_candidates)
+            order, _scores = _score_and_order(all_candidates, accuracy_weight=accuracy_weight)
             for global_rank, idx in enumerate(order, start=1):
                 row, is_halved = all_candidates[idx]
                 records.append(_peaks_record(row, is_halved, rank=global_rank))
@@ -519,7 +599,7 @@ def _build_peaks_table(
             candidates = _variant_candidates(group, halved=halved)
             if not candidates:
                 continue
-            order, _scores = _score_and_order(candidates)
+            order, _scores = _score_and_order(candidates, accuracy_weight=accuracy_weight)
             if rank_option == "inside_rois":
                 for rank_number, idx in enumerate(order, start=1):
                     row, is_halved = candidates[idx]
@@ -875,6 +955,19 @@ def create_configurable_table(
     rois = list(CONFIG["ROIS"]) if rois is None else list(rois)  # type: ignore[arg-type]
     modus = str(CONFIG["MODUS"]) if modus is None else modus
 
+    # Resolve accuracy_weight from CONFIG (None = equal weights).
+    _cfg_acc_weight = CONFIG.get("ACCURACY_WEIGHT")
+    accuracy_weight: Optional[float] = (
+        float(_cfg_acc_weight)
+        if _cfg_acc_weight is not None
+        else None
+    )
+    if accuracy_weight is not None and not (0.0 < accuracy_weight < 1.0):
+        raise ValueError(
+            f"ACCURACY_WEIGHT must be None or a float strictly between 0 and 1, "
+            f"got {accuracy_weight!r}."
+        )
+
     # Resolve effective rank_option (kwarg > CONFIG["RANK_OPTION"] > CONFIG["RANK"]).
     if rank_option is None:
         cfg_rank_option = CONFIG.get("RANK_OPTION")
@@ -929,7 +1022,7 @@ def create_configurable_table(
                 f"{csv_path} is missing expected metric columns for peaks modus: "
                 f"{missing}. Re-run metric_pipeline.py to regenerate the aggregate CSV."
             )
-        table = _build_peaks_table(df, halved=halved, rank_option=rank_option)
+        table = _build_peaks_table(df, halved=halved, rank_option=rank_option, accuracy_weight=accuracy_weight)
 
     # Rename columns according to _COLUMN_DISPLAY (only entries that differ from their
     # current name have any effect; columns absent from the dict are left unchanged).
