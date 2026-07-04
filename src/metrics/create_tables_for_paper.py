@@ -125,9 +125,9 @@ _APPROACH_ORDER: dict[str, int] = {
 # ======================================================================================
 CONFIG: dict[str, object] = {
     # Which approaches to include: any subset of {"own", "nair", "yang"} or ["all"].
-    "APPROACHES": ["yang", "nair", "own "],
+    "APPROACHES": ["yang"],#, "nair", "own "],
     # Also consider the every-second-peak ("halved") values (True/False).
-    "HALVED": True,
+    "HALVED": False,
     # Which ROI perspective to consider: "side" or "front".
     "VIEW": "front",
     # Whether ROIs whose token contains "manual" are considered (True/False).
@@ -138,13 +138,13 @@ CONFIG: dict[str, object] = {
     # "peaks" (HR-peak agreement / error / Bland-Altman metrics) or "mean" (across-ROIs
     # spread of the per-ROI mean signal-HR bias).
     # mean_range modus
-    "MODUS": "peaks",
+    "MODUS": "mean_range",
     # peaks only: False = best ROI per recording; True = all ROIs per recording, ranked.
-    "RANK": True,
+    "RANK": False,
     # Overrides RANK when non-None. "inside_rois" = rank within each recording (like
     # RANK=True); "inside_approach" = rank all ROIs of an approach globally across all
     # recordings of that approach.
-    "RANK_OPTION": "inside_approach",
+    "RANK_OPTION": None #"inside_approach",
 }
 
 DEFAULT_INPUT_CSV = REPO_ROOT / "saved_results" / "all_npz_metrics.csv"
@@ -217,7 +217,7 @@ _COLUMN_DISPLAY: dict[str, str] = {
     "Rank":                            "Rank",
     "Halved":                          "Every 2nd peak used only",
     # ---- peaks modus metric columns (from _COLUMN_SOURCES) ----
-    "fraction where signal +- GT <= 5 bpm": "Within-5-BPM accuracy (%)",
+    "within-5-BPM accuracy":           "Within-5-BPM accuracy (%)",
     "rmse":                            "RMSE",
     "mae":                             "MAE",
     "Bland-Altman mean difference":    "Mean diff",
@@ -268,13 +268,15 @@ def _mean_range_resting_mask(table: pd.DataFrame) -> "pd.Series[bool]":
 
 
 # mean-modus output column names (regular + the appended halved block).
+# All six stats are included; the mean_range modus drops Median / RMSE / Range
+# in create_mean_range_tables so only Mean / Max / Min appear in those tables.
 _MEAN_STAT_LABELS = {
-    "mean": "Mean abs. signal-GT HR diff across ROIs (bpm)",
+    "mean":   "Mean abs. signal-GT HR diff across ROIs (bpm)",
     "median": "Median abs. signal-GT HR diff across ROIs (bpm)",
-    "rmse": "RMSE abs. signal-GT HR diff across ROIs (bpm)",
-    "range": "Range abs. signal-GT HR diff across ROIs (bpm)",
-    "max": "Max abs. signal-GT HR diff across ROIs (bpm)",
-    "min": "Min abs. signal-GT HR diff across ROIs (bpm)",
+    "rmse":   "RMSE abs. signal-GT HR diff across ROIs (bpm)",
+    "range":  "Range abs. signal-GT HR diff across ROIs (bpm)",
+    "max":    "Max abs. signal-GT HR diff across ROIs (bpm)",
+    "min":    "Min abs. signal-GT HR diff across ROIs (bpm)",
 }
 _MEAN_STAT_LABELS_HALVED = {
     key: label.replace(" (bpm)", ", halved (bpm)")
@@ -661,6 +663,185 @@ def _build_mean_table(df: pd.DataFrame, *, halved: bool, view: str) -> pd.DataFr
 
 
 # --------------------------------------------------------------------------------------
+# Peaks summary (RANK=False only)
+# --------------------------------------------------------------------------------------
+def _generate_peaks_summary(
+    table: pd.DataFrame,
+    *,
+    latex_label: Optional[str] = None,
+) -> str:
+    """Generate a textual summary for a RANK=False peaks-modus table.
+
+    Produces two sections per approach:
+
+    1. Per-camera ranges of within-5-BPM accuracy and RMSE, split by before-sport /
+       after-sport recordings (one sentence per camera).
+    2. Full metric details for the best and second-best recording results, ranked by
+       within-5-BPM accuracy (descending) then RMSE (ascending).
+
+    ``table`` must already have columns renamed according to :data:`_COLUMN_DISPLAY`.
+    """
+    def _col(internal: str) -> str:
+        return _COLUMN_DISPLAY.get(internal, internal)
+
+    ACC_COL   = _col("within-5-BPM accuracy")
+    RMSE_COL  = _col("rmse")
+    MAE_COL   = _col("mae")
+    BIAS_COL  = _col("Bland-Altman mean difference")
+    U_LOA_COL = _col("Bland-Altman upper limit of agreement")
+    L_LOA_COL = _col("Bland-Altman lower limit of agreement")
+    SD_COL    = _col("Bland-Altman SD of differences")
+    HALVED_COL = _col("Halved")
+    EXP_COL   = _col("Experiment")
+    PART_COL  = _col("Participant")
+    CAM_COL   = _col("Camera")
+    APP_COL   = _col("Approach")
+
+    required = [ACC_COL, RMSE_COL, MAE_COL, EXP_COL, CAM_COL, APP_COL]
+    missing = [c for c in required if c not in table.columns]
+    if missing:
+        return f"[Summary unavailable: missing columns {missing}]"
+
+    cam_disp_to_token = {v: k for k, v in _CAMERA_DISPLAY.items()}
+    app_disp_to_token = {v: k for k, v in _APPROACH_LABELS.items()}
+
+    def _range_str(df: pd.DataFrame, col: str) -> str:
+        vals = pd.to_numeric(df[col], errors="coerce").dropna()
+        if vals.empty:
+            return "N/A"
+        lo, hi = vals.min(), vals.max()
+        return f"{lo:.2f}\u2013{hi:.2f}" if abs(hi - lo) > 1e-9 else f"{lo:.2f}"
+
+    def _fv(row: pd.Series, col: str) -> str:
+        if col not in row.index:
+            return "N/A"
+        v = pd.to_numeric(row[col], errors="coerce")
+        return f"{v:.2f}" if pd.notna(v) else "N/A"
+
+    approaches_ordered = sorted(
+        table[APP_COL].dropna().unique(),
+        key=lambda a: _APPROACH_ORDER.get(app_disp_to_token.get(str(a), str(a)), 99),
+    )
+
+    paragraphs: list[str] = []
+
+    for approach in approaches_ordered:
+        app_df = table[table[APP_COL] == approach].copy()
+        if app_df.empty:
+            continue
+
+        # --- Part 1: Per-camera accuracy / RMSE ranges ---
+        cameras = sorted(
+            app_df[CAM_COL].dropna().unique(),
+            key=lambda c: _CAMERA_ORDER.get(cam_disp_to_token.get(str(c), str(c)), 99),
+        )
+        cam_texts: list[str] = []
+        for cam in cameras:
+            cam_df = app_df[app_df[CAM_COL] == cam]
+            parts: list[tuple[str, str, str]] = []
+            for exp in ("before sport", "after sport"):
+                exp_df = cam_df[cam_df[EXP_COL] == exp]
+                if not exp_df.empty:
+                    parts.append((exp, _range_str(exp_df, ACC_COL), _range_str(exp_df, RMSE_COL)))
+            if not parts:
+                continue
+            if len(parts) == 2:
+                (e1, a1, r1), (e2, a2, r2) = parts
+                cam_texts.append(
+                    f"{cam} achieves within-5-BPM accuracies of {a1} {e1} "
+                    f"and {a2} {e2}, with RMSE values of {r1}\u202fbpm "
+                    f"and {r2}\u202fbpm, respectively"
+                )
+            else:
+                e1, a1, r1 = parts[0]
+                cam_texts.append(
+                    f"{cam} achieves within-5-BPM accuracies of {a1} {e1}, "
+                    f"with RMSE values of {r1}\u202fbpm"
+                )
+        if cam_texts:
+            cam_summary = ". ".join(cam_texts) + "."
+            paragraphs.append(
+                f"Across all recordings, for the {approach} the {cam_summary}"
+            )
+
+        # --- Part 2: Best and second-best results ---
+        app_df["_acc_s"] = pd.to_numeric(app_df[ACC_COL], errors="coerce")
+        app_df["_rmse_s"] = pd.to_numeric(app_df[RMSE_COL], errors="coerce")
+        top2 = (
+            app_df
+            .sort_values(["_acc_s", "_rmse_s"], ascending=[False, True], kind="stable")
+            .head(2)
+            .reset_index(drop=True)
+        )
+        if top2.empty:
+            continue
+        best = top2.iloc[0]
+        second = top2.iloc[1] if len(top2) > 1 else None
+
+        best_cam = str(best.get(CAM_COL, ""))
+        best_exp = str(best.get(EXP_COL, ""))
+        shared = (
+            second is not None
+            and str(second.get(CAM_COL, "")) == best_cam
+            and str(second.get(EXP_COL, "")) == best_exp
+            and bool(best_cam) and bool(best_exp)
+        )
+        if shared:
+            intro = (
+                f"For the {approach}, the best results are all with the {best_cam} camera, "
+                f"{best_exp} recordings:"
+            )
+        else:
+            intro = f"For the {approach}, the best results are:"
+
+        def _row_text(row: pd.Series, rank: int, _shared: bool = shared) -> str:
+            part = row.get(PART_COL, pd.NA)
+            part_str = f"Participant {part}" if pd.notna(part) else "a participant"
+            halved = (
+                HALVED_COL in row.index
+                and str(row.get(HALVED_COL, "no")).strip().lower() == "yes"
+            )
+            context = ""
+            if not _shared:
+                rc, re = row.get(CAM_COL, ""), row.get(EXP_COL, "")
+                if rc and re:
+                    context = f" ({rc}, {re})"
+                elif rc:
+                    context = f" ({rc})"
+            if rank == 1:
+                h_clause = ", where only every second peak is detected," if halved else ""
+                ref = f" (\\ref{{{latex_label}}})" if latex_label else ""
+                return (
+                    f"{part_str}{context}{h_clause} achieves the best performance with "
+                    f"a within-5-BPM accuracy of {_fv(row, ACC_COL)}, "
+                    f"an RMSE of {_fv(row, RMSE_COL)}\u202fbpm, "
+                    f"an MAE of {_fv(row, MAE_COL)}\u202fbpm, "
+                    f"a mean difference of {_fv(row, BIAS_COL)}\u202fbpm, "
+                    f"limits of agreement (LOA) from {_fv(row, L_LOA_COL)} "
+                    f"to {_fv(row, U_LOA_COL)}\u202fbpm, "
+                    f"and an SD of the differences of {_fv(row, SD_COL)}\u202fbpm{ref}."
+                )
+            else:
+                h_clause = ", also with only every second peak detected," if halved else ""
+                return (
+                    f"{part_str}{context}{h_clause} ranks second with "
+                    f"a within-5-BPM accuracy of {_fv(row, ACC_COL)}, "
+                    f"an RMSE of {_fv(row, RMSE_COL)}\u202fbpm, "
+                    f"an MAE of {_fv(row, MAE_COL)}\u202fbpm, "
+                    f"a mean difference of {_fv(row, BIAS_COL)}\u202fbpm, "
+                    f"LOA from {_fv(row, L_LOA_COL)} to {_fv(row, U_LOA_COL)}\u202fbpm, "
+                    f"and an SD of {_fv(row, SD_COL)}\u202fbpm."
+                )
+
+        para = f"{intro}\n{_row_text(best, 1)}"
+        if second is not None:
+            para += f" {_row_text(second, 2)}"
+        paragraphs.append(para)
+
+    return "\n\n".join(paragraphs)
+
+
+# --------------------------------------------------------------------------------------
 # Public entry point
 # --------------------------------------------------------------------------------------
 def create_configurable_table(
@@ -754,6 +935,18 @@ def create_configurable_table(
     # current name have any effect; columns absent from the dict are left unchanged).
     table = table.rename(columns=_COLUMN_DISPLAY)
 
+    # For peaks tables generate a per-approach textual summary, print it,
+    # and save it alongside the CSV (same stem, .summary.txt extension).
+    if modus == "peaks":
+        _peaks_summary = _generate_peaks_summary(table, latex_label=latex_label)
+        print("\n[create_tables_for_paper] Peaks summary:\n")
+        print(_peaks_summary)
+        if output_path is not None:
+            _sum_path = Path(str(output_path)).with_suffix(".summary.txt")
+            _sum_path.parent.mkdir(parents=True, exist_ok=True)
+            _sum_path.write_text(_peaks_summary + "\n", encoding="utf-8")
+            print(f"[create_table] Wrote peaks summary to {_sum_path}")
+
     return _finalize_table(
         table,
         output_path=output_path,
@@ -767,6 +960,129 @@ def create_configurable_table(
 # --------------------------------------------------------------------------------------
 # mean_range modus: two mean tables split by resting / other partition
 # --------------------------------------------------------------------------------------
+
+# Columns dropped from the mean table when building mean_range tables
+# (Median / RMSE / Range are excluded; only Mean / Max / Min are kept).
+_MEAN_RANGE_DROP_COLS: tuple[str, ...] = (
+    "Median abs. signal-GT HR diff across ROIs (bpm)",
+    "RMSE abs. signal-GT HR diff across ROIs (bpm)",
+    "Range abs. signal-GT HR diff across ROIs (bpm)",
+    "Median abs. signal-GT HR diff across ROIs, halved (bpm)",
+    "RMSE abs. signal-GT HR diff across ROIs, halved (bpm)",
+    "Range abs. signal-GT HR diff across ROIs, halved (bpm)",
+)
+
+
+def _build_combined_mean_range_latex(
+    latex_resting: str,
+    latex_other: str,
+    *,
+    caption: Optional[str] = None,
+    label: Optional[str] = None,
+) -> str:
+    """Combine the two mean-range table LaTeX strings into one ``table`` float.
+
+    Both groups share a single ``tabular`` environment with a unified two-row
+    header (multicolumn grouping + short column names defined once).  A full-width
+    separator row labels each group inside the table.
+    """
+
+    def _extract_tabular_spec(s: str) -> str:
+        """Return the column spec string from ``\\begin{tabular}{...}``."""
+        marker = r"\begin{tabular}{"
+        start = s.find(marker)
+        if start == -1:
+            return "|l|l|r|l|l|r|r|r|r|"
+        start += len(marker)
+        end = s.find("}", start)
+        return s[start:end] if end != -1 else "|l|l|r|l|l|r|r|r|r|"
+
+    def _extract_data_rows(s: str) -> str:
+        """Return only the data rows (after the column-header hline) of a tabular."""
+        start = s.find(r"\begin{tabular}")
+        end = s.rfind(r"\end{tabular}")
+        if start == -1 or end == -1:
+            return ""
+        content = s[start: end + len(r"\end{tabular}")]
+        # Line layout: [0]=\begin{tabular}{...}, [1]=\hline, [2]=header \\,
+        # [3]=\hline, [4..n-1]=data rows + \hline, [-1]=\end{tabular}
+        lines = content.split("\n")
+        if len(lines) <= 4:
+            return ""
+        return "\n".join(lines[4:-1])
+
+    col_spec = _extract_tabular_spec(latex_resting)
+    # Count column types (l / r / c / p) to determine total column count.
+    n_cols = sum(1 for c in col_spec if c in "lrcp")
+    # 6 descriptive columns (Approach, Camera, ID, Experiment, Perspective, Ref-HR);
+    # remaining columns are metrics.
+    n_metrics = n_cols - 6
+
+    data_r = _extract_data_rows(latex_resting)
+    data_o = _extract_data_rows(latex_other)
+
+    hr_lo = f"{_MEAN_RANGE_HR_LOW:.0f}"
+    hr_hi = f"{_MEAN_RANGE_HR_HIGH:.0f}"
+
+    # ---- Two-row header (multicolumn grouping + short column names) ----
+    if n_metrics > 3:
+        # Halved columns present (Mean/Max/Min + Mean_h/Max_h/Min_h).
+        n_halved = n_metrics - 3
+        header_mc = (
+            r"\multicolumn{6}{|c|}{Experimental Details} &" + "\n"
+            r"\multicolumn{3}{c|}{Absolute signal-reference HR difference metrics (bpm)} &" + "\n"
+            rf"\multicolumn{{{n_halved}}}{{c|}}{{Halved (bpm)}} \\"
+        )
+        header_cols = (
+            r"Approach & Camera & ID & Experiment & Perspective & "
+            r"Reference mean HR (bpm) & Mean & Max & Min"
+            + " & Mean & Max & Min" * (n_halved // 3)
+            + r" \\"
+        )
+    else:
+        header_mc = (
+            r"\multicolumn{6}{|c|}{Experimental Details} &" + "\n"
+            r"\multicolumn{3}{c|}{Absolute signal-reference HR difference metrics (bpm)} \\"
+        )
+        header_cols = (
+            r"Approach & Camera & ID & Experiment & Perspective & "
+            r"Reference mean HR (bpm) & Mean & Max & Min \\"
+        )
+
+    # ---- Full-width group separator rows ----
+    sep_r = (
+        rf"\multicolumn{{{n_cols}}}{{|l|}}{{\textbf{{(a) Resting group "
+        rf"(HR {hr_lo}--{hr_hi}\,bpm, non-Lepton, front view)}}}} \\"
+    )
+    sep_o = rf"\multicolumn{{{n_cols}}}{{|l|}}{{\textbf{{(b) Other recordings}}}} \\"
+
+    # data_r already ends with \hline (one after each data row), so sep_o is
+    # preceded by that final \hline without needing an extra one.
+    lines = [
+        r"\begin{table}[ht]",
+        r"\centering",
+        r"\begin{tabular}{" + col_spec + "}",
+        r"\hline",
+        header_mc,
+        r"\hline",
+        header_cols,
+        r"\hline",
+        sep_r,
+        r"\hline",
+        data_r,
+        sep_o,
+        r"\hline",
+        data_o,
+        r"\end{tabular}",
+    ]
+    if caption is not None:
+        lines.append(r"\caption{" + caption + "}")
+    if label is not None:
+        lines.append(r"\label{" + str(label) + "}")
+    lines.append(r"\end{table}")
+    return "\n".join(lines)
+
+
 def create_mean_range_tables(
     *,
     approaches: Sequence[str] | str = None,  # type: ignore[assignment]
@@ -784,6 +1100,9 @@ def create_mean_range_tables(
     latex_caption_other: Optional[str] = None,
     latex_label_resting: Optional[str] = None,
     latex_label_other: Optional[str] = None,
+    latex_output_path_combined: Optional[str | Path] = None,
+    latex_caption_combined: Optional[str] = None,
+    latex_label_combined: Optional[str] = None,
 ) -> tuple[tuple[pd.DataFrame, str], tuple[pd.DataFrame, str]]:
     """Build two mean-modus tables split by the resting / other partition.
 
@@ -814,6 +1133,11 @@ def create_mean_range_tables(
         latex_output_path=None,
     )
 
+    # Drop Median / RMSE / Range columns: mean_range tables only show Mean / Max / Min.
+    full_table = full_table.drop(
+        columns=[c for c in _MEAN_RANGE_DROP_COLS if c in full_table.columns]
+    )
+
     mask = _mean_range_resting_mask(full_table)
     table_resting = full_table[mask].reset_index(drop=True)
     table_other = full_table[~mask].reset_index(drop=True)
@@ -836,6 +1160,21 @@ def create_mean_range_tables(
         latex_caption=latex_caption_other,
         latex_label=latex_label_other,
     )
+
+    # Build and optionally write the combined two-part LaTeX file.
+    (_, latex_r), (_, latex_o) = result_resting, result_other
+    latex_combined = _build_combined_mean_range_latex(
+        latex_r,
+        latex_o,
+        caption=latex_caption_combined,
+        label=latex_label_combined,
+    )
+    if latex_output_path_combined is not None:
+        latex_output_path_combined = Path(str(latex_output_path_combined))
+        latex_output_path_combined.parent.mkdir(parents=True, exist_ok=True)
+        latex_output_path_combined.write_text(latex_combined + "\n", encoding="utf-8")
+        print(f"[create_table] Wrote combined mean-range LaTeX table to {latex_output_path_combined}")
+
     return result_resting, result_other
 
 
@@ -917,14 +1256,6 @@ if __name__ == "__main__":
                 "[create_tables_for_paper] halved rows: "
                 f"{int((tbl['Halved'] == 'yes').sum())} of {len(tbl)}"
             )
-        with pd.option_context(
-            "display.max_columns", None,
-            "display.width", 260,
-            "display.float_format", lambda v: f"{v:.2f}",
-        ):
-            print(tbl.to_string(index=False))
-        print("\n[create_tables_for_paper] LaTeX table:\n")
-        print(ltx)
 
     print(f"\n[create_tables_for_paper] config: {CONFIG}")
 
@@ -943,6 +1274,9 @@ if __name__ == "__main__":
             latex_caption_other=caption_base + " (other recordings).",
             latex_label_resting=f"tab:{slug}_resting",
             latex_label_other=f"tab:{slug}_other",
+            latex_output_path_combined=DEFAULT_OUTPUT_DIR / f"{slug}_combined.tex",
+            latex_caption_combined=caption_base + ".",
+            latex_label_combined=f"tab:{slug}_combined",
         )
         _print_summary(
             table_r, latex_r,
