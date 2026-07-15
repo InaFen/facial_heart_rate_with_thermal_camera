@@ -135,7 +135,7 @@ _APPROACH_ORDER: dict[str, int] = {
 # ======================================================================================
 CONFIG: dict[str, object] = {
     # Which approaches to include: any subset of {"own", "nair", "yang"} or ["all"].
-    "APPROACHES": ["all"],#, "nair", "own "],
+    "APPROACHES": ["yang"],#, "nair", "own "],
     # Also consider the every-second-peak ("halved") values (True/False).
     "HALVED": True,
     # Which ROI perspective to consider: "side" or "front".
@@ -160,7 +160,14 @@ CONFIG: dict[str, object] = {
     # sub-metrics (default).  A float in (0, 1) gives that fraction of the total weight
     # to hr_agreement_fraction; the remaining (1 - weight) is split equally among the
     # other 5 sub-metrics.  E.g. 0.3 means accuracy counts 30 %, each other metric 14 %.
-    "ACCURACY_WEIGHT": None#0.6,
+    "ACCURACY_WEIGHT": None,#0.6,
+    # peaks only: when True, three additional comparison tables are written alongside
+    # the main table (see _build_best_vs_second_tables):
+    #   *_vs2nd.csv/.tex                -- best vs second-best ROI per recording (3 rows each)
+    #   *_vs2nd_by_cam_roi.csv/.tex     -- mean abs diff grouped by (approach, camera, best ROI)
+    #   *_vs2nd_by_approach.csv/.tex    -- mean abs diff grouped by (approach, best ROI)
+    #   *_vs2nd_by_cam_roi_med.csv/.tex -- median abs diff grouped by (approach, camera, best ROI)
+    "COMPARISON_TO_SECOND_BEST": False,
 }
 
 DEFAULT_INPUT_CSV = REPO_ROOT / "saved_results" / "all_npz_metrics.csv"
@@ -818,25 +825,31 @@ def _generate_peaks_summary(
         cam_texts: list[str] = []
         for cam in cameras:
             cam_df = app_df[app_df[CAM_COL] == cam]
-            parts: list[tuple[str, str, str]] = []
+            parts: list[tuple[str, str, str, str]] = []
             for exp in ("before sport", "after sport"):
                 exp_df = cam_df[cam_df[EXP_COL] == exp]
                 if not exp_df.empty:
-                    parts.append((exp, _range_str(exp_df, ACC_COL), _range_str(exp_df, RMSE_COL)))
+                    parts.append((
+                        exp,
+                        _range_str(exp_df, ACC_COL),
+                        _range_str(exp_df, RMSE_COL),
+                        _range_str(exp_df, MAE_COL),
+                    ))
             if not parts:
                 continue
             if len(parts) == 2:
-                (e1, a1, r1), (e2, a2, r2) = parts
+                (e1, a1, r1, mae1), (e2, a2, r2, mae2) = parts
                 cam_texts.append(
                     f"{cam} achieves within-5-BPM accuracies of {a1} {e1} "
                     f"and {a2} {e2}, with RMSE values of {r1}\u202fbpm "
-                    f"and {r2}\u202fbpm, respectively"
+                    f"and {r2}\u202fbpm and MAE values of {mae1}\u202fbpm "
+                    f"and {mae2}\u202fbpm, respectively"
                 )
             else:
-                e1, a1, r1 = parts[0]
+                e1, a1, r1, mae1 = parts[0]
                 cam_texts.append(
                     f"{cam} achieves within-5-BPM accuracies of {a1} {e1}, "
-                    f"with RMSE values of {r1}\u202fbpm"
+                    f"with RMSE values of {r1}\u202fbpm and MAE values of {mae1}\u202fbpm"
                 )
         if cam_texts:
             cam_summary = ". ".join(cam_texts) + "."
@@ -919,6 +932,246 @@ def _generate_peaks_summary(
         paragraphs.append(para)
 
     return "\n\n".join(paragraphs)
+
+
+# --------------------------------------------------------------------------------------
+# Best-vs-second comparison tables
+# --------------------------------------------------------------------------------------
+
+def _build_best_vs_second_tables(
+    df: pd.DataFrame,
+    *,
+    halved: bool,
+    accuracy_weight: Optional[float] = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Build three best-vs-second-best ROI comparison tables.
+
+    For each recording the best ROI is identified, then a *distinct* second-best is
+    selected: when the second-ranked candidate is simply the halved (or un-halved)
+    sibling of the best ROI it is skipped and the third-ranked candidate is used
+    instead; the "Second ROI" entry is then marked with ``*``.
+
+    Returns
+    -------
+    table1
+        Per-recording – three rows per recording:
+        *1st (best)*, *2nd* (or *3rd* when halved sibling skipped), and *Abs. diff* showing
+        the absolute difference ``|best_metric − second_metric|`` for every metric column.
+    table2
+        Per *(Approach, Camera, Best ROI)* – mean of ``|best − second|`` absolute metric
+        differences across recordings sharing the same best ROI and camera.
+        Lists all observed second-best ROIs with counts.
+    table3
+        Per *(Approach, Best ROI)* – same means aggregated over all cameras,
+        with one row per distinct best ROI within each approach.
+        Lists all observed second-best ROIs with counts.
+    """
+    metric_cols = list(_COLUMN_SOURCES.keys())
+
+    def _roi_label(row: pd.Series) -> str:
+        return _ROI_DISPLAY.get(str(row["_roi"]), str(row["_roi"]).replace("_", " "))
+
+    def _metric_val(row: pd.Series, out_col: str, h: bool) -> Optional[float]:
+        closest_col, halved_col = _COLUMN_SOURCES[out_col]
+        v = row.get(halved_col if h else closest_col)
+        try:
+            fv = float(v)  # type: ignore[arg-type]
+            return fv if math.isfinite(fv) else None
+        except (TypeError, ValueError):
+            return None
+
+    # ---- collect one comparison record per recording ----
+    comp_records: list[dict[str, object]] = []
+
+    for _key, group in df.groupby("_rec_key", sort=False):
+        candidates = _variant_candidates(group, halved=halved)
+        if len(candidates) < 2:
+            continue
+        order, _scores = _score_and_order(candidates, accuracy_weight=accuracy_weight)
+
+        row_best, halved_best = candidates[order[0]]
+        best_roi_label = _roi_label(row_best)
+
+        # Find second: skip the halved/un-halved sibling of best.
+        second_cand_idx: Optional[int] = None
+        third_used = False
+        for rank_pos, cand_idx in enumerate(order[1:], start=2):
+            row_cand, halved_cand = candidates[cand_idx]
+            is_sibling = (
+                str(row_cand["_roi"]) == str(row_best["_roi"])
+                and halved_cand != halved_best
+            )
+            if not is_sibling:
+                second_cand_idx = cand_idx
+                third_used = rank_pos > 2
+                break
+
+        if second_cand_idx is None:
+            continue  # only one distinct ROI in this recording
+
+        row_second, halved_second = candidates[second_cand_idx]
+        second_roi_label = _roi_label(row_second)
+
+        pf = str(row_best["plots_folder"])
+        camera = _detect_camera(pf)
+        parsed = _parse_participant_experiment(pf)
+        experiment = parsed[1] if parsed else None
+
+        rec: dict[str, object] = {
+            "Approach": _approach_label(pf),
+            "Camera": _CAMERA_DISPLAY.get(camera, camera),
+            "Participant": parsed[0] if parsed else pd.NA,
+            "Experiment": (
+                None if experiment is None
+                else ("before sport" if experiment in (1, 2) else "after sport")
+            ),
+            "Best ROI": best_roi_label,
+            "Best Halved": "yes" if halved_best else "no",
+            "Second ROI": second_roi_label + (" *" if third_used else ""),
+            "Second Halved": "yes" if halved_second else "no",
+            "_approach_order": _APPROACH_ORDER.get(_detect_approach(pf), 99),
+            "_camera_order": _CAMERA_ORDER.get(camera, 99),
+            "_participant": parsed[0] if parsed else 99,
+            "_experiment": experiment if experiment is not None else 99,
+            "_best_roi_key": best_roi_label,
+            "_second_roi_key": second_roi_label,
+        }
+        for m in metric_cols:
+            b = _metric_val(row_best, m, halved_best)
+            s = _metric_val(row_second, m, halved_second)
+            rec[f"_b_{m}"] = b if b is not None else pd.NA
+            rec[f"_s_{m}"] = s if s is not None else pd.NA
+            rec[f"_d_{m}"] = abs(b - s) if (b is not None and s is not None) else pd.NA
+        comp_records.append(rec)
+
+    if not comp_records:
+        raise ValueError(
+            "No recording had \u22652 usable distinct-ROI candidates for "
+            "the best-vs-second comparison."
+        )
+
+    comp_df = (
+        pd.DataFrame.from_records(comp_records)
+        .sort_values(
+            ["_approach_order", "_camera_order", "_participant", "_experiment"],
+            kind="stable",
+        )
+        .reset_index(drop=True)
+    )
+
+    # ---- Table 1: three rows per recording ----
+    t1_rows: list[dict[str, object]] = []
+    for _, r in comp_df.iterrows():
+        base = {
+            "Approach": r["Approach"],
+            "Camera": r["Camera"],
+            "Participant": r["Participant"],
+            "Experiment": r["Experiment"],
+        }
+        row_b = {**base, "Position": "1st (best)",
+                 "ROI": r["Best ROI"], "Halved": r["Best Halved"]}
+        row_b.update({m: r[f"_b_{m}"] for m in metric_cols})
+        t1_rows.append(row_b)
+
+        second_label = (
+            "3rd (halved sibling skipped *)" if str(r["Second ROI"]).endswith(" *")
+            else "2nd"
+        )
+        row_s = {**base, "Position": second_label,
+                 "ROI": r["Second ROI"], "Halved": r["Second Halved"]}
+        row_s.update({m: r[f"_s_{m}"] for m in metric_cols})
+        t1_rows.append(row_s)
+
+        row_d = {**base, "Position": "Abs. diff (1st vs 2nd)", "ROI": "", "Halved": ""}
+        row_d.update({m: r[f"_d_{m}"] for m in metric_cols})
+        t1_rows.append(row_d)
+
+    t1_id = ["Approach", "Camera", "Participant", "Experiment",
+              "Position", "ROI", "Halved"]
+    table1 = pd.DataFrame.from_records(t1_rows)[t1_id + metric_cols]
+    table1["Participant"] = table1["Participant"].astype("Int64")
+
+    def _roi_counts(series: pd.Series) -> str:
+        counts = series.value_counts()
+        return "; ".join(f"{roi} ({cnt})" for roi, cnt in counts.items())
+
+    # ---- Table 2: per (Approach, Camera, Best ROI) ----
+    t2_rows: list[dict[str, object]] = []
+    for (approach, camera, best_roi), grp in comp_df.groupby(
+        ["Approach", "Camera", "_best_roi_key"], sort=False
+    ):
+        r2: dict[str, object] = {
+            "Approach": approach,
+            "Camera": camera,
+            "Best ROI": best_roi,
+            "N recordings": len(grp),
+            "Second ROI(s)": _roi_counts(grp["_second_roi_key"]),
+            "_approach_order": int(grp["_approach_order"].iloc[0]),
+            "_camera_order": int(grp["_camera_order"].iloc[0]),
+        }
+        for m in metric_cols:
+            vals = pd.to_numeric(grp[f"_d_{m}"], errors="coerce").dropna()
+            r2[m] = float(vals.mean()) if not vals.empty else pd.NA
+        t2_rows.append(r2)
+
+    t2_id = ["Approach", "Camera", "Best ROI", "N recordings", "Second ROI(s)"]
+    table2 = (
+        pd.DataFrame.from_records(t2_rows)
+        .sort_values(["_approach_order", "_camera_order", "Best ROI"], kind="stable")
+        .reset_index(drop=True)
+    )[t2_id + metric_cols]
+
+    # ---- Table 4: per (Approach, Camera, Best ROI) – median ----
+    t4_rows: list[dict[str, object]] = []
+    for (approach, camera, best_roi), grp in comp_df.groupby(
+        ["Approach", "Camera", "_best_roi_key"], sort=False
+    ):
+        r4: dict[str, object] = {
+            "Approach": approach,
+            "Camera": camera,
+            "Best ROI": best_roi,
+            "N recordings": len(grp),
+            "Second ROI(s)": _roi_counts(grp["_second_roi_key"]),
+            "_approach_order": int(grp["_approach_order"].iloc[0]),
+            "_camera_order": int(grp["_camera_order"].iloc[0]),
+        }
+        for m in metric_cols:
+            vals = pd.to_numeric(grp[f"_d_{m}"], errors="coerce").dropna()
+            r4[m] = float(vals.median()) if not vals.empty else pd.NA
+        t4_rows.append(r4)
+
+    t4_id = ["Approach", "Camera", "Best ROI", "N recordings", "Second ROI(s)"]
+    table4 = (
+        pd.DataFrame.from_records(t4_rows)
+        .sort_values(["_approach_order", "_camera_order", "Best ROI"], kind="stable")
+        .reset_index(drop=True)
+    )[t4_id + metric_cols]
+
+    # ---- Table 3: per (Approach, Best ROI) ----
+    t3_rows: list[dict[str, object]] = []
+    for (approach, best_roi), grp in comp_df.groupby(
+        ["Approach", "_best_roi_key"], sort=False
+    ):
+        r3: dict[str, object] = {
+            "Approach": approach,
+            "Best ROI": best_roi,
+            "N recordings": len(grp),
+            "Second ROI(s)": _roi_counts(grp["_second_roi_key"]),
+            "_approach_order": int(grp["_approach_order"].iloc[0]),
+        }
+        for m in metric_cols:
+            vals = pd.to_numeric(grp[f"_d_{m}"], errors="coerce").dropna()
+            r3[m] = float(vals.mean()) if not vals.empty else pd.NA
+        t3_rows.append(r3)
+
+    t3_id = ["Approach", "Best ROI", "N recordings", "Second ROI(s)"]
+    table3 = (
+        pd.DataFrame.from_records(t3_rows)
+        .sort_values(["_approach_order", "Best ROI"], kind="stable")
+        .reset_index(drop=True)
+    )[t3_id + metric_cols]
+
+    return table1, table2, table3, table4
 
 
 # --------------------------------------------------------------------------------------
@@ -1039,6 +1292,61 @@ def create_configurable_table(
             _sum_path.parent.mkdir(parents=True, exist_ok=True)
             _sum_path.write_text(_peaks_summary + "\n", encoding="utf-8")
             print(f"[create_table] Wrote peaks summary to {_sum_path}")
+
+    # Best-vs-second comparison tables (peaks modus only).
+    if modus == "peaks" and bool(CONFIG.get("COMPARISON_TO_SECOND_BEST", False)):
+        try:
+            t1, t2, t3, t4 = _build_best_vs_second_tables(
+                df, halved=halved, accuracy_weight=accuracy_weight
+            )
+            # Apply the same column-display renames as the main table.
+            t1 = t1.rename(columns=_COLUMN_DISPLAY)
+            t2 = t2.rename(columns=_COLUMN_DISPLAY)
+            t3 = t3.rename(columns=_COLUMN_DISPLAY)
+            t4 = t4.rename(columns=_COLUMN_DISPLAY)
+            if output_path is not None:
+                _out = Path(str(output_path))
+                _stem = _out.stem
+                _dir = _out.parent
+                _capt_base = (latex_caption or "").rstrip(".")
+                _lbl_base = latex_label or ""
+                _subtables = [
+                    (
+                        "_vs2nd", t1,
+                        (_capt_base + ": best vs second-best ROI per recording "
+                         "(Abs. diff = |best − second|).") if _capt_base else None,
+                        f"{_lbl_base}_vs2nd" if _lbl_base else None,
+                    ),
+                    (
+                        "_vs2nd_by_cam_roi", t2,
+                        (_capt_base + ": mean absolute metric diff (|best − second|) "
+                         "grouped by approach, camera and best ROI.") if _capt_base else None,
+                        f"{_lbl_base}_vs2nd_by_cam_roi" if _lbl_base else None,
+                    ),
+                    (
+                        "_vs2nd_by_approach", t3,
+                        (_capt_base + ": mean absolute metric diff (|best − second|) "
+                         "grouped by approach and best ROI.") if _capt_base else None,
+                        f"{_lbl_base}_vs2nd_by_approach" if _lbl_base else None,
+                    ),
+                    (
+                        "_vs2nd_by_cam_roi_med", t4,
+                        (_capt_base + ": median absolute metric diff (|best \u2212 second|) "
+                         "grouped by approach, camera and best ROI.") if _capt_base else None,
+                        f"{_lbl_base}_vs2nd_by_cam_roi_med" if _lbl_base else None,
+                    ),
+                ]
+                for _sfx, _tbl, _cap, _lbl in _subtables:
+                    _finalize_table(
+                        _tbl,
+                        output_path=_dir / f"{_stem}{_sfx}.csv",
+                        round_decimals=round_decimals,
+                        latex_output_path=_dir / f"{_stem}{_sfx}.tex",
+                        latex_caption=_cap,
+                        latex_label=_lbl,
+                    )
+        except ValueError as _e:
+            print(f"[create_tables_for_paper] Warning: comparison-to-second skipped: {_e}")
 
     return _finalize_table(
         table,

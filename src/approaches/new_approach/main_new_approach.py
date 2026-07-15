@@ -89,7 +89,7 @@ else:
     _SELECT_MIN_PEAK_CLARITY = None
 
 # Steps that should be added for water experiment 
-WATER_EXPERIMENT = True
+WATER_EXPERIMENT = False
 # Water experiment: raw-signal temperature threshold (in the recording's native unit,
 # centi-Kelvin for the thermal cameras, e.g. 29150 == 291.50 K). When WATER_EXPERIMENT is
 # True, every frame whose SELECTED sub-ROI RAW mean signal is >= this value has its
@@ -284,13 +284,13 @@ def process_subroi_grid(
             dtype=float,
         )
         fig, ax = plt.subplots(figsize=(12, 5))
-        ax.plot(time_axis, mean_signal, color="black", linewidth=2.0, label="Mean signal")
-        ax.set_title(f"{label} mean signal")
+        ax.plot(time_axis, mean_signal, color="black", linewidth=2.0, label="Mean raw signal")
+        #ax.set_title(f"{label} mean signal")
         ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Temperature")
+        ax.set_ylabel("Temperature (°C)")
         ax.grid(alpha=0.25)
         ax.legend(loc="upper right")
-        fig.savefig(grid_dir / f"{prefix}_mean_signal.png", dpi=200, bbox_inches="tight")
+        fig.savefig(grid_dir / f"{prefix}_mean_signal_of_whole_unprocessed_raw_roi.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
 
         # Compute subROI means ----------------------------------------------------------------
