@@ -994,8 +994,11 @@ def write_roi_tracked_video_from_gray_frames(
             combined_mask = cv2.bitwise_or(combined_mask, mask)
 
         frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+        overlay = frame_bgr.copy()
+        overlay[combined_mask > 0] = (0, 255, 0)
+        frame_bgr = cv2.addWeighted(overlay, 0.35, frame_bgr, 0.65, 0)
         contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(frame_bgr, contours, -1, (0, 255, 255), 1)
+        cv2.drawContours(frame_bgr, contours, -1, (0, 255, 0), 2)
         out.write(frame_bgr)
 
     out.release()

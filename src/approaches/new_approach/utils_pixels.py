@@ -153,6 +153,185 @@ def write_subrois_video(writer, n_video: int, source_frames: list[np.ndarray], c
     print(f"Saved sub-ROI overlay video to: {video_path}")
 
 
+def save_roi_overlay_green(
+    source_frame: np.ndarray,
+    roi_coords: np.ndarray,
+    output_path: str | Path,
+    *,
+    fill_color_bgr: tuple[int, int, int] = (0, 255, 0),
+    outline_color_bgr: tuple[int, int, int] = (0, 255, 0),
+    fill_alpha: float = 0.35,
+    outline_thickness: int = 2,
+) -> str:
+    """Save a single frame with ONE whole ROI overlaid: green fill + green outline.
+
+    Unlike ``draw_subrois_on_frame`` (which colors each sub-ROI cell separately),
+    this draws exactly one translucent green fill plus a solid green outline for
+    the entire ``roi_coords`` mask -- used by the visualization-run mode to mark
+    the ROI on the first frame of ``video_facemesh.mp4`` / ``video_tracked_face.mp4``.
+    Returns the written path.
+    """
+    frame_height, frame_width = source_frame.shape[:2]
+    if source_frame.ndim == 3 and source_frame.shape[2] == 3:
+        # Already a color (e.g. TURBO colormapped) BGR frame -- use it as-is,
+        # preserving the same color filter that the source video has.
+        frame_bgr = source_frame.copy()
+        if frame_bgr.dtype != np.uint8:
+            vmin, vmax = np.percentile(frame_bgr, [1, 99])
+            frame_clipped = np.clip(frame_bgr, vmin, vmax)
+            frame_bgr = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    else:
+        vmin, vmax = np.percentile(source_frame, [1, 99])
+        frame_clipped = np.clip(source_frame, vmin, vmax)
+        frame_norm = cv2.normalize(frame_clipped, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+
+    coords = np.asarray(roi_coords, dtype=int)
+    if coords.size > 0:
+        xs = coords[:, 0]
+        ys = coords[:, 1]
+        in_bounds = (ys >= 0) & (ys < frame_height) & (xs >= 0) & (xs < frame_width)
+        xs, ys = xs[in_bounds], ys[in_bounds]
+
+        if xs.size > 0:
+            mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
+            mask[ys, xs] = 255
+
+            overlay = frame_bgr.copy()
+            overlay[mask > 0] = fill_color_bgr
+            frame_bgr = cv2.addWeighted(overlay, fill_alpha, frame_bgr, 1.0 - fill_alpha, 0)
+
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(frame_bgr, contours, -1, outline_color_bgr, outline_thickness)
+
+    output_path = str(output_path)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    cv2.imwrite(output_path, frame_bgr)
+    print(f"[visualization] Saved green ROI overlay to: {output_path}")
+    return output_path
+
+
+def save_first_frame_of_video(video_path: str | Path) -> np.ndarray | None:
+    """Read and return the first frame of a video (BGR), or None if unreadable.
+
+    Small helper for the visualization-run mode, used to grab the first frame of
+    ``video_facemesh.mp4`` / ``video_tracked_face.mp4`` for the green ROI overlay.
+    """
+    video_path = str(video_path)
+    if not os.path.isfile(video_path):
+        print(f"[visualization] Video not found, cannot extract first frame: {video_path}")
+        return None
+    cap = cv2.VideoCapture(video_path)
+    try:
+        ok, frame = cap.read()
+    finally:
+        cap.release()
+    if not ok or frame is None:
+        print(f"[visualization] Could not read first frame from: {video_path}")
+        return None
+    return frame
+
+
+def save_gaussian_before_after_first_frame(
+    raw_image: np.ndarray,
+    smoothed_image: np.ndarray,
+    output_path: str | Path,
+    *,
+    label: str = "",
+) -> str:
+    """Save a SINGLE image of the first frame's ROI crop where one half shows
+    the raw (pre-Gaussian) pixels and the other half shows the Gaussian-smoothed
+    pixels, split down the vertical midline of the ROI's own bounding box.
+
+    Showing both halves within the SAME image (rather than two separate
+    side-by-side panels) makes it immediately obvious that both halves cover
+    the exact same ROI/extent -- only whichever half was filtered looks smoother.
+
+    ``raw_image`` / ``smoothed_image`` are the reconstructed ROI bounding-box
+    images (same convention as the Gaussian-smoothing step in
+    ``main_new_approach.py``: a small 2D array with 0 outside the ROI mask, and
+    both arrays share the identical shape).
+    Used only by the visualization-run mode. Returns the written path.
+    """
+    height, width = raw_image.shape[:2]
+    split_col = width // 2
+
+    combined = np.empty_like(raw_image)
+    combined[:, :split_col] = raw_image[:, :split_col]
+    combined[:, split_col:] = smoothed_image[:, split_col:]
+
+    vmin = float(min(np.nanmin(raw_image), np.nanmin(smoothed_image)))
+    vmax = float(max(np.nanmax(raw_image), np.nanmax(smoothed_image)))
+    extent = (0, width, height, 0)
+
+    fig, ax = plt.subplots(figsize=(6, 5.5))
+    im = ax.imshow(
+        combined, cmap="gray", vmin=vmin, vmax=vmax, extent=extent, aspect="equal", interpolation="nearest"
+    )
+    ax.axvline(split_col, color="red", linewidth=3.0, linestyle="--")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlim(extent[0], extent[1])
+    ax.set_ylim(extent[2], extent[3])
+    ax.set_title(f"{label} - Left: before Gaussian filter | Right: after Gaussian filter".strip(" -"))
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Temperature (deg C)")
+    fig.tight_layout()
+    output_path = str(output_path)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+    print(f"[visualization] Saved Gaussian before/after split-ROI comparison to: {output_path}")
+    return output_path
+
+
+def plot_subroi_signals_before_after_bandpass(
+    n_cells: int,
+    raw_subroi_means: np.ndarray,
+    filtered_subroi_means: np.ndarray,
+    time_axis: np.ndarray,
+    label: str,
+    roi_dir: str | Path,
+    prefix: str,
+    SUBROI_GRID_ROWS: int,
+    SUBROI_GRID_COLS: int,
+) -> None:
+    """Save ONE standalone PNG per sub-ROI, each with TWO stacked subplots:
+    the signal before bandpass filtering (top) and after (bottom), with proper
+    axis labels on both, into a dedicated 'before_after_bandpass' subfolder.
+
+    Used only by the visualization-run mode.
+    """
+    cmap = plt.get_cmap("tab10")
+
+    output_dir = Path(roi_dir) / "before_after_bandpass"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for cell in range(n_cells):
+        row = cell // SUBROI_GRID_COLS
+        col = cell % SUBROI_GRID_COLS
+
+        fig, (ax_before, ax_after) = plt.subplots(2, 1, figsize=(8, 6))
+
+        ax_before.plot(time_axis, raw_subroi_means[:, cell], color=cmap(cell % 10), linewidth=1.0)
+        ax_before.set_title(f"sub-ROI r{row}c{col} - before bandpass")
+        ax_before.set_xlabel("Time (s)")
+        ax_before.set_ylabel("Temperature (deg C)")
+        ax_before.grid(alpha=0.25)
+
+        ax_after.plot(time_axis, filtered_subroi_means[:, cell], color=cmap(cell % 10), linewidth=1.0)
+        ax_after.set_title("After bandpass")
+        ax_after.set_xlabel("Time (s)")
+        ax_after.set_ylabel("Amplitude (arbitrary units)")
+        ax_after.grid(alpha=0.25)
+
+        fig.suptitle(f"{label} - sub-ROI r{row}c{col}")
+        fig.tight_layout()
+        output_path = output_dir / f"{prefix}_r{row}c{col}_before_after_bandpass.png"
+        fig.savefig(output_path, dpi=200, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[visualization] Saved before/after bandpass sub-ROI plot to: {output_path}")
+
+
 def compute_subroi_location_info(
     best_idx: int,
     grid_rows: int,

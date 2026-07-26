@@ -441,8 +441,11 @@ def write_roi_tracked_video_from_npy_frames(
             combined_mask = cv2.bitwise_or(combined_mask, mask)
 
         frame_bgr = cv2.cvtColor(frame_norm, cv2.COLOR_GRAY2BGR)
+        overlay = frame_bgr.copy()
+        overlay[combined_mask > 0] = (0, 255, 0)
+        frame_bgr = cv2.addWeighted(overlay, 0.35, frame_bgr, 0.65, 0)
         contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(frame_bgr, contours, -1, (0, 255, 255), 1)
+        cv2.drawContours(frame_bgr, contours, -1, (0, 255, 0), 2)
         out.write(frame_bgr)
 
     out.release()
@@ -782,6 +785,23 @@ def get_roi_data_pipeline(configs: Config, roi_detection_method: str = 'facemesh
             np.save(configs.path_roi_pixel_data, roi_pixel_data, allow_pickle=True)
         else:
             roi_pixel_data = np.load(configs.path_roi_pixel_data, allow_pickle=True)
+
+    # Preserve the ORIGINAL (pre-extension) mediapipe ROI coordinates for forehead
+    # ROIs before roi_pixel_log gets overwritten with the extended mask below.
+    # This allows visualization code to draw the ROI as it was originally detected,
+    # without the upward/downward forehead extension applied.
+    if (not extract_from_video_instead_of_gray_files and roi_pixel_data and
+        isinstance(roi_pixel_data, list) and len(roi_pixel_data) > 0 and
+        getattr(configs, 'used_rois', None) and any(is_forehead_roi(rn) for rn in configs.used_rois)):
+        for frame_idx, frame_data in enumerate(roi_pixel_data):
+            if frame_idx < len(roi_pixel_log):
+                for roi_name in list(roi_pixel_log[frame_idx].keys()):
+                    if is_forehead_roi(roi_name) and roi_name in frame_data:
+                        original_mask = roi_pixel_log[frame_idx][roi_name]
+                        ys, xs = np.where(original_mask > 0)
+                        frame_data[roi_name]["coords_original"] = list(
+                            zip(xs.tolist(), ys.tolist())
+                        )
 
     # Update roi_pixel_log with extended masks if forehead extension was applied
     # This ensures the video and PNG visualization show the extended ROI

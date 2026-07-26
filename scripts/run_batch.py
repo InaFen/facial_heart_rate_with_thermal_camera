@@ -442,6 +442,7 @@ def run_one_row(
 	manual_roi_backend: str = "browser",
 	config_env_var: str = "CONFIG_PATH",
 	plots_env_var: str = "PLOTS_SAVE_DIR",
+	run_for_visualization: bool = False,
 ) -> tuple[int, str]:
 	env = os.environ.copy()
 	env[config_env_var] = str(config_path)
@@ -449,6 +450,11 @@ def run_one_row(
 		env[plots_env_var] = str(plots_save_dir)
 	if camera:
 		env["CAMERA_NAME"] = str(camera)
+	# new_approach: visualization-run mode (see NEW_APPROACH_RUN_FOR_VISUALIZATION in
+	# main_new_approach.py) -- extra diagnostic outputs, no CSV aggregation, always
+	# overwritten, written to a separate visualization_runs output tree.
+	if pipeline == "new":
+		env["NEW_APPROACH_RUN_FOR_VISUALIZATION"] = "1" if run_for_visualization else "0"
 	# Manual ROI: choose the interactive backend (browser on headless servers) and
 	# tell the pipeline to save the selection overlay into the plots directory.
 	if manual_roi_enabled:
@@ -578,6 +584,7 @@ def run_combination(
 	manual_roi_backend: str,
 	reuse_manual_roi_masks: bool = True,
 	overwrite_manual_roi_masks: bool = False,
+	run_for_visualization: bool = False,
 ) -> tuple[list[tuple[str, str, str]], list[str], int]:
 	"""Run a single (pipeline, camera, roi_name/used_rois) combination.
 
@@ -627,9 +634,12 @@ def run_combination(
 	# Resolve CSV and config paths
 	csv_path = PROJECT_ROOT / "experiments" / "experiments_info" / f"{camera}_experiments.csv"
 	# Group runs by roi_name under the camera dir so multiple ROI configs for the
-	# same camera/pipeline don't overwrite each other.
+	# same camera/pipeline don't overwrite each other. Visualization runs are kept in
+	# a separate 'visualization_runs' tree (same layout) so they never overwrite or
+	# mix with real batch_runs data.
+	batch_root_name = "visualization_runs" if run_for_visualization else "batch_runs"
 	output_root = (
-		PROJECT_ROOT / "saved_results" / output_subdir / "batch_runs" / camera / sanitize_name(roi_name)
+		PROJECT_ROOT / "saved_results" / output_subdir / batch_root_name / camera / sanitize_name(roi_name)
 	)
 
 	# Validate paths
@@ -665,6 +675,7 @@ def run_combination(
 	print(f"Individuals:     {sorted(individuals) if individuals else 'all'}")
 	print(f"Manual ROI:      {manual_roi_enabled}"
 	      + (f" (mode={manual_roi_mode}, split={manual_roi_split_enabled}, grid={manual_roi_subroi_grid}, backend={manual_roi_backend})" if manual_roi_enabled else ""))
+	print(f"Visualization:   {run_for_visualization}")
 	print(f"Area Filter:     {area_filter}")
 	print(f"CSV:             {csv_path}")
 	print(f"Output Root:     {output_root}")
@@ -727,6 +738,7 @@ def run_combination(
 				manual_roi_backend=manual_roi_backend,
 				config_env_var=config_env_var,
 				plots_env_var=plots_env_var,
+				run_for_visualization=run_for_visualization,
 			)
 			if return_code != 0:
 				failures.append(
@@ -753,19 +765,19 @@ def main() -> int:
 	# Restrict the batch to specific individual(s): any of "ina", "julian", "paulo".
 	# None (or []) processes every individual. Matched case-insensitively against each
 	# CSV row's `person` column, e.g. individuals = ["paulo"] or ["ina", "julian"].
-	individuals = ["julian"]  # None or list of individual names to include (matched against CSV `person` column)
+	individuals = ["ina"]  # None or list of individual names to include (matched against CSV `person` column)
 	# Each ROI config pairs a roi_name with its used_rois list; the batch runs each.
 	roi_configs = [
 		#{"roi_name": "tracker", "used_rois": ["forehead"]},
 		#{"roi_name": "dlib", "used_rois": ["forehead"]},
-		#{"roi_name": "forehead", "used_rois": ["forehead"]},
-		#{"roi_name": "glabella", "used_rois": ["glabella"]},
-		#{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
-		#{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
-		#{"roi_name": "whole_face", "used_rois": ["whole_face"]},
+		{"roi_name": "forehead", "used_rois": ["forehead"]},
+		{"roi_name": "glabella", "used_rois": ["glabella"]},
+		{"roi_name": "left_forehead", "used_rois": ["left_forehead"]},
+		{"roi_name": "right_forehead", "used_rois": ["right_forehead"]},
+		{"roi_name": "whole_face", "used_rois": ["whole_face"]},
 		{"roi_name": "manual_rectangle", "used_rois": ["forehead"]}, # side view
-		#{"roi_name": "manual_rectangle_forehead", "used_rois": ["forehead"]}, # side view
-		#{"roi_name": "manual_rectangle_front_view", "used_rois": ["forehead"]},
+		{"roi_name": "manual_rectangle_forehead", "used_rois": ["forehead"]}, # side view
+		{"roi_name": "manual_rectangle_front_view", "used_rois": ["forehead"]},
 	]
 	limit_rows = None  # e.g., 5 (None = process all rows)
 	dry_run = False  # True to print what would be done, False to execute
@@ -785,6 +797,12 @@ def main() -> int:
 	# (the fresh drawing overwrites the cache). Still redrawn only ONCE per video per
 	# run, then reused across the remaining pipelines. False = reuse existing caches.
 	overwrite_manual_roi_masks = False
+	# Visualization-run mode (new_approach only): when True, outputs go to a separate
+	# 'visualization_runs' tree (never overwrites real batch_runs data), extra
+	# diagnostic images/plots are produced (ROI overlays, Gaussian/bandpass
+	# before-vs-after), CSV metrics aggregation is skipped, and outputs always
+	# regenerate (no caching).
+	run_for_visualization = True
 	# ===== END CONFIGURATION =====
 
 	# A redraw triggered by overwrite_manual_roi_masks should happen only once per
@@ -867,6 +885,7 @@ def main() -> int:
 			manual_roi_backend=manual_roi_backend,
 			reuse_manual_roi_masks=reuse_manual_roi_masks,
 			overwrite_manual_roi_masks=overwrite_manual_roi_masks,
+			run_for_visualization=run_for_visualization,
 		)
 		all_failures.extend(failures)
 		all_successful_runs.extend(successful_runs)

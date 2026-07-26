@@ -27,7 +27,7 @@ from src.approaches.new_approach.utils.utils_landmark_detection import (
     _parse_asc_file,
     load_gray_frame,
 )
-from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi, save_subroi_overlay_with_highlight, compute_subroi_location_info
+from src.approaches.new_approach.utils_pixels import compute_subroi_means, write_subrois_video, plot_subroi_means, bandpass_subroi_means, plot_subroi_psds, select_best_subroi, save_subroi_overlay_with_highlight, compute_subroi_location_info, save_roi_overlay_green, save_first_frame_of_video, save_gaussian_before_after_first_frame, plot_subroi_signals_before_after_bandpass
 from src.approaches.new_approach.utils_water_experiment import (
     compute_high_temp_bands,
     save_water_timestamps,
@@ -135,6 +135,22 @@ print(
     f"    ORDER_BANDPASS       = {ORDER_BANDPASS}  [{_src_order}]"
 )
 
+
+def _resolve_bool_env(env_var: str, default: bool = False) -> bool:
+    """Return a boolean from a '1'/'0' (or true/false) env var, else ``default``."""
+    raw = os.environ.get(env_var)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+# Visualization-run mode (set by scripts/run_batch.py via run_for_visualization):
+# extra diagnostic outputs (ROI overlays, Gaussian/bandpass before-vs-after) are
+# produced, ALWAYS regenerated (no caching), and no CSV metrics row is appended
+# (this mode is for visual inspection, not batch statistics).
+RUN_FOR_VISUALIZATION = _resolve_bool_env("NEW_APPROACH_RUN_FOR_VISUALIZATION", False)
+print(f"[new_approach] RUN_FOR_VISUALIZATION = {RUN_FOR_VISUALIZATION}")
+
 # Default per-ROI sub-ROI grid sizes (rows; cols = rows). Each ROI maps to EITHER
 # a single grid size (one int) OR a list of grid sizes to try, e.g. [3, 4, 6, 8].
 # When several sizes are given, the full sub-ROI pipeline is run once per grid size
@@ -216,6 +232,45 @@ if not roi_pixel_data:
 roi_names = list(roi_pixel_data[0].keys())
 if not roi_names:
     raise ValueError("No ROI names were found in the first frame.")
+
+# Visualization-run mode: all extra diagnostic outputs go into a dedicated
+# 'visualization' subfolder of output_root (never mixed with the normal plots),
+# and are always regenerated (no caching / no existing-file checks).
+visualization_dir = output_root / "visualization"
+if RUN_FOR_VISUALIZATION:
+    visualization_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1) First frame of video_facemesh.mp4 / video_tracked_face.mp4 with the ROI
+    #    drawn as a green fill + green outline (first ROI's first-frame coords).
+    #    video_facemesh.mp4 shows the ORIGINALLY detected mediapipe ROI (before
+    #    any forehead extension), while video_tracked_face.mp4 shows the FINAL
+    #    (possibly forehead-extended) ROI actually used for signal extraction.
+    _first_roi_name = roi_names[0]
+    _first_roi_frame_data = roi_pixel_data[0].get(_first_roi_name, {})
+    _first_roi_coords_original = np.asarray(
+        _first_roi_frame_data.get("coords_original", _first_roi_frame_data.get("coords", [])),
+        dtype=int,
+    )
+    _first_roi_coords_extended = np.asarray(
+        _first_roi_frame_data.get("coords", []), dtype=int
+    )
+    for _video_attr, _out_name, _roi_coords_for_video in (
+        ("path_video_facemesh", "video_facemesh_first_frame_roi.png", _first_roi_coords_original),
+        ("path_video_tracked_face", "video_tracked_face_first_frame_roi.png", _first_roi_coords_extended),
+    ):
+        _video_path = getattr(configs, _video_attr, None)
+        if not _video_path:
+            continue
+        _first_frame_bgr = save_first_frame_of_video(_video_path)
+        if _first_frame_bgr is None:
+            continue
+        # Keep the frame in its original color (e.g. TURBO colormap), matching
+        # the source video -- do NOT convert to grayscale.
+        save_roi_overlay_green(
+            source_frame=_first_frame_bgr,
+            roi_coords=_roi_coords_for_video,
+            output_path=visualization_dir / _out_name,
+        )
 
 # --- Load the source frames once, in the same order/range as roi_pixel_data,
 #     so the sub-ROI overlay video can be drawn onto the actual thermal frames
@@ -383,6 +438,23 @@ def process_subroi_grid(
         roi_dir= grid_dir,
         prefix= "after_bandpass"
     )
+
+    # Visualization-run mode: combined grid figure with, per sub-ROI, the signal
+    # before (Gaussian-smoothed) vs. after the temporal bandpass filter, always
+    # overwritten. ``subroi_means`` here still holds the last stage computed in
+    # the loop above (Gaussian-smoothed), i.e. exactly the pre-bandpass signal.
+    if RUN_FOR_VISUALIZATION:
+        plot_subroi_signals_before_after_bandpass(
+            n_cells=n_cells,
+            raw_subroi_means=subroi_means,
+            filtered_subroi_means=filtered_subroi_means,
+            time_axis=time_axis,
+            label=f"{roi_name} - Before vs. after bandpass ({LOWCUT_BANDPASS}-{HIGHCUT_BANDPASS} Hz, order={ORDER_BANDPASS})",
+            roi_dir=visualization_dir,
+            prefix=f"{safe_name(roi_name)}_grid_{SUBROI_GRID_ROWS}x{SUBROI_GRID_COLS}",
+            SUBROI_GRID_ROWS=SUBROI_GRID_ROWS,
+            SUBROI_GRID_COLS=SUBROI_GRID_COLS,
+        )
 
     # Choose sub-ROI for final heart rate detection. By default this is based SOLELY on
     # the HR-band power ratio (SQI = signal strength in the HR band); when
@@ -587,7 +659,7 @@ for roi_name in roi_names:
     sigma_used = float(GAUSSIAN_SIGMA) if GAUSSIAN_SIGMA is not None else GAUSSIAN_KERNEL_SIZE / 2.0
 
     smoothed_frames: list[np.ndarray] = []
-    for values, coords in zip(raw_frame_signals, coords_per_frame):
+    for _gauss_frame_idx, (values, coords) in enumerate(zip(raw_frame_signals, coords_per_frame)):
         values = np.asarray(values, dtype=float)
         # If there are no pixels for this frame, create an empty array and skip the smoothing to avoid errors.
         if coords.shape[0] == 0 or values.size == 0:
@@ -630,6 +702,26 @@ for roi_name in roi_names:
                 filtered_mask,
                 out=np.zeros_like(filtered_image),
                 where=filtered_mask > 0,
+            )
+
+        # Visualization-run mode: save a before/after comparison of the FIRST
+        # frame's ROI crop (raw reconstructed image vs. Gaussian-smoothed),
+        # always overwritten.
+        if RUN_FOR_VISUALIZATION and _gauss_frame_idx == 0:
+            # Gaussian blurring spreads pixel weight beyond the original ROI
+            # mask footprint (since `normalized` is defined wherever
+            # `filtered_mask > 0`, not just at true ROI pixels). If left
+            # unmasked, the "after" half of the comparison image visually
+            # fills more of the bounding box than the true ROI shape,
+            # making it look "zoomed in" / smaller relative to the "before"
+            # half. Restrict the smoothed image to the true ROI footprint so
+            # both halves show the exact same ROI extent/shape.
+            normalized_for_display = np.where(mask > 0, normalized, 0.0)
+            save_gaussian_before_after_first_frame(
+                raw_image=image,
+                smoothed_image=normalized_for_display,
+                output_path=visualization_dir / f"{safe_name(roi_name)}_gaussian_before_after_first_frame.png",
+                label=roi_name,
             )
 
         # Store soley the smoothed pixel values (not coordinates, relative or absoulte, are stored)
