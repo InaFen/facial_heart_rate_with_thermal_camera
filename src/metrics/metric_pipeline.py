@@ -152,6 +152,50 @@ APPROACH_ALIASES: dict[str, str] = {
     "nair_et_al": "nair_et_al",
 }
 
+import re
+from pathlib import Path
+
+
+def _extract_metadata_from_metrics_path(metrics_json_path):
+    path = Path(metrics_json_path)
+    parts = path.parts
+
+    metadata = {
+        "approach": "",
+        "camera": "",
+        "participant": "",
+        "run": "",
+        "roi": "",
+    }
+
+    try:
+        # Extract approach and camera from the directory structure
+        results_idx = parts.index("results")
+        metadata["approach"] = parts[results_idx + 1]
+        metadata["camera"] = parts[results_idx + 2]
+
+        # Extract participant, run number and ROI from the result folder
+        folder_name = path.parent.name
+
+        match = re.match(
+            r"(?P<participant>[A-Za-z]+)(?P<run_number>\d+)_interpolated_(?P<roi>[^_]+)",
+            folder_name,
+        )
+
+        if match:
+            metadata["participant"] = match.group("participant")
+            run_number = int(match.group("run_number"))
+            metadata["roi"] = match.group("roi")
+
+            if run_number in (1, 2):
+                metadata["run"] = "before sport"
+            elif run_number in (3, 4):
+                metadata["run"] = "after sport"
+
+    except (ValueError, IndexError):
+        pass
+
+    return metadata
 
 def _relaxed_find_peaks_settings_for_path(
     source_path: str | Path | None,
@@ -1360,6 +1404,21 @@ def append_evaluation_row_to_csv(
 # (e.g. Bland-Altman stats when nothing matched) is left blank via restval so every
 # row has exactly these columns, regardless of the individual run.
 METRICS_SUMMARY_CSV_FIELDNAMES = [
+    "approach",
+    "camera",
+    "participant",
+    "run",
+    "roi",
+        #f1 
+    "tp_distance_based",
+    "fp_distance_based",
+    "fn_distance_based",
+    "precision_distance_based",
+    "recall_distance_based",
+    "f1_distance_based",
+    "mean_pat_distance_based",
+    "std_pat_distance_based",
+    #paths
     "timestamp_utc",
     "input_file",
     "plots_folder",
@@ -1456,15 +1515,6 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "ba_stats_disregard_halved_loa_low",
     "ba_stats_disregard_halved_loa_high",
     "ba_stats_disregard_halved_sd_diff",
-    #f1 
-    "tp_distance_based",
-    "fp_distance_based",
-    "fn_distance_based",
-    "precision_distance_based",
-    "recall_distance_based",
-    "f1_distance_based",
-    "mean_pat_distance_based",
-    "std_pat_distance_based",
 ]
 
 
@@ -1616,6 +1666,10 @@ def _flatten_metrics_for_csv(
         "plots_folder": str(plots_folder) if plots_folder is not None else "",
         "metrics_json_path": str(json_path) if json_path is not None else "",
     }
+
+    metadata = _extract_metadata_from_metrics_path(json_path)
+
+    row.update(metadata)
 
     # Automatically flatten nested metric dictionaries
     for key, value in data.items():
@@ -2963,7 +3017,7 @@ if __name__ == "__main__":
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
     APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = ("lepton") #("mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    CAMERAS_TO_RUN = ("lepton","mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Optionally restrict the run to ONE specific individual (or a few). Matched as a
     # case-insensitive substring of the npz filename, so "Ina" runs every Ina recording
