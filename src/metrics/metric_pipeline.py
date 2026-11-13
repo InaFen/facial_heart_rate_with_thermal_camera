@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import numpy as np
+import numpy.typing as npt
+
 import matplotlib
 
 # Use the non-interactive "Agg" backend: this module only saves figures to disk
@@ -353,6 +355,257 @@ def detect_ground_truth_peaks(
         f"gt_peak_method must be 'find_peaks' or 'staple', got {method!r}."
     )
 
+def compute_distance_based_f1_score(
+    pred_peaks: npt.NDArray[np.int64],
+    pred_fs: float,
+    gt_peaks: npt.NDArray[np.int64],
+    gt_fs: float,
+    pred_peak_times,
+    gt_peak_times
+) -> dict:
+    """Calculate F1 score using interval-based peak matching.
+
+    For each ground-truth ECG peak, find all predicted peaks that occur
+    after or at the current ECG peak and before the next ECG peak.
+
+    The first predicted peak in this interval is a true positive (TP).
+    All additional predicted peaks in this interval are false positives (FP).
+    If no predicted peak exists in the interval, the ECG peak is a
+    false negative (FN).
+
+    PAT is calculated as the time difference between the first predicted
+    peak and its corresponding ground-truth ECG peak.
+
+    Returns:
+        tp, fp, fn, precision, recall, f1,
+        mean_pat, std_pat (in milliseconds),
+        pat_values (in milliseconds),
+        pred_matched, gt_matched.
+    """
+
+    # Initialize matching masks.
+    # True means the peak is matched (TP).
+    pred_matched = np.zeros(len(pred_peaks), dtype=bool)
+    gt_matched = np.zeros(len(gt_peaks), dtype=bool)
+
+    # Store pulse arrival times (PAT) in milliseconds.
+    pat_values = []
+
+    # Iterate over every ground-truth ECG peak.
+    for i, current_gt_time in enumerate(gt_peak_times):
+
+        # Define the end of the current ECG interval.
+        # The interval ends immediately before the next ECG peak.
+        if i < len(gt_peak_times) - 1:
+            next_gt_time = gt_peak_times[i + 1]
+        else:
+            # The final interval ends at the end of the predicted signal.
+            next_gt_time = len(pred_peak_times) * 0 + (
+                len(pred_peaks) / pred_fs
+            )
+
+        # Find predicted peaks within the current ECG interval.
+        interval_mask = (
+            (pred_peak_times >= current_gt_time) &
+            (pred_peak_times < next_gt_time)
+        )
+
+        # Get the indices of all predicted peaks in this interval.
+        interval_indices = np.flatnonzero(interval_mask)
+
+        # Check whether at least one predicted peak exists.
+        if len(interval_indices) > 0:
+
+            # The first predicted peak is the true positive.
+            first_pred_idx = interval_indices[0]
+
+            pred_matched[first_pred_idx] = True
+            gt_matched[i] = True
+
+            # Calculate PAT in milliseconds.
+            pat_ms = (
+                pred_peak_times[first_pred_idx] - current_gt_time
+            ) * 1000.0
+
+            pat_values.append(pat_ms)
+
+            # All remaining predicted peaks in this interval
+            # remain unmatched and are therefore false positives.
+
+        # If no predicted peak exists, the GT peak remains unmatched
+        # and is therefore a false negative.
+
+    # Calculate TP, FP and FN.
+    tp = int(np.count_nonzero(pred_matched))
+    fp = int(len(pred_peaks) - tp)
+    fn = int(len(gt_peaks) - tp)
+
+    # Calculate precision.
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+
+    # Calculate recall.
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+
+    # Calculate F1 score.
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if (precision + recall) > 0 else 0.0
+    )
+
+    # Calculate mean and standard deviation of PAT.
+    mean_pat = float(np.mean(pat_values)) if pat_values else 0.0
+    std_pat = float(np.std(pat_values)) if pat_values else 0.0
+
+    return {
+        "tp_distance_based": tp,
+        "fp_distance_based": fp,
+        "fn_distance_based": fn,
+        "precision_distance_based": precision,
+        "recall_distance_based": recall,
+        "f1_distance_based": f1,
+        "mean_pat_distance_based": mean_pat,
+        "std_pat_distance_based": std_pat,
+        "pat_values_distance_based": np.asarray(pat_values),
+        "pred_matched_distance_based": pred_matched,
+        "gt_matched_distance_based": gt_matched,
+    }
+
+def plot_distance_based_peak_matching(
+    pred_signal: npt.NDArray[np.float64],
+    pred_fs: float,
+    pred_peaks: npt.NDArray[np.int64],
+    pred_matched: npt.NDArray[np.bool_],
+    gt_signal: npt.NDArray[np.float64],
+    gt_fs: float,
+    gt_peaks: npt.NDArray[np.int64],
+    gt_matched: npt.NDArray[np.bool_],
+    title: str,
+    f1_metrics: dict,
+    save_path: Optional[str] = None,
+):
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    # Convert sample indices to seconds
+    t_pred = np.arange(len(pred_signal)) / pred_fs
+    t_gt = np.arange(len(gt_signal)) / gt_fs
+
+    pred_peak_times = pred_peaks / pred_fs
+    gt_peak_times = gt_peaks / gt_fs
+
+    fig, axes = plt.subplots(
+        2, 1,
+        figsize=(15, 8),
+        sharex=True,
+    )
+
+    # Plot ECG and PPG signals
+    axes[0].plot(t_gt, gt_signal, color="darkgrey", label="ECG")
+    axes[1].plot(t_pred, pred_signal, color="darkgrey", label="PPG")
+
+    # Plot predicted peaks: TP in green, FP in red
+    axes[1].scatter(
+        pred_peak_times[pred_matched],
+        pred_signal[pred_peaks[pred_matched]],
+        color="green",
+        label="TP",
+        zorder=5,
+    )
+    axes[1].scatter(
+        pred_peak_times[~pred_matched],
+        pred_signal[pred_peaks[~pred_matched]],
+        color="darkred",
+        label="FP",
+        zorder=5,
+    )
+
+    # Plot ground-truth peaks: matched in green, FN in red
+    axes[0].scatter(
+        gt_peak_times[gt_matched],
+        gt_signal[gt_peaks[gt_matched]],
+        color="green",
+        label="TP",
+        zorder=5,
+    )
+    axes[0].scatter(
+        gt_peak_times[~gt_matched],
+        gt_signal[gt_peaks[~gt_matched]],
+        color="red",
+        label="FN",
+        zorder=5,
+    )
+
+    # Shade only the time between each GT peak and its TP
+    interval_colors = ["lightblue", "moccasin", "thistle"]
+    color_idx = 0
+
+    for gt_idx, gt_time in enumerate(gt_peak_times):
+        # Skip ground-truth peaks without a true positive
+        if not gt_matched[gt_idx]:
+            continue
+
+        next_gt_time = (
+            gt_peak_times[gt_idx + 1]
+            if gt_idx < len(gt_peak_times) - 1
+            else min(len(pred_signal) / pred_fs, len(gt_signal) / gt_fs)
+        )
+
+        # Find predicted peaks in the current GT interval
+        interval_mask = (
+            (pred_peak_times >= gt_time)
+            & (pred_peak_times < next_gt_time)
+        )
+        interval_indices = np.flatnonzero(interval_mask)
+
+        if len(interval_indices) == 0:
+            continue
+
+        # The earliest predicted peak is the TP
+        tp_idx = interval_indices[0]
+        tp_time = pred_peak_times[tp_idx]
+
+        color = interval_colors[color_idx % len(interval_colors)]
+        color_idx += 1
+
+        # Shade only from the GT peak to the TP
+        axes[0].axvspan(
+            gt_time, tp_time,
+            color=color,
+            alpha=0.25,
+            zorder=0,
+        )
+        axes[1].axvspan(
+            gt_time, tp_time,
+            color=color,
+            alpha=0.25,
+            zorder=0,
+        )
+
+    # Labels and formatting
+    axes[0].set_ylabel("ECG amplitude")
+    axes[1].set_ylabel("PPG amplitude")
+    axes[1].set_xlabel("Time (s)")
+
+    axes[0].set_title(
+        f"{title}\n"
+        f"Precision: {f1_metrics['precision_distance_based']:.3f} | "
+        f"Recall: {f1_metrics['recall_distance_based']:.3f} | "
+        f"F1: {f1_metrics['f1_distance_based']:.3f} | "
+        f"Mean PAT: {f1_metrics['mean_pat_distance_based']:.2f} ms | "
+        f"Std PAT: {f1_metrics['std_pat_distance_based']:.2f} ms"
+    )
+
+    for ax in axes:
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper right")
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    plt.show()
+    plt.close(fig)
 
 def instantaneous_hr_from_peak_times(peak_times: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Compute instantaneous HR (bpm) and timestamps from peak times.
@@ -1845,6 +2098,26 @@ def evaluate_instantaneous_hr_against_ground_truth(
         f"predicted: {pred_peaks.size}, ground-truth: {gt_peaks.size}"
     )
 
+    # F1 score of distances
+    distance_based_f1_metrics = compute_distance_based_f1_score(pred_peaks=pred_peaks, pred_fs=predicted_fs_val,
+                                    gt_peaks=gt_peaks, gt_fs=gt_fs_val, pred_peak_times= pred_peak_times, gt_peak_times= gt_peak_times)
+
+    peak_matching_plot_path = output_folder / "a_distance_based_peak_matching.png"
+
+    plot_distance_based_peak_matching(
+        pred_signal=pred_rs,
+        pred_fs=predicted_fs_val,
+        pred_peaks=pred_peaks,
+        pred_matched=distance_based_f1_metrics["pred_matched_distance_based"],
+        gt_signal=gt_segment,
+        gt_fs=predicted_fs_val,
+        gt_peaks=gt_peaks,
+        gt_matched=distance_based_f1_metrics["gt_matched_distance_based"],
+        title="Distance-based peak matching",
+        f1_metrics=distance_based_f1_metrics,
+        save_path=peak_matching_plot_path
+    )
+
     # Instantaneous HR
     pred_ihr, pred_ihr_times = instantaneous_hr_from_peak_times(pred_peak_times)
     gt_ihr, gt_ihr_times = instantaneous_hr_from_peak_times(gt_peak_times)
@@ -2712,13 +2985,13 @@ if __name__ == "__main__":
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
     APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = ("mwir") #("mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    CAMERAS_TO_RUN = ("lepton") #("mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Optionally restrict the run to ONE specific individual (or a few). Matched as a
     # case-insensitive substring of the npz filename, so "Ina" runs every Ina recording
     # across cameras while "Ina_20_4_3" targets a single recording. Accepts a string, a
     # tuple of strings, or None for everyone. Applies to both RUN_MODEs.
-    INDIVIDUALS_TO_RUN = "Ina"  # e.g. "Ina" or ("Ina", "Julian") or "Ina_20_4_3"
+    INDIVIDUALS_TO_RUN = "Julian"  # e.g. "Ina" or ("Ina", "Julian") or "Ina_20_4_3"
 
     # Shared evaluation parameters
     HARD_CODED_PATTERN = DEFAULT_PATTERN
