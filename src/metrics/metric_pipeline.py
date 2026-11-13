@@ -157,8 +157,7 @@ from pathlib import Path
 
 
 def _extract_metadata_from_metrics_path(metrics_json_path):
-    path = Path(metrics_json_path)
-    parts = path.parts
+    parts = Path(metrics_json_path).parts
 
     metadata = {
         "approach": "",
@@ -169,33 +168,62 @@ def _extract_metadata_from_metrics_path(metrics_json_path):
     }
 
     try:
-        # Extract approach and camera from the directory structure
         results_idx = parts.index("results")
-        metadata["approach"] = parts[results_idx + 1]
-        metadata["camera"] = parts[results_idx + 2]
 
-        # Extract participant, run number and ROI from the result folder
-        folder_name = path.parent.name
+        metadata["approach"] = parts[results_idx - 1]
+        metadata["camera"] = parts[results_idx + 1]
 
-        match = re.match(
-            r"(?P<participant>[A-Za-z]+)(?P<run_number>\d+)_interpolated_(?P<roi>[^_]+)",
+        folder_name = Path(metrics_json_path).parent.name
+
+        # Extract participant and run number.
+        # Supports names such as:
+        # Julian4_interpolated_...
+        # Julian_31_03_4_Ascii_thermal_data_...
+        # Julian1_thermal_data_...
+        participant_match = re.match(
+            r"^(?P<participant>[A-Za-z]+)",
             folder_name,
         )
 
-        if match:
-            metadata["participant"] = match.group("participant")
-            run_number = int(match.group("run_number"))
-            metadata["roi"] = match.group("roi")
+        if participant_match:
+            metadata["participant"] = participant_match.group("participant")
 
-            if run_number in (1, 2):
-                metadata["run"] = "before sport"
-            elif run_number in (3, 4):
-                metadata["run"] = "after sport"
+        # Extract run number from the folder name.
+        # Prefer the number immediately after the participant,
+        # or the final run number in the date-based MWIR naming.
+        run_match = re.match(
+            r"^[A-Za-z]+(?P<run>\d+)(?:_|_interpolated)",
+            folder_name,
+        )
+
+        if run_match:
+            run_number = int(run_match.group("run"))
+        else:
+            mwir_match = re.match(
+                r"^[A-Za-z]+_\d+_\d+_(?P<run>\d+)_",
+                folder_name,
+            )
+            run_number = int(mwir_match.group("run")) if mwir_match else None
+
+        if run_number in (1, 2):
+            metadata["run"] = "before sport"
+        elif run_number in (3, 4):
+            metadata["run"] = "after sport"
+
+        # Extract ROI after the relevant marker.
+        roi_match = re.search(
+            r"(?:interpolated_|frames_)(.+?)_\d{2}_\d{2}-\d{2}_\d{2}s$",
+            folder_name,
+        )
+
+        if roi_match:
+            metadata["roi"] = roi_match.group(1)
 
     except (ValueError, IndexError):
         pass
 
     return metadata
+
 
 def _relaxed_find_peaks_settings_for_path(
     source_path: str | Path | None,
