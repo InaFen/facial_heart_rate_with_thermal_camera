@@ -1456,6 +1456,15 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "ba_stats_disregard_halved_loa_low",
     "ba_stats_disregard_halved_loa_high",
     "ba_stats_disregard_halved_sd_diff",
+    #f1 
+    "tp_distance_based",
+    "fp_distance_based",
+    "fn_distance_based",
+    "precision_distance_based",
+    "recall_distance_based",
+    "f1_distance_based",
+    "mean_pat_distance_based",
+    "std_pat_distance_based",
 ]
 
 
@@ -1598,67 +1607,28 @@ def _flatten_metrics_for_csv(
     plots_folder: Optional[str | Path],
     json_path: Optional[str | Path],
 ) -> Dict[str, object]:
-    """Flatten the JSON ``output_data`` (plus plot/JSON locations) into one CSV row.
 
-    Nested metric dictionaries are expanded into ``<prefix>_<key>`` columns so the
-    aggregate CSV is directly analysable. Missing nested dicts simply produce no
-    keys (the CSV writer fills them with the blank restval).
-    """
     data = output_data if isinstance(output_data, dict) else {}
-    row: Dict[str, object] = {
+
+    row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "input_file": data.get("input_file", ""),
         "plots_folder": str(plots_folder) if plots_folder is not None else "",
         "metrics_json_path": str(json_path) if json_path is not None else "",
-        "tolerance_ms": data.get("tolerance_ms"),
-        "ground_truth_fs": data.get("ground_truth_fs"),
-        "predicted_fs": data.get("predicted_fs"),
-        "gt_hr_mean": data.get("gt_hr_mean"),
-        "signal_hr_mean": data.get("signal_hr_mean"),
-        "signal_hr_mean_diff_to_gt_mean": data.get("signal_hr_mean_diff_to_gt_mean"),
-        "signal_hr_mean_abs_diff_to_gt_mean": data.get("signal_hr_mean_abs_diff_to_gt_mean"),
-        "original_pipeline_bpm_estimate": data.get("original_pipeline_bpm_estimate"),
-        "original_pipeline_bpm_estimate_diff_to_gt_mean": data.get(
-            "original_pipeline_bpm_estimate_diff_to_gt_mean"
-        ),
-        "original_pipeline_bpm_estimate_abs_diff_to_gt_mean": data.get(
-            "original_pipeline_bpm_estimate_abs_diff_to_gt_mean"
-        ),
-        "num_gt_peaks": data.get("num_gt_peaks"),
-        "num_pred_peaks": data.get("num_pred_peaks"),
-        "hr_agreement_max_bpm_diff": data.get("hr_agreement_max_bpm_diff"),
-        "hr_agreement_seconds": data.get("hr_agreement_seconds"),
-        "hr_comparable_seconds": data.get("hr_comparable_seconds"),
-        "hr_agreement_fraction": data.get("hr_agreement_fraction"),
-        "num_matched_closest": data.get("num_matched_closest"),
-        "num_matched_disregard": data.get("num_matched_disregard"),
-        "signal_hr_mean_halved": data.get("signal_hr_mean_halved"),
-        "signal_hr_mean_halved_diff_to_gt_mean": data.get("signal_hr_mean_halved_diff_to_gt_mean"),
-        "signal_hr_mean_halved_abs_diff_to_gt_mean": data.get(
-            "signal_hr_mean_halved_abs_diff_to_gt_mean"
-        ),
-        "num_pred_peaks_halved": data.get("num_pred_peaks_halved"),
-        "hr_agreement_seconds_halved": data.get("hr_agreement_seconds_halved"),
-        "hr_comparable_seconds_halved": data.get("hr_comparable_seconds_halved"),
-        "hr_agreement_fraction_halved": data.get("hr_agreement_fraction_halved"),
-        "num_matched_closest_halved": data.get("num_matched_closest_halved"),
-        "num_matched_disregard_halved": data.get("num_matched_disregard_halved"),
     }
-    for prefix in (
-        "metrics_closest",
-        "ba_stats_closest",
-        "metrics_disregard",
-        "ba_stats_disregard",
-        "metrics_closest_halved",
-        "ba_stats_closest_halved",
-        "metrics_disregard_halved",
-        "ba_stats_disregard_halved",
-    ):
-        sub = data.get(prefix)
-        if isinstance(sub, dict):
-            for key, value in sub.items():
-                row[f"{prefix}_{key}"] = value
-    return row
+
+    # Automatically flatten nested metric dictionaries
+    for key, value in data.items():
+        if isinstance(value, dict):
+            for subkey, subvalue in value.items():
+                row[f"{key}_{subkey}"] = subvalue
+        else:
+            row[key] = value
+
+    return {
+        field: row.get(field, "")
+        for field in METRICS_SUMMARY_CSV_FIELDNAMES
+    }
 
 
 def append_metrics_summary_row(
@@ -2665,6 +2635,14 @@ def evaluate_instantaneous_hr_against_ground_truth(
         "ba_stats_closest_halved": (
             _serialize_for_json(halved["ba_closest"]) if halved is not None else None
         ),
+        "tp_distance_based": _serialize_for_json(distance_based_f1_metrics["tp_distance_based"]),
+        "fp_distance_based": _serialize_for_json(distance_based_f1_metrics["fp_distance_based"]),
+        "fn_distance_based": _serialize_for_json(distance_based_f1_metrics["fn_distance_based"]),
+        "precision_distance_based": _serialize_for_json(distance_based_f1_metrics["precision_distance_based"]),
+        "recall_distance_based": _serialize_for_json(distance_based_f1_metrics["recall_distance_based"]),
+        "f1_distance_based": _serialize_for_json(distance_based_f1_metrics["f1_distance_based"]),
+        "mean_pat_distance_based": _serialize_for_json(distance_based_f1_metrics["mean_pat_distance_based"]),
+        "std_pat_distance_based": _serialize_for_json(distance_based_f1_metrics["std_pat_distance_based"]),
     }
 
     output_json_path = output_folder / "00_metrics.json"
