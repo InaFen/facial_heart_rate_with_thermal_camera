@@ -462,6 +462,7 @@ def compute_distance_based_f1_score(
 
     # Store pulse arrival times (PAT) in milliseconds.
     pat_values = []
+    pat_gt_timestamps = []
 
     # Iterate over every ground-truth ECG peak.
     for i, current_gt_time in enumerate(gt_peak_times):
@@ -500,6 +501,7 @@ def compute_distance_based_f1_score(
             ) * 1000.0
 
             pat_values.append(pat_ms)
+            pat_gt_timestamps.append(current_gt_time)
 
             # All remaining predicted peaks in this interval
             # remain unmatched and are therefore false positives.
@@ -540,6 +542,7 @@ def compute_distance_based_f1_score(
         "pat_values_distance_based": np.asarray(pat_values),
         "pred_matched_distance_based": pred_matched,
         "gt_matched_distance_based": gt_matched,
+        "pat_values_timestamps": pat_gt_timestamps
     }
 
 def plot_distance_based_peak_matching(
@@ -679,6 +682,95 @@ def plot_distance_based_peak_matching(
     plt.show()
     plt.close(fig)
 
+def plot_pat_over_time(
+    pat_values,
+    title,
+    plot_path,
+    pat_times,
+    gt_ihr,
+    gt_ihr_times
+):
+    """
+    Plot PAT and ground-truth instantaneous heart rate (IHR) over time.
+
+    Parameters
+    ----------
+    pat_values : array-like
+        PAT values in milliseconds.
+    title : str
+        Plot title.
+    plot_path : str
+        Path where the figure will be saved.
+    pat_times : array-like
+        Timestamps corresponding to PAT values (seconds).
+    gt_ihr : array-like
+        Ground-truth instantaneous heart rate values (BPM).
+    gt_ihr_times : array-like
+        Timestamps corresponding to GT IHR values (seconds).
+    """
+
+    # Convert inputs to numpy arrays
+    pat_values = np.asarray(pat_values)
+    pat_times = np.asarray(pat_times)
+    gt_ihr = np.asarray(gt_ihr)
+    gt_ihr_times = np.asarray(gt_ihr_times)
+
+    # Create figure and primary axis
+    fig, ax1 = plt.subplots(figsize=(14, 6))
+
+    # Plot PAT on the left y-axis
+    ax1.plot(
+        pat_times,
+        pat_values,
+            color="tab:red",
+            marker = 'o',
+        linestyle="-",
+        label="PAT",
+        
+    )
+
+    ax1.set_xlabel("Time (s)")
+    ax1.set_ylabel("PAT (ms)")
+    ax1.grid(True, alpha=0.3)
+
+    # Create secondary y-axis for instantaneous HR
+    ax2 = ax1.twinx()
+
+    ax2.plot(
+        gt_ihr_times,
+        gt_ihr,
+    color="tab:blue",
+                marker = 'o',
+        linestyle="-",
+        label="Ground Truth IHR",
+    )
+
+    ax2.set_ylabel("Ground Truth IHR (BPM)")
+
+    # Add title
+    ax1.set_title("PAT length over time, compared to ECG heart rate for: " + str(title))
+
+    # Combine legends from both axes
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+
+    ax1.legend(
+        lines1 + lines2,
+        labels1 + labels2,
+        loc="best"
+    )
+
+    # Improve layout
+    fig.tight_layout()
+
+    # Save figure
+    if plot_path is not None:
+        fig.savefig(plot_path, dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+    return fig, ax1, ax2
+    
 def instantaneous_hr_from_peak_times(peak_times: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Compute instantaneous HR (bpm) and timestamps from peak times.
 
@@ -908,7 +1000,7 @@ def _save_hr_agreement_plot(
     # 3) Compared instantaneous heart rates
     _shade_agreement_background(axes[2], time_grid, agreement_mask)
     axes[2].grid(True, which='major', color='0.85', linewidth=0.8)
-    axes[2].plot(gt_ihr_times, gt_ihr, color="C0", alpha=0.8, marker="o", label="Ground truth HR")
+    axes[2].plot(gt_ihr_times, gt_ihr, color="C0", alpha=0.8, marker="o", label="Ground truth instanteous HR")
     axes[2].plot(pred_ihr_times, pred_ihr, color=pred_color, alpha=0.8, marker="o", label=pred_ihr_label)
     #axes[2].set_title(f"Instantaneous HR (green where |Pred - GT| <= {thr:.0f} bpm)")
     axes[2].set_xlabel("Time (s)")
@@ -2154,7 +2246,9 @@ def evaluate_prediction_against_ground_truth(
     distance_based_f1_metrics = compute_distance_based_f1_score(pred_peaks=pred_peaks, pred_fs=predicted_fs_val,
                                     gt_peaks=gt_peaks, gt_fs=gt_fs_val, pred_peak_times= pred_peak_times, gt_peak_times= gt_peak_times)
 
+    pat_over_time_plot_path = output_folder / "b_pat_over_time.png"
     peak_matching_plot_path = output_folder / "a_distance_based_peak_matching.png"
+    
 
     plot_distance_based_peak_matching(
         pred_signal=pred_rs,
@@ -2173,6 +2267,13 @@ def evaluate_prediction_against_ground_truth(
     # Instantaneous HR
     pred_ihr, pred_ihr_times = instantaneous_hr_from_peak_times(pred_peak_times)
     gt_ihr, gt_ihr_times = instantaneous_hr_from_peak_times(gt_peak_times)
+
+    plot_pat_over_time(pat_values= distance_based_f1_metrics["pat_values_distance_based"], 
+                           title = results, 
+                           plot_path = pat_over_time_plot_path, 
+                           pat_times = distance_based_f1_metrics["pat_values_timestamps"],
+                           gt_ihr = gt_ihr,
+                           gt_ihr_times = gt_ihr_times)
 
     # Mean HR-----------------------
     gt_hr_mean = mean_hr_from_peak_times(gt_peak_times)
@@ -3045,7 +3146,7 @@ if __name__ == "__main__":
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
     APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = ("lepton","mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    CAMERAS_TO_RUN = ("lepton")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Optionally restrict the run to ONE specific individual (or a few). Matched as a
     # case-insensitive substring of the npz filename, so "Ina" runs every Ina recording
