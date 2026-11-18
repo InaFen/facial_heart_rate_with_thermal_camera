@@ -5,6 +5,7 @@ import tempfile
 import zlib
 from pathlib import Path
 import matplotlib.pyplot as plt
+import json
 
 
 from metric_pipeline import evaluate_prediction_against_ground_truth, append_metrics_summary_row
@@ -35,7 +36,7 @@ def plot_original_vs_shuffled_signal(
     original_signal: np.ndarray,
     shuffled_signal: np.ndarray,
     output_path: str,
-    fs: float = 1.0,
+    fs: float = 8.76,
 ):
     """
     Plot the original and time-shuffled signals against time.
@@ -71,6 +72,8 @@ def plot_original_vs_shuffled_signal(
 
     fig.suptitle("Original vs. time-shuffled signal")
     fig.tight_layout()
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -131,22 +134,17 @@ def evaluate_time_shuffled_signal(
     # Run the original evaluation pipeline
     output_data = evaluate_prediction_against_ground_truth(
         results=str(shuffled_npz_path),
-        output_root=Path("saved_results/new_approach/random_experiment"),
+        output_root=shuffled_folder/ "metric_results",
         tolerance_ms=0,
     )
 
-    # Add information about the random baseline
-    #output_data["evaluation_type"] = "time_shuffled"
-    #output_data["random_seed"] = random_seed
-    #output_data["original_file"] = os.path.basename(results)
-
-    # Save results to CSV
-    append_metrics_summary_row(
-        csv_output_path=output_csv,
-        output_data=output_data,
-        plots_folder="saved_results/new_approach/random_experiment",
-        json_path=None
-    )
+    plot_path = shuffled_folder/ "metric_results" / Path(str(shuffled_npz_path)).stem / ( "original_vs_shuffled.png"
+                )
+            
+    plot_original_vs_shuffled_signal(original_signal=predicted_signal,
+                                            shuffled_signal=shuffled_data["predicted_signal"],
+                                            output_path=plot_path,
+                                            fs=output_data["predicted_fs"])
 
     return output_data
 
