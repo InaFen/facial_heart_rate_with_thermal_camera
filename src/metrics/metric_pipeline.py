@@ -2897,6 +2897,7 @@ def evaluate_prediction_against_ground_truth(
         "ground_truth_fs": gt_fs_val,
         "predicted_resampled_fs": gt_fs_val,
         "tolerance_ms": tolerance_ms,
+        "predicted_fs": predicted_fs_meta
     }
     out["output_folder"] = str(output_folder)
     out["metrics_json_path"] = str(output_json_path)
@@ -3176,7 +3177,7 @@ if __name__ == "__main__":
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
     APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = ("lepton")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    CAMERAS_TO_RUN = ("lepton","mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Optionally restrict the run to ONE specific individual (or a few). Matched as a
     # case-insensitive substring of the npz filename, so "Ina" runs every Ina recording
