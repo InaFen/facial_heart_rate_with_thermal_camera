@@ -136,6 +136,7 @@ def evaluate_time_shuffled_signal(
         results=str(shuffled_npz_path),
         output_root=shuffled_folder/ "metric_results",
         tolerance_ms=0,
+        csv_output_path=output_csv
     )
 
     plot_path = shuffled_folder/ "metric_results" / Path(str(shuffled_npz_path)).stem / ( "original_vs_shuffled.png"
