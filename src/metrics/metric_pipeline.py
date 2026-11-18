@@ -433,16 +433,22 @@ def compute_distance_based_f1_score(
     gt_peaks: npt.NDArray[np.int64],
     gt_fs: float,
     pred_peak_times,
-    gt_peak_times
+    gt_peak_times,
+    limit_pat_window: bool = True,
+    lower_pat_limit: float = 50.0,
+    higher_pat_limit: float = 350.0
 ) -> dict:
     """Calculate F1 score using interval-based peak matching.
 
     For each ground-truth ECG peak, find all predicted peaks that occur
-    after or at the current ECG peak and before the next ECG peak.
+    within the current ECG interval.
 
-    The first predicted peak in this interval is a true positive (TP).
-    All additional predicted peaks in this interval are false positives (FP).
-    If no predicted peak exists in the interval, the ECG peak is a
+    If limit_pat_window is True, only predicted peaks within the
+    specified PAT window are eligible for TP matching.
+
+    The first eligible predicted peak is a true positive (TP).
+    All additional predicted peaks remain false positives (FP).
+    If no eligible predicted peak exists, the ECG peak is a
     false negative (FN).
 
     PAT is calculated as the time difference between the first predicted
@@ -454,6 +460,16 @@ def compute_distance_based_f1_score(
         pat_values (in milliseconds),
         pred_matched, gt_matched.
     """
+
+    # Validate PAT window limits.
+    if limit_pat_window:
+        if lower_pat_limit < 0:
+            raise ValueError("lower_pat_limit must be >= 0.")
+
+        if higher_pat_limit < lower_pat_limit:
+            raise ValueError(
+                "higher_pat_limit must be >= lower_pat_limit."
+            )
 
     # Initialize matching masks.
     # True means the peak is matched (TP).
@@ -477,10 +493,21 @@ def compute_distance_based_f1_score(
                 len(pred_peaks) / pred_fs
             )
 
-        # Find predicted peaks within the current ECG interval.
+        # Define the valid PAT interval.
+        if limit_pat_window:
+            lower_time = current_gt_time + lower_pat_limit / 1000.0 # as time windows are in ms, not in seconds
+            higher_time = current_gt_time + higher_pat_limit / 1000.0
+        else:
+            lower_time = current_gt_time
+            higher_time = next_gt_time
+
+        # Restrict the PAT interval to the current ECG interval.
+        higher_time = min(higher_time, next_gt_time)
+
+        # Find predicted peaks within the valid interval.
         interval_mask = (
-            (pred_peak_times >= current_gt_time) &
-            (pred_peak_times < next_gt_time)
+            (pred_peak_times >= lower_time) &
+            (pred_peak_times < higher_time)
         )
 
         # Get the indices of all predicted peaks in this interval.
@@ -544,6 +571,7 @@ def compute_distance_based_f1_score(
         "gt_matched_distance_based": gt_matched,
         "pat_values_timestamps": pat_gt_timestamps
     }
+
 
 def plot_distance_based_peak_matching(
     pred_signal: npt.NDArray[np.float64],
@@ -2084,11 +2112,12 @@ def evaluate_predictions(
 def evaluate_prediction_against_ground_truth(
     results: str | Path,
     flip_ground_truth: bool = False,
-    tolerance_ms: float = 150.0,
+    tolerance_ms: float = 0.0,
     plot_steps: bool = True,
     plot_bland_altman: bool = True,
     csv_output_path: str | Path | None = None,
     gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
+    output_root = None
 ) -> Dict[str, object]:
     """Evaluate prediction using a single `.npy`/`.npz` file as input.
 
@@ -2186,7 +2215,8 @@ def evaluate_prediction_against_ground_truth(
     print(f"[metric_pipeline] Sampling rates - predicted: {predicted_fs_val} Hz, ground-truth: {gt_fs_val} Hz")
 
     # Create output folder early so we can save pre-resample plots
-    output_root = signal_path.parent / "metric_results"
+    if output_root is None:
+        output_root = signal_path.parent / "metric_results"
     output_folder = output_root / signal_path.stem
     os.makedirs(output_folder, exist_ok=True)
     print(f"[metric_pipeline] Created output folder: {output_folder}")
