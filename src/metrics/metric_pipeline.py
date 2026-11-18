@@ -1989,7 +1989,7 @@ def evaluate_predictions(
 
 
 
-def evaluate_instantaneous_hr_against_ground_truth(
+def evaluate_prediction_against_ground_truth(
     results: str | Path,
     flip_ground_truth: bool = False,
     tolerance_ms: float = 150.0,
@@ -1998,7 +1998,7 @@ def evaluate_instantaneous_hr_against_ground_truth(
     csv_output_path: str | Path | None = None,
     gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
 ) -> Dict[str, object]:
-    """Evaluate instantaneous HR using a single `.npy`/`.npz` file as input.
+    """Evaluate prediction using a single `.npy`/`.npz` file as input.
 
     If ``csv_output_path`` is given, a flattened one-line summary of the metrics
     (the same data written to ``00_metrics.json``) plus the path to this run's plot
@@ -2799,7 +2799,7 @@ def batch_evaluate_folder(
     gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
     individuals: tuple[str, ...] | str | None = None,
 ) -> Dict[str, object]:
-    """Run evaluate_instantaneous_hr_against_ground_truth for all archive files in `folder`.
+    """Run evaluate_prediction_against_ground_truth for all archive files in `folder`.
 
     ``existing_entry_mode`` controls files that already have a row in the aggregate
     CSV: "skip" only processes files not yet in the CSV, while "overwrite" recomputes
@@ -2861,7 +2861,7 @@ def batch_evaluate_folder(
     for f in files:
         print(f"[metric_pipeline] Batch: processing file: {f}")
         try:
-            out = evaluate_instantaneous_hr_against_ground_truth(
+            out = evaluate_prediction_against_ground_truth(
                 results=f,
                 flip_ground_truth=flip_ground_truth,
                 tolerance_ms=tolerance_ms,
@@ -2999,7 +2999,7 @@ def batch_evaluate_folder_structure(
     for f in files_to_process:
         print(f"[metric_pipeline] Structure batch: processing file: {f}")
         try:
-            out = evaluate_instantaneous_hr_against_ground_truth(
+            out = evaluate_prediction_against_ground_truth(
                 results=f,
                 flip_ground_truth=flip_ground_truth,
                 tolerance_ms=tolerance_ms,
@@ -3099,7 +3099,7 @@ if __name__ == "__main__":
                     individuals=INDIVIDUALS_TO_RUN,
                 )
             elif HARD_CODED_PATH.is_file():
-                evaluate_instantaneous_hr_against_ground_truth(
+                evaluate_prediction_against_ground_truth(
                     results=str(HARD_CODED_PATH),
                     flip_ground_truth=HARD_CODED_FLIP,
                     tolerance_ms=HARD_CODED_TOLERANCE_MS,
