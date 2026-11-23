@@ -1146,6 +1146,7 @@ def _to_json_string(value: object) -> str:
 
 
 
+
 def resample_signal(sig: np.ndarray, fs_from: float, fs_to: float) -> np.ndarray:
     """Resample 1D signal from fs_from to fs_to using linear interpolation.
 
@@ -2153,100 +2154,6 @@ def evaluate_prediction_against_ground_truth(
     return out
 
 
-def batch_evaluate_folder(
-    folder: str | Path,
-    pattern: str = "*.npz",
-    flip_ground_truth: bool = False,
-    tolerance_ms: float = 150.0,
-    plot_steps: bool = True,
-    plot_bland_altman: bool = True,
-    csv_output_path: str | Path | None = None,
-    overwrite_csv: bool = False,
-    existing_entry_mode: str = "overwrite",
-    gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
-    individuals: tuple[str, ...] | str | None = None,
-) -> Dict[str, object]:
-    """Run evaluate_prediction_against_ground_truth for all archive files in `folder`.
-
-    ``existing_entry_mode`` controls files that already have a row in the aggregate
-    CSV: "skip" only processes files not yet in the CSV, while "overwrite" recomputes
-    them and replaces their existing row. Set ``overwrite_csv=True`` to wipe the whole
-    CSV before starting (then every file is processed fresh).
-
-    ``individuals`` optionally restricts the run to one (or more) specific individuals,
-    matched as a case-insensitive substring of the npz filename (e.g. "Ina" for every
-    Ina recording, or "Ina_20_4_3" for a single one); ``None`` evaluates everyone.
-
-    For each found file, a subfolder named after the file stem is created (if not existing)
-    and figures are saved inside that folder (the called function already saves into
-    `signal_path.parent / signal_path.stem`). A single aggregate CSV (one row per npz,
-    same fields as each run's JSON plus the plot-folder path) is written to
-    ``csv_output_path`` (default: ``folder / 'all_npz_metrics.csv'``). Returns a dict
-    mapping file paths to the returned result dict or an error description.
-    """
-    folder = Path(folder)
-    if not folder.exists() or not folder.is_dir():
-        raise ValueError(f"Folder not found: {folder}")
-
-    if csv_output_path is None:
-        csv_output_path = folder / "all_npz_metrics.csv"
-    csv_output_path = Path(csv_output_path)
-    if overwrite_csv and csv_output_path.exists():
-        print(f"[metric_pipeline] Overwriting existing summary CSV: {csv_output_path}")
-        csv_output_path.unlink()
-
-    # Migrate any existing CSV to the current column schema up-front, so reading the
-    # already-present files and rewriting rows stay column-aligned (heals CSVs written
-    # before new summary columns were added).
-    _rewrite_csv_with_canonical_header(csv_output_path)
-
-    results: dict[str, object] = {}
-    files = sorted(folder.glob(pattern))
-    # Optional individual filter: keep only files whose name matches one of the
-    # requested individuals (case-insensitive substring of the npz filename).
-    individual_filter = _normalize_individual_filter(individuals)
-    if individual_filter is not None:
-        before = len(files)
-        files = [f for f in files if _matches_individual_filter(f, individual_filter)]
-        print(
-            f"[metric_pipeline] Batch: restricting to individual(s) {sorted(individual_filter)}: "
-            f"{len(files)} of {before} file(s) match."
-        )
-    # Skip or overwrite files that already have a row in the aggregate CSV.
-    files = _select_files_by_existing_entries(
-        files,
-        csv_output_path,
-        existing_entry_mode,
-        log_prefix="[metric_pipeline] Batch:",
-    )
-    if not files:
-        print(
-            f"[metric_pipeline] Batch: nothing to process; all files already present "
-            f"in CSV (existing_entry_mode='{existing_entry_mode}')."
-        )
-        return results
-    for f in files:
-        print(f"[metric_pipeline] Batch: processing file: {f}")
-        try:
-            out = evaluate_prediction_against_ground_truth(
-                results=f,
-                flip_ground_truth=flip_ground_truth,
-                tolerance_ms=tolerance_ms,
-                plot_steps=plot_steps,
-                plot_bland_altman=plot_bland_altman,
-                csv_output_path=csv_output_path,
-                gt_peak_method=gt_peak_method,
-            )
-            results[str(f)] = out
-            of = out.get("output_folder", "N/A")
-            matched = len(out.get("matched_ground_truth_ihr_disregard", []))
-            print(f"[metric_pipeline] Batch: finished {f}; output_folder={of}; matched_within_tolerance={matched}")
-        except Exception as exc:
-            results[str(f)] = {"error": str(exc)}
-            print(f"[metric_pipeline] Batch: error processing {f}: {exc}")
-
-    print(f"[metric_pipeline] Batch complete. Aggregate metrics CSV: {csv_output_path}")
-    return results
 
 
 def batch_evaluate_folder_structure(
@@ -2437,55 +2344,26 @@ if __name__ == "__main__":
     # Optional restriction of the pulse arrival time to a specific time window, pat limits in ms
     PAT_TIME_WINDOW_LIMITS = {"limit_pat_window": True, "lower_pat_limit": 50, "higher_pat_limit": 350}
 
-    if RUN_MODE == "structure":
         # Root that contains the approach subfolders (each with a `results` dir).
-        HARD_CODED_ROOT = Path("saved_results")
-        if HARD_CODED_ROOT.exists() and HARD_CODED_ROOT.is_dir():
-            batch_evaluate_folder_structure(
-                root=HARD_CODED_ROOT,
-                approaches=APPROACHES_TO_RUN,
-                cameras=CAMERAS_TO_RUN,
-                individuals=INDIVIDUALS_TO_RUN,
-                pattern=HARD_CODED_PATTERN,
-                flip_ground_truth=HARD_CODED_FLIP,
-                tolerance_ms=HARD_CODED_TOLERANCE_MS,
-                plot_steps=HARD_CODED_PLOT_STEPS,
-                plot_bland_altman=HARD_CODED_PLOT_BA,
-                existing_entry_mode=EXISTING_ENTRY_MODE,
-                gt_peak_method=GT_PEAK_METHOD,
-                pat_time_window_limits = PAT_TIME_WINDOW_LIMITS
-            )
-        else:
-            print(
-                f"Hard-coded root not found: {HARD_CODED_ROOT}. Update HARD_CODED_ROOT "
-                "to point at the folder containing nair_et_al/yang_et_al/new_approach."
-            )
+    HARD_CODED_ROOT = Path("saved_results")
+    if HARD_CODED_ROOT.exists() and HARD_CODED_ROOT.is_dir():
+        batch_evaluate_folder_structure(
+            root=HARD_CODED_ROOT,
+            approaches=APPROACHES_TO_RUN,
+            cameras=CAMERAS_TO_RUN,
+            individuals=INDIVIDUALS_TO_RUN,
+            pattern=HARD_CODED_PATTERN,
+            flip_ground_truth=HARD_CODED_FLIP,
+            tolerance_ms=HARD_CODED_TOLERANCE_MS,
+            plot_steps=HARD_CODED_PLOT_STEPS,
+            plot_bland_altman=HARD_CODED_PLOT_BA,
+            existing_entry_mode=EXISTING_ENTRY_MODE,
+            gt_peak_method=GT_PEAK_METHOD,
+            pat_time_window_limits = PAT_TIME_WINDOW_LIMITS
+        )
     else:
-        # Hard-coded parameters for single folder/file evaluation.
-        HARD_CODED_PATH = Path("saved_results/new_approach/results/lepton")
-
-        if HARD_CODED_PATH.exists():
-            if HARD_CODED_PATH.is_dir():
-                batch_evaluate_folder(
-                    folder=HARD_CODED_PATH,
-                    pattern=HARD_CODED_PATTERN,
-                    flip_ground_truth=HARD_CODED_FLIP,
-                    tolerance_ms=HARD_CODED_TOLERANCE_MS,
-                    plot_steps=HARD_CODED_PLOT_STEPS,
-                    plot_bland_altman=HARD_CODED_PLOT_BA,
-                    gt_peak_method=GT_PEAK_METHOD,
-                    individuals=INDIVIDUALS_TO_RUN,
-                    
-                )
-            elif HARD_CODED_PATH.is_file():
-                evaluate_prediction_against_ground_truth(
-                    results=str(HARD_CODED_PATH),
-                    flip_ground_truth=HARD_CODED_FLIP,
-                    tolerance_ms=HARD_CODED_TOLERANCE_MS,
-                    plot_steps=HARD_CODED_PLOT_STEPS,
-                    plot_bland_altman=HARD_CODED_PLOT_BA,
-                    csv_output_path=HARD_CODED_PATH.parent / "all_npz_metrics.csv",
-                    gt_peak_method=GT_PEAK_METHOD,
-                )
-        else:
-            print(f"Hard-coded path not found: {HARD_CODED_PATH}. Update the path in the script to point to your .npz folder or file.")
+        print(
+            f"Hard-coded root not found: {HARD_CODED_ROOT}. Update HARD_CODED_ROOT "
+            "to point at the folder containing nair_et_al/yang_et_al/new_approach."
+        )
+    
