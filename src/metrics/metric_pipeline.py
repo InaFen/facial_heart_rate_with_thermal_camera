@@ -154,7 +154,7 @@ APPROACH_ALIASES: dict[str, str] = {
     "nair_et_al": "nair_et_al",
 }
 
-import re
+
 from pathlib import Path
 
 
@@ -1141,65 +1141,6 @@ def _to_json_string(value: object) -> str:
         return obj
 
     return json.dumps(convert(value), ensure_ascii=False)
-
-
-def append_evaluation_row_to_csv(
-    csv_output_path: str,
-    path_signal: Optional[str],
-    path_ground_truth: str,
-    roi: Optional[str],
-    gt_hr_mean: float,
-    signal_hr_mean: float,
-    gt_ihr_times: np.ndarray,
-    gt_ihr: np.ndarray,
-    pred_ihr_times: np.ndarray,
-    pred_ihr: np.ndarray,
-    metrics_mean_hr: Dict[str, float],
-    metrics_peak_to_peak_disregard: Dict[str, float],
-    metrics_peak_to_peak_closest: Dict[str, float],
-) -> None:
-    """Append one evaluation result row to a CSV file."""
-    os.makedirs(os.path.dirname(csv_output_path) or ".", exist_ok=True)
-
-    fieldnames = [
-        "timestamp_utc",
-        "path_signal",
-        "path_ground_truth",
-        "roi",
-        "gt_hr_mean",
-        "signal_hr_mean",
-        "ground_truth_ihr_times",
-        "ground_truth_ihr",
-        "predicted_ihr_times",
-        "predicted_ihr",
-        "metrics_mean_hr",
-        "metrics_peak_to_peak_disregard",
-        "metrics_peak_to_peak_closest",
-    ]
-
-    row = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "path_signal": path_signal or "",
-        "path_ground_truth": path_ground_truth,
-        "roi": roi or "",
-        "gt_hr_mean": float(gt_hr_mean) if _is_finite_scalar(gt_hr_mean) else np.nan,
-        "signal_hr_mean": float(signal_hr_mean) if _is_finite_scalar(signal_hr_mean) else np.nan,
-        "ground_truth_ihr_times": _to_json_string(gt_ihr_times),
-        "ground_truth_ihr": _to_json_string(gt_ihr),
-        "predicted_ihr_times": _to_json_string(pred_ihr_times),
-        "predicted_ihr": _to_json_string(pred_ihr),
-        "metrics_mean_hr": _to_json_string(metrics_mean_hr),
-        "metrics_peak_to_peak_disregard": _to_json_string(metrics_peak_to_peak_disregard),
-        "metrics_peak_to_peak_closest": _to_json_string(metrics_peak_to_peak_closest),
-    }
-
-    write_header = not os.path.exists(csv_output_path) or os.path.getsize(csv_output_path) == 0
-    with open(csv_output_path, "a", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
-
 
 
 
