@@ -2018,7 +2018,10 @@ def evaluate_prediction_against_ground_truth(
         save_path=peak_matching_plot_path,
         limit_pat_window=limit_pat_window,
         lower_pat_limit=lower_pat_limit,
-        higher_pat_limit=higher_pat_limit
+        higher_pat_limit=higher_pat_limit,
+        pred_peak_times = pred_peak_times,
+        gt_peak_times = gt_peak_times,
+        time = t
     )
 
     # Instantaneous HR

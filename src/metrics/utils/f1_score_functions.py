@@ -1,16 +1,10 @@
 
 from typing import Tuple, Dict, Optional
-import csv
-import json
-import os
-from datetime import datetime, timezone
-from pathlib import Path
-import sys
 import numpy as np
 import numpy.typing as npt
 
-import matplotlib
 
+import matplotlib.pyplot as plt
 
 def compute_distance_based_f1_score(
     pred_peaks: npt.NDArray[np.int64],
@@ -170,20 +164,14 @@ def plot_distance_based_peak_matching(
     gt_matched: npt.NDArray[np.bool_],
     title: str,
     f1_metrics: dict,
+    pred_peak_times,
+    gt_peak_times,
+    time,
     save_path: Optional[str] = None,
     limit_pat_window: bool = False,
     lower_pat_limit: Optional[float] = None,
     higher_pat_limit: Optional[float] = None,
 ):
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    # Convert sample indices to seconds
-    t_pred = np.arange(len(pred_signal)) / pred_fs
-    t_gt = np.arange(len(gt_signal)) / gt_fs
-
-    pred_peak_times = pred_peaks / pred_fs
-    gt_peak_times = gt_peaks / gt_fs
 
     fig, axes = plt.subplots(
         2, 1,
@@ -192,8 +180,8 @@ def plot_distance_based_peak_matching(
     )
 
     # Plot ECG and PPG signals
-    axes[0].plot(t_gt, gt_signal, color="darkgrey", label="ECG")
-    axes[1].plot(t_pred, pred_signal, color="darkgrey", label="PPG")
+    axes[0].plot(time, gt_signal, color="darkgrey", label="ECG")
+    axes[1].plot(time, pred_signal, color="darkgrey", label="PPG")
 
     # Shade time windows
     if limit_pat_window:
@@ -215,8 +203,8 @@ def plot_distance_based_peak_matching(
                 ax.axvspan(
                     window_start,
                     window_end,
-                    color="grey",
-                    alpha=0.2,
+                    color="lightblue",
+                    alpha=0.25,
                     zorder=0,
                 )
 
