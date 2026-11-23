@@ -54,6 +54,7 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
         mean_hr_from_peak_times,
     )
 from helpers_metric_pipeline import save_single_plot
+from utils.f1_score_functions import compute_distance_based_f1_score, plot_distance_based_peak_matching
 
 # Global defaults (previously set inside __main__); make available to all functions
 PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # absolute floor for the predicted-signal peak prominence
@@ -427,288 +428,6 @@ def detect_ground_truth_peaks(
         f"gt_peak_method must be 'find_peaks' or 'staple', got {method!r}."
     )
 
-def compute_distance_based_f1_score(
-    pred_peaks: npt.NDArray[np.int64],
-    pred_fs: float,
-    gt_peaks: npt.NDArray[np.int64],
-    gt_fs: float,
-    pred_peak_times,
-    gt_peak_times,
-    limit_pat_window: bool = True,
-    lower_pat_limit: float = 50.0,
-    higher_pat_limit: float = 350.0
-) -> dict:
-    """Calculate F1 score using interval-based peak matching.
-
-    For each ground-truth ECG peak, find all predicted peaks that occur
-    within the current ECG interval.
-
-    If limit_pat_window is True, only predicted peaks within the
-    specified PAT window are eligible for TP matching.
-
-    The first eligible predicted peak is a true positive (TP).
-    All additional predicted peaks remain false positives (FP).
-    If no eligible predicted peak exists, the ECG peak is a
-    false negative (FN).
-
-    PAT is calculated as the time difference between the first predicted
-    peak and its corresponding ground-truth ECG peak.
-
-    Returns:
-        tp, fp, fn, precision, recall, f1,
-        mean_pat, std_pat (in milliseconds),
-        pat_values (in milliseconds),
-        pred_matched, gt_matched.
-    """
-
-    # Validate PAT window limits.
-    if limit_pat_window:
-        if lower_pat_limit < 0:
-            raise ValueError("lower_pat_limit must be >= 0.")
-
-        if higher_pat_limit < lower_pat_limit:
-            raise ValueError(
-                "higher_pat_limit must be >= lower_pat_limit."
-            )
-
-    # Initialize matching masks.
-    # True means the peak is matched (TP).
-    pred_matched = np.zeros(len(pred_peaks), dtype=bool)
-    gt_matched = np.zeros(len(gt_peaks), dtype=bool)
-
-    # Store pulse arrival times (PAT) in milliseconds.
-    pat_values = []
-    pat_gt_timestamps = []
-
-    # Iterate over every ground-truth ECG peak.
-    for i, current_gt_time in enumerate(gt_peak_times):
-
-        # Define the end of the current ECG interval.
-        # The interval ends immediately before the next ECG peak.
-        if i < len(gt_peak_times) - 1:
-            next_gt_time = gt_peak_times[i + 1]
-        else:
-            # The final interval ends at the end of the predicted signal.
-            next_gt_time = len(pred_peak_times) * 0 + (
-                len(pred_peaks) / pred_fs
-            )
-
-        # Define the valid PAT interval.
-        if limit_pat_window:
-            lower_time = current_gt_time + lower_pat_limit / 1000.0 # as time windows are in ms, not in seconds
-            higher_time = current_gt_time + higher_pat_limit / 1000.0
-        else:
-            lower_time = current_gt_time
-            higher_time = next_gt_time
-
-        # Restrict the PAT interval to the current ECG interval.
-        higher_time = min(higher_time, next_gt_time)
-
-        # Find predicted peaks within the valid interval.
-        interval_mask = (
-            (pred_peak_times >= lower_time) &
-            (pred_peak_times < higher_time)
-        )
-
-        # Get the indices of all predicted peaks in this interval.
-        interval_indices = np.flatnonzero(interval_mask)
-
-        # Check whether at least one predicted peak exists.
-        if len(interval_indices) > 0:
-
-            # The first predicted peak is the true positive.
-            first_pred_idx = interval_indices[0]
-
-            pred_matched[first_pred_idx] = True
-            gt_matched[i] = True
-
-            # Calculate PAT in milliseconds.
-            pat_ms = (
-                pred_peak_times[first_pred_idx] - current_gt_time
-            ) * 1000.0
-
-            pat_values.append(pat_ms)
-            pat_gt_timestamps.append(current_gt_time)
-
-            # All remaining predicted peaks in this interval
-            # remain unmatched and are therefore false positives.
-
-        # If no predicted peak exists, the GT peak remains unmatched
-        # and is therefore a false negative.
-
-    # Calculate TP, FP and FN.
-    tp = int(np.count_nonzero(pred_matched))
-    fp = int(len(pred_peaks) - tp)
-    fn = int(len(gt_peaks) - tp)
-
-    # Calculate precision.
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-
-    # Calculate recall.
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-
-    # Calculate F1 score.
-    f1 = (
-        2 * precision * recall / (precision + recall)
-        if (precision + recall) > 0 else 0.0
-    )
-
-    # Calculate mean and standard deviation of PAT.
-    mean_pat = float(np.mean(pat_values)) if pat_values else 0.0
-    std_pat = float(np.std(pat_values)) if pat_values else 0.0
-
-    return {
-        "tp_distance_based": tp,
-        "fp_distance_based": fp,
-        "fn_distance_based": fn,
-        "precision_distance_based": precision,
-        "recall_distance_based": recall,
-        "f1_distance_based": f1,
-        "mean_pat_distance_based": mean_pat,
-        "std_pat_distance_based": std_pat,
-        "pat_values_distance_based": np.asarray(pat_values),
-        "pred_matched_distance_based": pred_matched,
-        "gt_matched_distance_based": gt_matched,
-        "pat_values_timestamps": pat_gt_timestamps
-    }
-
-
-def plot_distance_based_peak_matching(
-    pred_signal: npt.NDArray[np.float64],
-    pred_fs: float,
-    pred_peaks: npt.NDArray[np.int64],
-    pred_matched: npt.NDArray[np.bool_],
-    gt_signal: npt.NDArray[np.float64],
-    gt_fs: float,
-    gt_peaks: npt.NDArray[np.int64],
-    gt_matched: npt.NDArray[np.bool_],
-    title: str,
-    f1_metrics: dict,
-    save_path: Optional[str] = None,
-):
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    # Convert sample indices to seconds
-    t_pred = np.arange(len(pred_signal)) / pred_fs
-    t_gt = np.arange(len(gt_signal)) / gt_fs
-
-    pred_peak_times = pred_peaks / pred_fs
-    gt_peak_times = gt_peaks / gt_fs
-
-    fig, axes = plt.subplots(
-        2, 1,
-        figsize=(15, 8),
-        sharex=True,
-    )
-
-    # Plot ECG and PPG signals
-    axes[0].plot(t_gt, gt_signal, color="darkgrey", label="ECG")
-    axes[1].plot(t_pred, pred_signal, color="darkgrey", label="PPG")
-
-    # Plot predicted peaks: TP in green, FP in red
-    axes[1].scatter(
-        pred_peak_times[pred_matched],
-        pred_signal[pred_peaks[pred_matched]],
-        color="green",
-        label="TP",
-        zorder=5,
-    )
-    axes[1].scatter(
-        pred_peak_times[~pred_matched],
-        pred_signal[pred_peaks[~pred_matched]],
-        color="darkred",
-        label="FP",
-        zorder=5,
-    )
-
-    # Plot ground-truth peaks: matched in green, FN in red
-    axes[0].scatter(
-        gt_peak_times[gt_matched],
-        gt_signal[gt_peaks[gt_matched]],
-        color="green",
-        label="TP",
-        zorder=5,
-    )
-    axes[0].scatter(
-        gt_peak_times[~gt_matched],
-        gt_signal[gt_peaks[~gt_matched]],
-        color="red",
-        label="FN",
-        zorder=5,
-    )
-
-    # Shade only the time between each GT peak and its TP
-    interval_colors = ["lightblue", "moccasin", "thistle"]
-    color_idx = 0
-
-    for gt_idx, gt_time in enumerate(gt_peak_times):
-        # Skip ground-truth peaks without a true positive
-        if not gt_matched[gt_idx]:
-            continue
-
-        next_gt_time = (
-            gt_peak_times[gt_idx + 1]
-            if gt_idx < len(gt_peak_times) - 1
-            else min(len(pred_signal) / pred_fs, len(gt_signal) / gt_fs)
-        )
-
-        # Find predicted peaks in the current GT interval
-        interval_mask = (
-            (pred_peak_times >= gt_time)
-            & (pred_peak_times < next_gt_time)
-        )
-        interval_indices = np.flatnonzero(interval_mask)
-
-        if len(interval_indices) == 0:
-            continue
-
-        # The earliest predicted peak is the TP
-        tp_idx = interval_indices[0]
-        tp_time = pred_peak_times[tp_idx]
-
-        color = interval_colors[color_idx % len(interval_colors)]
-        color_idx += 1
-
-        # Shade only from the GT peak to the TP
-        axes[0].axvspan(
-            gt_time, tp_time,
-            color=color,
-            alpha=0.25,
-            zorder=0,
-        )
-        axes[1].axvspan(
-            gt_time, tp_time,
-            color=color,
-            alpha=0.25,
-            zorder=0,
-        )
-
-    # Labels and formatting
-    axes[0].set_ylabel("ECG amplitude")
-    axes[1].set_ylabel("PPG amplitude")
-    axes[1].set_xlabel("Time (s)")
-
-    axes[0].set_title(
-        f"{title}\n"
-        f"Precision: {f1_metrics['precision_distance_based']:.3f} | "
-        f"Recall: {f1_metrics['recall_distance_based']:.3f} | "
-        f"F1: {f1_metrics['f1_distance_based']:.3f} | "
-        f"Mean PAT: {f1_metrics['mean_pat_distance_based']:.2f} ms | "
-        f"Std PAT: {f1_metrics['std_pat_distance_based']:.2f} ms"
-    )
-
-    for ax in axes:
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="upper right")
-
-    plt.tight_layout()
-
-    if save_path is not None:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
-
-    plt.show()
-    plt.close(fig)
 
 def plot_pat_over_time(
     pat_values,
@@ -2117,7 +1836,8 @@ def evaluate_prediction_against_ground_truth(
     plot_bland_altman: bool = True,
     csv_output_path: str | Path | None = None,
     gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
-    output_root = None
+    output_root = None,
+    pat_time_window_limits: Dict[str, object] = {"limit_pat_window": False, "lower_pat_limit": None, "higher_pat_limit": None}
 ) -> Dict[str, object]:
     """Evaluate prediction using a single `.npy`/`.npz` file as input.
 
@@ -2272,9 +1992,13 @@ def evaluate_prediction_against_ground_truth(
         f"predicted: {pred_peaks.size}, ground-truth: {gt_peaks.size}"
     )
 
+    limit_pat_window = pat_time_window_limits["limit_pat_window"]
+    lower_pat_limit = pat_time_window_limits["lower_pat_limit"]
+    higher_pat_limit = pat_time_window_limits["higher_pat_limit"]
+
     # F1 score of distances
     distance_based_f1_metrics = compute_distance_based_f1_score(pred_peaks=pred_peaks, pred_fs=predicted_fs_val,
-                                    gt_peaks=gt_peaks, gt_fs=gt_fs_val, pred_peak_times= pred_peak_times, gt_peak_times= gt_peak_times)
+                                    gt_peaks=gt_peaks, gt_fs=gt_fs_val, pred_peak_times= pred_peak_times, gt_peak_times= gt_peak_times, limit_pat_window=limit_pat_window,higher_pat_limit=higher_pat_limit, lower_pat_limit=lower_pat_limit)
 
     pat_over_time_plot_path = output_folder / "b_pat_over_time.png"
     peak_matching_plot_path = output_folder / "a_distance_based_peak_matching.png"
@@ -2291,7 +2015,10 @@ def evaluate_prediction_against_ground_truth(
         gt_matched=distance_based_f1_metrics["gt_matched_distance_based"],
         title="Distance-based peak matching",
         f1_metrics=distance_based_f1_metrics,
-        save_path=peak_matching_plot_path
+        save_path=peak_matching_plot_path,
+        limit_pat_window=limit_pat_window,
+        lower_pat_limit=lower_pat_limit,
+        higher_pat_limit=higher_pat_limit
     )
 
     # Instantaneous HR
@@ -3029,6 +2756,7 @@ def batch_evaluate_folder_structure(
     overwrite_csv: bool = False,
     existing_entry_mode: str = "overwrite",
     gt_peak_method: str = DEFAULT_GT_PEAK_METHOD,
+    pat_time_window_limits: Dict[str, object] = {"limit_pat_window": False, "lower_pat_limit": None, "higher_pat_limit": None}
 ) -> Dict[str, object]:
     """Evaluate every npz under ``<root>/<approach>/<results_subdir>/**`` for each approach.
 
@@ -3139,6 +2867,8 @@ def batch_evaluate_folder_structure(
                 plot_bland_altman=plot_bland_altman,
                 csv_output_path=csv_output_path,
                 gt_peak_method=gt_peak_method,
+                pat_time_window_limits = pat_time_window_limits
+
             )
             results[str(f)] = out
             of = out.get("output_folder", "N/A")
@@ -3177,7 +2907,7 @@ if __name__ == "__main__":
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
     APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = ("lepton","mwir", "vario")#None#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    CAMERAS_TO_RUN = ("lepton")#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Optionally restrict the run to ONE specific individual (or a few). Matched as a
     # case-insensitive substring of the npz filename, so "Ina" runs every Ina recording
@@ -3191,6 +2921,13 @@ if __name__ == "__main__":
     HARD_CODED_TOLERANCE_MS = DEFAULT_TOLERANCE_MS
     HARD_CODED_PLOT_STEPS = DEFAULT_PLOT_STEPS
     HARD_CODED_PLOT_BA = DEFAULT_PLOT_BLAND_ALTMAN
+
+    limit_pat_window: bool = True,
+    lower_pat_limit: float = 50.0,
+    higher_pat_limit: float = 350.0
+
+    # Optional restriction of the pulse arrival time to a specific time window, pat limits in ms
+    PAT_TIME_WINDOW_LIMITS = {"limit_pat_window": True, "lower_pat_limit": 50, "higher_pat_limit": 350}
 
     if RUN_MODE == "structure":
         # Root that contains the approach subfolders (each with a `results` dir).
@@ -3208,6 +2945,7 @@ if __name__ == "__main__":
                 plot_bland_altman=HARD_CODED_PLOT_BA,
                 existing_entry_mode=EXISTING_ENTRY_MODE,
                 gt_peak_method=GT_PEAK_METHOD,
+                pat_time_window_limits = PAT_TIME_WINDOW_LIMITS
             )
         else:
             print(
@@ -3229,6 +2967,7 @@ if __name__ == "__main__":
                     plot_bland_altman=HARD_CODED_PLOT_BA,
                     gt_peak_method=GT_PEAK_METHOD,
                     individuals=INDIVIDUALS_TO_RUN,
+                    
                 )
             elif HARD_CODED_PATH.is_file():
                 evaluate_prediction_against_ground_truth(
