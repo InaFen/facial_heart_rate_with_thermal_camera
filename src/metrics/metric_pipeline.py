@@ -1285,6 +1285,15 @@ METRICS_SUMMARY_CSV_FIELDNAMES = [
     "f1_distance_based",
     "mean_pat_distance_based",
     "std_pat_distance_based",
+    #f1 halved
+    "tp_distance_based_halved",
+    "fp_distance_based_halved",
+    "fn_distance_based_halved",
+    "precision_distance_based_halved",
+    "recall_distance_based_halved",
+    "f1_distance_based_halved",
+    "mean_pat_distance_based_halved",
+    "std_pat_distance_based_halved",
     #paths
     "timestamp_utc",
     "input_file",
@@ -1992,48 +2001,10 @@ def evaluate_prediction_against_ground_truth(
         f"predicted: {pred_peaks.size}, ground-truth: {gt_peaks.size}"
     )
 
-    limit_pat_window = pat_time_window_limits["limit_pat_window"]
-    lower_pat_limit = pat_time_window_limits["lower_pat_limit"]
-    higher_pat_limit = pat_time_window_limits["higher_pat_limit"]
-
-    # F1 score of distances
-    distance_based_f1_metrics = compute_distance_based_f1_score(pred_peaks=pred_peaks, pred_fs=predicted_fs_val,
-                                    gt_peaks=gt_peaks, gt_fs=gt_fs_val, pred_peak_times= pred_peak_times, gt_peak_times= gt_peak_times, limit_pat_window=limit_pat_window,higher_pat_limit=higher_pat_limit, lower_pat_limit=lower_pat_limit)
-
-    pat_over_time_plot_path = output_folder / "b_pat_over_time.png"
-    peak_matching_plot_path = output_folder / "a_distance_based_peak_matching.png"
-    
-
-    plot_distance_based_peak_matching(
-        pred_signal=pred_rs,
-        pred_fs=predicted_fs_val,
-        pred_peaks=pred_peaks,
-        pred_matched=distance_based_f1_metrics["pred_matched_distance_based"],
-        gt_signal=gt_segment,
-        gt_fs=predicted_fs_val,
-        gt_peaks=gt_peaks,
-        gt_matched=distance_based_f1_metrics["gt_matched_distance_based"],
-        title="Distance-based peak matching",
-        f1_metrics=distance_based_f1_metrics,
-        save_path=peak_matching_plot_path,
-        limit_pat_window=limit_pat_window,
-        lower_pat_limit=lower_pat_limit,
-        higher_pat_limit=higher_pat_limit,
-        pred_peak_times = pred_peak_times,
-        gt_peak_times = gt_peak_times,
-        time = t
-    )
 
     # Instantaneous HR
     pred_ihr, pred_ihr_times = instantaneous_hr_from_peak_times(pred_peak_times)
     gt_ihr, gt_ihr_times = instantaneous_hr_from_peak_times(gt_peak_times)
-
-    plot_pat_over_time(pat_values= distance_based_f1_metrics["pat_values_distance_based"], 
-                           title = results, 
-                           plot_path = pat_over_time_plot_path, 
-                           pat_times = distance_based_f1_metrics["pat_values_timestamps"],
-                           gt_ihr = gt_ihr,
-                           gt_ihr_times = gt_ihr_times)
 
     # Mean HR-----------------------
     gt_hr_mean = mean_hr_from_peak_times(gt_peak_times)
@@ -2159,7 +2130,7 @@ def evaluate_prediction_against_ground_truth(
     # peak (keep the 1st, 3rd, 5th, ...) and recompute every metric, so the doubled-peak
     # result can be compared against the halved one. All halved values stay None/empty
     # for every other recording.
-    drop_every_second_peak = _should_drop_every_second_signal_peak(signal_path)
+    drop_every_second_peak = True#_should_drop_every_second_signal_peak(signal_path) # TODO
     pred_peaks_halved = np.array([], dtype=int)
     pred_peak_times_halved = np.array([], dtype=float)
     pred_ihr_halved = np.array([], dtype=float)
@@ -2212,6 +2183,75 @@ def evaluate_prediction_against_ground_truth(
             f"(fraction={hr_agreement_halved['agreement_fraction']})"
         )
 
+    # F1 score of distances-------------------------------
+    limit_pat_window = pat_time_window_limits["limit_pat_window"]
+    lower_pat_limit = pat_time_window_limits["lower_pat_limit"]
+    higher_pat_limit = pat_time_window_limits["higher_pat_limit"]
+    
+    distance_based_f1_metrics = compute_distance_based_f1_score(pred_peaks=pred_peaks, pred_fs=predicted_fs_val,
+                                    gt_peaks=gt_peaks, gt_fs=gt_fs_val, pred_peak_times= pred_peak_times, gt_peak_times= gt_peak_times, limit_pat_window=limit_pat_window,higher_pat_limit=higher_pat_limit, lower_pat_limit=lower_pat_limit)
+
+    pat_over_time_plot_path = output_folder / "b_pat_over_time.png"
+    peak_matching_plot_path = output_folder / "a_distance_based_peak_matching.png"
+    
+
+    plot_distance_based_peak_matching(
+        pred_signal=pred_rs,
+        pred_fs=predicted_fs_val,
+        pred_peaks=pred_peaks,
+        pred_matched=distance_based_f1_metrics["pred_matched_distance_based"],
+        gt_signal=gt_segment,
+        gt_fs=predicted_fs_val,
+        gt_peaks=gt_peaks,
+        gt_matched=distance_based_f1_metrics["gt_matched_distance_based"],
+        title="Distance-based peak matching",
+        f1_metrics=distance_based_f1_metrics,
+        save_path=peak_matching_plot_path,
+        limit_pat_window=limit_pat_window,
+        lower_pat_limit=lower_pat_limit,
+        higher_pat_limit=higher_pat_limit,
+        pred_peak_times = pred_peak_times,
+        gt_peak_times = gt_peak_times,
+        time = t
+    )
+
+    plot_pat_over_time(pat_values= distance_based_f1_metrics["pat_values_distance_based"], 
+                            title = results, 
+                            plot_path = pat_over_time_plot_path, 
+                            pat_times = distance_based_f1_metrics["pat_values_timestamps"],
+                            gt_ihr = gt_ihr,
+                            gt_ihr_times = gt_ihr_times)
+
+    if drop_every_second_peak:
+        
+        distance_based_f1_metrics_halved = compute_distance_based_f1_score(pred_peaks=pred_peaks_halved, pred_fs=predicted_fs_val,
+                                            gt_peaks=gt_peaks, gt_fs=gt_fs_val, pred_peak_times= pred_peak_times_halved, gt_peak_times= gt_peak_times, limit_pat_window=limit_pat_window,higher_pat_limit=higher_pat_limit, lower_pat_limit=lower_pat_limit)
+        
+        peak_matching_halved_plot_path = output_folder / "a_distance_based_peak_matching_halved.png"
+        
+    
+        plot_distance_based_peak_matching(
+            pred_signal=pred_rs,
+            pred_fs=predicted_fs_val,
+            pred_peaks=pred_peaks_halved,
+            pred_matched=distance_based_f1_metrics_halved["pred_matched_distance_based"],
+            gt_signal=gt_segment,
+            gt_fs=predicted_fs_val,
+            gt_peaks=gt_peaks,
+            gt_matched=distance_based_f1_metrics_halved["gt_matched_distance_based"],
+            title="Distance-based peak matching (halved pred peaks)",
+            f1_metrics=distance_based_f1_metrics,
+            save_path=peak_matching_halved_plot_path,
+            limit_pat_window=limit_pat_window,
+            lower_pat_limit=lower_pat_limit,
+            higher_pat_limit=higher_pat_limit,
+            pred_peak_times = pred_peak_times_halved,
+            gt_peak_times = gt_peak_times,
+            time = t
+        )
+
+
+    
     # Create output folder named after the input NPZ file inside a `metric_results` root
     output_root = signal_path.parent / "metric_results"
     output_folder = output_root / signal_path.stem
@@ -2586,6 +2626,14 @@ def evaluate_prediction_against_ground_truth(
         "f1_distance_based": _serialize_for_json(distance_based_f1_metrics["f1_distance_based"]),
         "mean_pat_distance_based": _serialize_for_json(distance_based_f1_metrics["mean_pat_distance_based"]),
         "std_pat_distance_based": _serialize_for_json(distance_based_f1_metrics["std_pat_distance_based"]),
+        "tp_distance_based_halved": _serialize_for_json(distance_based_f1_metrics_halved["tp_distance_based"]) if drop_every_second_peak else None,
+        "fp_distance_based_halved": _serialize_for_json(distance_based_f1_metrics_halved["fp_distance_based"]) if drop_every_second_peak else None,
+        "fn_distance_based_halved": _serialize_for_json(distance_based_f1_metrics_halved["fn_distance_based"]) if drop_every_second_peak else None,
+        "precision_distance_based_halved": _serialize_for_json(distance_based_f1_metrics_halved["precision_distance_based"]) if drop_every_second_peak else None,
+        "recall_distance_based_halved": _serialize_for_json(distance_based_f1_metrics_halved["recall_distance_based"]) if drop_every_second_peak else None,
+        "f1_distance_based_halved": _serialize_for_json(distance_based_f1_metrics_halved["f1_distance_based"]) if drop_every_second_peak else None,
+        "mean_pat_distance_based_halved": _serialize_for_json(distance_based_f1_metrics_halved["mean_pat_distance_based"]) if drop_every_second_peak else None,
+        "std_pat_distance_based_halved": _serialize_for_json(distance_based_f1_metrics_halved["std_pat_distance_based"]) if drop_every_second_peak else None,
     }
 
     output_json_path = output_folder / "00_metrics.json"
@@ -2627,7 +2675,7 @@ def evaluate_prediction_against_ground_truth(
         "ground_truth_fs": gt_fs_val,
         "predicted_resampled_fs": gt_fs_val,
         "tolerance_ms": tolerance_ms,
-        "predicted_fs": predicted_fs_meta
+        "predicted_fs": predicted_fs_meta,
     }
     out["output_folder"] = str(output_folder)
     out["metrics_json_path"] = str(output_json_path)
