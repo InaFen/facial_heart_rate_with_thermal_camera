@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 
-def plot_f1_boxplots_per_camera(
+def plot_metric_boxplots_per_camera(
     csv_path: str,
     save_path: Optional[str] = None,
     camera_col: str = "camera",
@@ -21,7 +21,7 @@ def plot_f1_boxplots_per_camera(
     random_seed: int = 42,
 ):
     """
-    Plot F1-score boxplots with individual data points for each camera.
+    Plot metric boxplots with individual data points for each camera.
 
     Parameters
     ----------
@@ -32,7 +32,7 @@ def plot_f1_boxplots_per_camera(
     camera_col : str
         Column identifying cameras.
     score_col : str
-        Column containing F1 scores.
+        Column containing metric.
     roi_col : str
         Column identifying ROIs.
     used_rois : list[str], optional
@@ -221,12 +221,12 @@ def plot_f1_boxplots_per_camera(
         # Axis formatting
         ax.set_title(str(camera))
         ax.set_xticks([1])
-        ax.set_xticklabels(["F1 score"])
+        ax.set_xticklabels([score_col])
         ax.set_xlim(0.5, 1.5)
         ax.set_ylim(0, 1.05)
         ax.grid(axis="y", alpha=0.3)
 
-    axes[0].set_ylabel("F1 score")
+    axes[0].set_ylabel(score_col)
 
     # Create legends
     legend_handles = []
@@ -332,12 +332,22 @@ def plot_f1_boxplots_per_camera(
 
 
 if __name__ == "__main__":
-    fig = plot_f1_boxplots_per_camera(
+    plot_metric_boxplots_per_camera(
         csv_path="saved_results/all_npz_metrics.csv",
-        save_path="f1_boxplots.png",
+        save_path="saved_results/new_approach/results/evaluation_csv/f1_boxplot.png",
         used_rois=["whole_face", "manual_rectangle_front_view", "forehead", "manual_rectangle_forehead", "manual_rectangle"],
         color_by="participant",
         marker_by="roi",
         label_by="run",
+        score_col="f1_distance_based"
     )
-    plt.show()
+
+    plot_metric_boxplots_per_camera(
+            csv_path="saved_results/all_npz_metrics.csv",
+            save_path="saved_results/new_approach/results/evaluation_csv/f1_halved_boxplot.png",
+            used_rois=["whole_face", "manual_rectangle_front_view", "forehead", "manual_rectangle_forehead", "manual_rectangle"],
+            color_by="participant",
+            marker_by="roi",
+            label_by="run",
+
+        )
