@@ -55,7 +55,7 @@ except ModuleNotFoundError:  # pragma: no cover - allows running the file direct
     )
 from helpers_metric_pipeline import save_single_plot
 from utils.f1_score_functions import compute_distance_based_f1_score, plot_distance_based_peak_matching
-from utils.csv_helpers import _rewrite_csv_with_canonical_header, _select_files_by_existing_entries
+from utils.csv_helpers import _rewrite_csv_with_canonical_header, _select_files_by_existing_entries, append_metrics_summary_row
 
 # Global defaults (previously set inside __main__); make available to all functions
 PEAK_PROMINENCE_SIGNAL = 0.0#0.5 # absolute floor for the predicted-signal peak prominence
