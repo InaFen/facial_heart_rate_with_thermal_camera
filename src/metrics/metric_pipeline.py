@@ -2322,7 +2322,7 @@ if __name__ == "__main__":
     # CAMERAS_TO_RUN to e.g. ("mwir", "vario") to evaluate only those cameras, or None
     # for all cameras.
     APPROACHES_TO_RUN = ("new_approach") #("nair_et_al", "yang_et_al", "new_approach")
-    CAMERAS_TO_RUN = ("lepton")#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
+    CAMERAS_TO_RUN = ("mwir")#("mwir", "vario", "l")  # e.g. ("mwir", "vario") or None for all
 
     # Optionally restrict the run to ONE specific individual (or a few). Matched as a
     # case-insensitive substring of the npz filename, so "Ina" runs every Ina recording
@@ -2337,12 +2337,8 @@ if __name__ == "__main__":
     HARD_CODED_PLOT_STEPS = DEFAULT_PLOT_STEPS
     HARD_CODED_PLOT_BA = DEFAULT_PLOT_BLAND_ALTMAN
 
-    limit_pat_window: bool = True,
-    lower_pat_limit: float = 50.0,
-    higher_pat_limit: float = 350.0
-
     # Optional restriction of the pulse arrival time to a specific time window, pat limits in ms
-    PAT_TIME_WINDOW_LIMITS = {"limit_pat_window": True, "lower_pat_limit": 50, "higher_pat_limit": 350}
+    PAT_TIME_WINDOW_LIMITS = {"limit_pat_window": True, "lower_pat_limit": 100, "higher_pat_limit": 250}
 
         # Root that contains the approach subfolders (each with a `results` dir).
     HARD_CODED_ROOT = Path("saved_results")
